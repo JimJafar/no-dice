@@ -1,8 +1,8 @@
 /**
  * Entry point for the Salient rules engine.
  *
- * The board lands here first: coordinates, distances, the rules' constants and
- * seeded map generation. Visibility, order validation, turn resolution and
+ * The board lands here first: coordinates, distances, the rules' constants,
+ * seeded map generation and order validation. Visibility, turn resolution and
  * scoring follow in the later engine tasks.
  */
 export const enginePackage = {
@@ -23,4 +23,5 @@ export {
   rotateHalfTurn,
 } from "./hex";
 export { mulberry32 } from "./rng";
-export type { Hex, HexCoord, HexKey, MatchResult, MatchState, Seat, Terrain } from "./types";
+export type { Hex, HexCoord, HexKey, MatchResult, MatchState, Order, Seat, Terrain, WasteReason, WastedOrder } from "./types";
+export { validateOrders, type ValidationResult } from "./validate-orders";

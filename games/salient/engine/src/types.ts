@@ -29,6 +29,32 @@ export interface Hex {
   garrison: number;
 }
 
+/** A move: `troops` soldiers from one hex to another, one step in one turn. */
+export interface Order {
+  from: HexKey;
+  to: HexKey;
+  troops: number;
+}
+
+/**
+ * Why an order was dropped, in the wording the log and the players see. The
+ * reasons are checked in this order, so an order that breaks several rules is
+ * reported under the first one.
+ */
+export type WasteReason =
+  | "no action points left"
+  | "unknown hex"
+  | "source hex not owned"
+  | "destination is blocked"
+  | "hexes are not adjacent"
+  | "troop count must be a positive integer"
+  | "not enough troops in source hex";
+
+export interface WastedOrder {
+  order: Order;
+  reason: WasteReason;
+}
+
 export interface MatchResult {
   type: "time" | "knockout";
   winner: Seat | null;
