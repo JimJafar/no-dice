@@ -450,6 +450,16 @@ describe("the knockout", () => {
     expect(result.state.result?.type).toBe("knockout");
     expect(result.state.result?.score).toEqual({ A: 93, B: 0 });
   });
+
+  it("resolves a match that is already over to itself", () => {
+    const ended = resolve(atTheBase(), [order(I6, J6, 5)], []).state;
+    const again = resolve(ended, [order(I6, J6, 5), order(I6, I6, 1)], []);
+    // Simulating past the end of a match must not re-stamp the turn it was
+    // decided on, move the board or produce troops.
+    expect(again.events).toEqual([]);
+    expect(again.wasted).toEqual({ A: [], B: [] });
+    expect(JSON.stringify(again.state)).toBe(JSON.stringify(ended));
+  });
 });
 
 describe("the match ending on time", () => {
@@ -649,8 +659,9 @@ function bothEngines(
 /**
  * Up to two orders more than the action points allow, so the cut-off is
  * exercised too: every troop on a hex to one neighbour, either the one nearest
- * the enemy Base or a random one. Drawn from a seeded generator, so the match
- * is the same on every run.
+ * the enemy Base or a random one. `mulberry32` hands out unsigned 32-bit
+ * integers, so every draw here stays in that currency. Drawn from a seed, so
+ * the match is the same on every run.
  */
 function marchOrders(state: MatchState, seat: Seat, seed: number, pushToBase: boolean): Order[] {
   const rnd = mulberry32(seed);
@@ -664,12 +675,14 @@ function marchOrders(state: MatchState, seat: Seat, seed: number, pushToBase: bo
     if (hex.owner !== seat || hex.troops === 0) continue;
     const targets = neighbourKeys(key, board).filter((n) => state.hexes[n].terrain !== "blocked");
     if (targets.length === 0) continue;
-    const to = pushToBase
-      ? [...targets].sort(
-          (x, y) => hexDistance(parseHexKey(x), goal) - hexDistance(parseHexKey(y), goal) || rnd() - 0.5,
-        )[0]
-      : targets[Math.floor(rnd() * targets.length)];
-    orders.push({ from: key, to, troops: hex.troops });
+    if (!pushToBase) {
+      orders.push({ from: key, to: targets[rnd() % targets.length], troops: hex.troops });
+      continue;
+    }
+    const ranked = targets
+      .map((target) => ({ target, steps: hexDistance(parseHexKey(target), goal), draw: rnd() }))
+      .sort((left, right) => left.steps - right.steps || left.draw - right.draw);
+    orders.push({ from: key, to: ranked[0].target, troops: hex.troops });
   }
   return orders;
 }
@@ -679,22 +692,32 @@ describe("turn resolution against the prototype engine", () => {
     const seen = { clash: 0, battle: 0, repelled: 0, capture: 0, knockout: 0, wasted: 0 };
 
     for (const seed of [7, 92, 108, 135, 189, 1, 2, 3, 4, 5, 6, 8, 9, 10]) {
-      // Half these matches head for the enemy Base, half wander, so the front
-      // line gets crossed in both directions.
-      const pushToBase = seed % 2 === 0;
+      // In each match one seat heads for the enemy Base while the other wanders,
+      // and which seat does which alternates with the seed, so the front line
+      // gets crossed in both directions.
+      const pushA = seed % 2 === 0;
+      const played = { orders: 0, events: 0 };
       let state = generateMap(seed, DEFAULT_CONFIG);
       for (let turn = 1; turn <= DEFAULT_CONFIG.turns && !state.over; turn++) {
         const orders: Record<Seat, Order[]> = {
-          A: marchOrders(state, "A", seed * 100 + 1, pushToBase),
-          B: marchOrders(state, "B", seed * 100 + 2, pushToBase),
+          A: marchOrders(state, "A", seed * 100 + 1, pushA),
+          B: marchOrders(state, "B", seed * 100 + 2, !pushA),
         };
         const label = `seed ${seed} turn ${turn}`;
         const result = bothEngines(state, orders, { A: 0, B: 0 }, label);
         for (const event of result.events) seen[event.type] += 1;
         seen.wasted += result.wasted.A.length + result.wasted.B.length;
         if (result.state.result?.type === "knockout") seen.knockout += 1;
+
+        played.orders += orders.A.length + orders.B.length - result.wasted.A.length - result.wasted.B.length;
+        played.events += result.events.length;
         state = result.state;
       }
+
+      // A seed whose orders were all dropped would compare nothing at all, so
+      // each match has to have played, and to have changed the board.
+      expect(played.orders, `seed ${seed} had no order accepted`).toBeGreaterThan(0);
+      expect(played.events, `seed ${seed} resolved without an event`).toBeGreaterThan(0);
     }
 
     // These matches have to have reached the interesting parts of the rules, or

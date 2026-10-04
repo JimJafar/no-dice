@@ -36,7 +36,8 @@ const edgeKey = (from: HexKey, to: HexKey): string => `${from}>${to}`;
  * Resolve one turn. `apSpentOnScouts` is the action points each seat already
  * used on scouting, which is what is left of `config.actionPoints` for its
  * orders; a seat that submits more orders than that has the extra ones wasted.
- * A seat with no orders in `orders` simply passes.
+ * A seat with no orders in `orders` simply passes. A state whose match is
+ * already over resolves to itself, result and turn counter untouched.
  */
 export function resolveTurn(
   state: MatchState,
@@ -44,6 +45,18 @@ export function resolveTurn(
   apSpentOnScouts: Readonly<Partial<Record<Seat, number>>> = {},
   config: Config = DEFAULT_CONFIG,
 ): TurnOutcome {
+  // A match that has already ended resolves to itself: the result recorded when
+  // it ended stands, nothing moves and nothing is produced. A caller that
+  // simulates ahead has to stop at `over`, and this keeps it from rewriting the
+  // turn the match was decided on.
+  if (state.over) {
+    return {
+      state: { ...state, hexes: copyBoard(state), base: { A: state.base.A, B: state.base.B } },
+      events: [],
+      wasted: { A: [], B: [] },
+    };
+  }
+
   const events: TurnEvent[] = [];
   const wasted: Record<Seat, WastedOrder[]> = { A: [], B: [] };
   const hexes = copyBoard(state);
