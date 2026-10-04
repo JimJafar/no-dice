@@ -1,0 +1,23 @@
+{
+  "name": "no-dice",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "No Dice: games that measure LLMs.",
+  "workspaces": [
+    "packages/*",
+    "games/salient/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

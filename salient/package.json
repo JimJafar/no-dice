@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "Not a workspace package. This file only marks everything under salient/ as CommonJS, so the reference prototype in salient/docs/reference keeps running now that the workspace root is \"type\": \"module\".",
+  "type": "commonjs"
+}

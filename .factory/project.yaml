@@ -1,14 +1,18 @@
 repo: git@github.com:JimJafar/no-dice.git
 
-# Nothing to install yet: milestone 01's first task creates the pnpm workspace.
-# After that task, setup becomes: pnpm install
-setup: []
+# The scaffold task created the pnpm workspace; install it before the gates run.
+setup:
+  - pnpm install
 
 gates:
   # Pins the behaviour the new engine must reproduce. Passes today, must keep passing.
   - name: reference-replay
     run: node salient/docs/reference/replay-check.js salient/docs/golden/*.json
 
-  # Enable these once the scaffold task adds the root package.json:
-  # - { name: typecheck, run: pnpm typecheck }
-  # - { name: tests, run: pnpm test, expect: { minTests: previous } }
+  - name: typecheck
+    run: pnpm typecheck
+
+  - name: tests
+    run: pnpm test
+    expect:
+      minTests: previous
