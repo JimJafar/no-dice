@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Salient mock-up: Player B view under fog of war</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.hx{position:absolute;width:60px;height:69px;box-sizing:border-box;padding-top:8px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);display:flex;align-items:center;justify-content:center;font:600 22px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif}
+.hx i{position:absolute;top:8px;left:0;right:0;text-align:center;font:500 11px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;font-style:normal;letter-spacing:.03em}
+.a{background:var(--team-a,#2c6fd1);color:#ffffff}
+.b{background:var(--team-b,#e06f35);color:#14110f}
+.n{background:#2a323d;color:#b4bcc8}
+.f{background:#1a2028;color:#8a94a3}
+.x{background:repeating-linear-gradient(45deg,#07090c 0 4px,#161b22 4px 6px)}
+.bc{background:repeating-linear-gradient(135deg,var(--team-b,#e06f35) 0 3px,#3a2418 3px 10px);color:#ffffff}
+.bc i{left:50%;right:auto;transform:translateX(-50%);padding:1px 3px;border-radius:2px;background:#1c1410}
+.ct{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:#1c1410;font-size:19px}
+.bs{display:flex;align-items:center;justify-content:center;width:34px;height:34px;box-sizing:border-box;border:3px solid currentColor;border-radius:50%;font-size:19px}
+.nd{display:flex;align-items:center;justify-content:center;width:26px;height:26px;box-sizing:border-box;border:2.5px solid currentColor;transform:rotate(45deg)}
+.nd b{transform:rotate(-45deg);font-size:19px;font-weight:600}
+.k{display:block;flex:none;width:26px;height:30px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+</style>
+</head>
+<body>
+<div style="width:820px;height:940px;box-sizing:border-box;padding:36px;display:flex;flex-direction:column;gap:18px;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',system-ui,sans-serif;--team-a:#2c6fd1;--team-b:#e06f35">
+
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;align-items:center;gap:10px;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf"><span style="width:14px;height:14px;background:var(--team-b,#e06f35)"></span>PLAYER B, START OF TURN 12</div>
+<div style="font:600 40px/1.1 'Barlow Semi Condensed','Arial Narrow',sans-serif">What [Model B] can see</div>
+<div style="font-size:17px;line-height:1.45;color:#c9d1dc">B sees its own hexes and every hex next to them. The other 27 playable hexes show terrain only, so A's reserves and the strength of its Base are unknown.</div>
+</div>
+
+<div style="position:relative;width:705px;height:629px;flex:none;align-self:center">
+<div class="hx bc" style="left:162px;top:3px"><i>F1</i><span class="ct">1</span></div>
+<div class="hx bc" style="left:226px;top:3px"><i>G1</i></div>
+<div class="hx bc" style="left:290px;top:3px"><i>H1</i></div>
+<div class="hx x" style="left:355px;top:3px"></div>
+<div class="hx b" style="left:419px;top:3px"><i>J1</i></div>
+<div class="hx b" style="left:483px;top:3px"><i>K1</i></div>
+<div class="hx a" style="left:130px;top:58px"><i>E2</i></div>
+<div class="hx a" style="left:194px;top:58px"><i>F2</i></div>
+<div class="hx n" style="left:258px;top:58px"><i>G2</i><span class="nd"><b>3</b></span></div>
+<div class="hx bc" style="left:323px;top:58px"><i>H2</i></div>
+<div class="hx x" style="left:387px;top:58px"></div>
+<div class="hx b" style="left:451px;top:58px"><i>J2</i></div>
+<div class="hx b" style="left:515px;top:58px"><i>K2</i>1</div>
+<div class="hx f" style="left:98px;top:114px"><i>D3</i></div>
+<div class="hx x" style="left:162px;top:114px"></div>
+<div class="hx a" style="left:226px;top:114px"><i>F3</i>1</div>
+<div class="hx bc" style="left:290px;top:114px"><i>G3</i></div>
+<div class="hx n" style="left:355px;top:114px"><i>H3</i><span class="nd"><b>3</b></span></div>
+<div class="hx x" style="left:419px;top:114px"></div>
+<div class="hx b" style="left:483px;top:114px"><i>J3</i>2</div>
+<div class="hx x" style="left:547px;top:114px"></div>
+<div class="hx f" style="left:66px;top:169px"><i>C4</i></div>
+<div class="hx f" style="left:130px;top:169px"><i>D4</i></div>
+<div class="hx f" style="left:194px;top:169px"><i>E4</i></div>
+<div class="hx a" style="left:258px;top:169px"><i>F4</i></div>
+<div class="hx a" style="left:323px;top:169px"><i>G4</i>1</div>
+<div class="hx b" style="left:387px;top:169px"><i>H4</i>1</div>
+<div class="hx b" style="left:451px;top:169px"><i>I4</i></div>
+<div class="hx b" style="left:515px;top:169px"><i>J4</i></div>
+<div class="hx b" style="left:579px;top:169px"><i>K4</i></div>
+<div class="hx f" style="left:34px;top:225px"><i>B5</i></div>
+<div class="hx f" style="left:98px;top:225px"><i>C5</i></div>
+<div class="hx f" style="left:162px;top:225px"><i>D5</i></div>
+<div class="hx f" style="left:226px;top:225px"><i>E5</i></div>
+<div class="hx f" style="left:290px;top:225px"><i>F5</i></div>
+<div class="hx a" style="left:355px;top:225px"><i>G5</i>1</div>
+<div class="hx b" style="left:419px;top:225px"><i>H5</i>8</div>
+<div class="hx b" style="left:483px;top:225px"><i>I5</i></div>
+<div class="hx b" style="left:547px;top:225px"><i>J5</i></div>
+<div class="hx b" style="left:611px;top:225px"><i>K5</i></div>
+<div class="hx f" style="left:2px;top:280px"><i>A6</i></div>
+<div class="hx f" style="left:66px;top:280px"><i>B6</i><span class="bs">?</span></div>
+<div class="hx f" style="left:130px;top:280px"><i>C6</i></div>
+<div class="hx f" style="left:194px;top:280px"><i>D6</i><span class="nd"><b>?</b></span></div>
+<div class="hx x" style="left:258px;top:280px"></div>
+<div class="hx a" style="left:323px;top:280px"><i>F6</i><span class="nd"><b>2</b></span></div>
+<div class="hx x" style="left:387px;top:280px"></div>
+<div class="hx b" style="left:451px;top:280px"><i>H6</i><span class="nd"><b>3</b></span></div>
+<div class="hx b" style="left:515px;top:280px"><i>I6</i>2</div>
+<div class="hx b" style="left:579px;top:280px"><i>J6</i><span class="bs">4</span></div>
+<div class="hx b" style="left:643px;top:280px"><i>K6</i></div>
+<div class="hx f" style="left:34px;top:336px"><i>A7</i></div>
+<div class="hx f" style="left:98px;top:336px"><i>B7</i></div>
+<div class="hx f" style="left:162px;top:336px"><i>C7</i></div>
+<div class="hx a" style="left:226px;top:336px"><i>D7</i>4</div>
+<div class="hx b" style="left:290px;top:336px"><i>E7</i>1</div>
+<div class="hx b" style="left:355px;top:336px"><i>F7</i></div>
+<div class="hx b" style="left:419px;top:336px"><i>G7</i></div>
+<div class="hx b" style="left:483px;top:336px"><i>H7</i></div>
+<div class="hx b" style="left:547px;top:336px"><i>I7</i></div>
+<div class="hx b" style="left:611px;top:336px"><i>J7</i></div>
+<div class="hx f" style="left:66px;top:391px"><i>A8</i></div>
+<div class="hx f" style="left:130px;top:391px"><i>B8</i></div>
+<div class="hx f" style="left:194px;top:391px"><i>C8</i></div>
+<div class="hx a" style="left:258px;top:391px"><i>D8</i>1</div>
+<div class="hx a" style="left:323px;top:391px"><i>E8</i></div>
+<div class="hx b" style="left:387px;top:391px"><i>F8</i></div>
+<div class="hx b" style="left:451px;top:391px"><i>G8</i></div>
+<div class="hx b" style="left:515px;top:391px"><i>H8</i></div>
+<div class="hx b" style="left:579px;top:391px"><i>I8</i></div>
+<div class="hx x" style="left:98px;top:447px"></div>
+<div class="hx f" style="left:162px;top:447px"><i>B9</i></div>
+<div class="hx x" style="left:226px;top:447px"></div>
+<div class="hx f" style="left:290px;top:447px"><i>D9</i><span class="nd"><b>?</b></span></div>
+<div class="hx a" style="left:355px;top:447px"><i>E9</i></div>
+<div class="hx b" style="left:419px;top:447px"><i>F9</i>1</div>
+<div class="hx x" style="left:483px;top:447px"></div>
+<div class="hx b" style="left:547px;top:447px"><i>H9</i></div>
+<div class="hx f" style="left:130px;top:502px"><i>A10</i></div>
+<div class="hx f" style="left:194px;top:502px"><i>B10</i></div>
+<div class="hx x" style="left:258px;top:502px"></div>
+<div class="hx f" style="left:323px;top:502px"><i>D10</i></div>
+<div class="hx n" style="left:387px;top:502px"><i>E10</i><span class="nd"><b>3</b></span></div>
+<div class="hx b" style="left:451px;top:502px"><i>F10</i></div>
+<div class="hx b" style="left:515px;top:502px"><i>G10</i></div>
+<div class="hx f" style="left:162px;top:558px"><i>A11</i></div>
+<div class="hx f" style="left:226px;top:558px"><i>B11</i></div>
+<div class="hx x" style="left:290px;top:558px"></div>
+<div class="hx f" style="left:355px;top:558px"><i>D11</i></div>
+<div class="hx a" style="left:419px;top:558px"><i>E11</i></div>
+<div class="hx a" style="left:483px;top:558px"><i>F11</i>1</div>
+</div>
+
+<div style="display:flex;align-items:center;gap:32px;font-size:15px;line-height:1.2;color:#c9d1dc">
+<div style="display:flex;align-items:center;gap:12px"><span class="k f"></span>Hidden: terrain known, owner and troops unknown</div>
+<div style="display:flex;align-items:center;gap:12px"><span style="display:flex;align-items:center;justify-content:center;flex:none;width:26px;height:26px;box-sizing:border-box;border:3px solid #8a94a3;border-radius:50%;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;color:#8a94a3">?</span>Hidden Base or Node</div>
+</div>
+
+</div>
+</body>
+</html>
