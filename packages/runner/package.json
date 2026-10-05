@@ -6,7 +6,12 @@
   "description": "Match and series runner, and the salient-log/1 format the runner writes, the stats package reads and the viewer replays.",
   "exports": {
     "./log": "./src/log.ts",
-    "./match": "./src/match.ts"
+    "./match": "./src/match.ts",
+    "./cli": "./src/cli.ts",
+    "./args": "./src/args.ts"
+  },
+  "bin": {
+    "no-dice": "./src/cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.0",
