@@ -334,6 +334,21 @@ describe("a seat that does not play its turn", () => {
   /** A tool call that is never answered, which is how a seat runs out of turn. */
   const neverAnswered = (): Promise<never> => new Promise<never>(() => undefined);
 
+  /** The turn budget these runs give a seat: a real deadline, short enough to wait for. */
+  const turnTimeoutMs = 1_000;
+
+  /**
+   * How far behind its deadline a Node timer may be measured as firing: the
+   * runner's turn clock is a `setTimeout` read against a `performance.now()`
+   * delta, and under the CPU contention a whole suite puts on a machine the
+   * timer can be read as firing a millisecond early. A seat caught at the
+   * deadline is therefore recorded at `turnTimeoutMs` plus or minus this much,
+   * and the wall time below is checked against the deadline less this much —
+   * enough for the drift, and far short of the gap between a turn that ran out
+   * and one that did not.
+   */
+  const timerSlackMs = 25;
+
   /**
    * A seat whose tools are answered by the test rather than by the match: enough
    * of `get_rules` and `get_state` for a bot to decide on, and a `submit_orders`
@@ -441,7 +456,7 @@ describe("a seat that does not play its turn", () => {
       config: { ...DEFAULT_CONFIG, turns: 2 },
       seats: SEATS,
       clock,
-      turnTimeoutMs: 1_000,
+      turnTimeoutMs,
       transport: seat.transport,
     });
     await seat.close();
@@ -454,7 +469,10 @@ describe("a seat that does not play its turn", () => {
       // The turn was still resolved and recorded, and the seat was asked again.
       expect(turn.players.A.passed).toBeNull();
       expect(turn.players.A.orders.length).toBeGreaterThan(0);
-      expect(turn.players.B.wall_ms).toBeGreaterThanOrEqual(1_000);
+      // The seat was still playing when the deadline came, so its turn cost the
+      // whole of it — not the few milliseconds a seat that handed in nothing
+      // takes. The slack is the timer drift described above, and nothing more.
+      expect(turn.players.B.wall_ms).toBeGreaterThanOrEqual(turnTimeoutMs - timerSlackMs);
     }
   }, 60_000);
 
@@ -471,7 +489,7 @@ describe("a seat that does not play its turn", () => {
       config: { ...DEFAULT_CONFIG, turns: 2 },
       seats: SEATS,
       clock,
-      turnTimeoutMs: 1_000,
+      turnTimeoutMs,
       transport: (matches: MatchServer, seat: Seat, token: string) => {
         const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
         const mcp = playerToolServer(matches, token);
