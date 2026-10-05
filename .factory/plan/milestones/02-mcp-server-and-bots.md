@@ -7,6 +7,7 @@ The seven Salient MCP tools over Streamable HTTP with every limit enforced serve
 seat tokens), the Random and Greedy bots driving that surface through real MCP calls, and a
 match runner that plays bot versus bot and writes one `salient-log/1` file. Done when a
 bot-versus-bot match produces a log that the engine reproduces turn by turn, the no-leaks,
-seat-isolation, limits and resubmission tests in brief §8 pass, and the log format is
-frozen so the series runner and the viewer can be built in parallel. Tasks are written once
-milestone 01 is reviewed.
+seat-isolation, limits and resubmission tests in brief §8 pass, the Greedy-versus-Greedy
+symmetry test draws on all 300 seeds (it needs bots, so it lands here rather than in
+milestone 01), and the log format is frozen so the series runner and the viewer can be
+built in parallel.

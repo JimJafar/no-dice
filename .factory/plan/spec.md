@@ -49,6 +49,15 @@ Salient-specific code stays inside `games/salient`; no general game framework in
   brief §6.3 before anything else in that milestone is trusted.
 - Golden logs use an older, simpler shape (`orders` as `[from, to, troops]`, terrain under
   `t`); the shipped log format is `salient-log/1` in brief §7.
+- The engine is built and keys hexes `"q,r"` (`generateMap`, `resolveTurn`, `validateOrders`,
+  `score`, `visibleHexes`, `hexLabel`, `hexKey`, `rotateHalfTurn`). The tool surface and the
+  log name hexes by label (`B6`), so the server does that translation at its edge.
+- `@modelcontextprotocol/sdk` 1.32.0 is on the registry, with peer `zod ^3.25 || ^4.0`.
+- The `salient-log/1` schema lives at the `@no-dice/runner/log` subpath and imports no
+  `node:*` and no engine code, so the viewer and the stats package can use it too.
+- The server reports absolute hex labels to both seats. A bot that ranks moves in board
+  coordinates is seat-biased: identical bots in the prototype split 25% to 69% by seat from
+  move ordering alone (rules, "Harness and fairness").
 
 ## Out of scope for v0 (brief §3)
 
