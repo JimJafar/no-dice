@@ -80,6 +80,20 @@ Salient-specific code stays inside `games/salient`; no general game framework in
   token ceiling beside brief §6.5's `--max-cost`, and the series runner needs a concurrency
   knob. Series tests stay scripted: a bot-versus-bot match already takes ~1.3 s, so no series
   test can play real matches.
+- The five logs under `games/salient/golden/` are still the prototype's shape, so the viewer's
+  acceptance frame has no input until one task converts them: replay each through the engine the
+  way `games/salient/engine/src/golden-replay.test.ts` does and write a `salient-log/1` file.
+  Checked against the engine here, golden-01 turn 11 is scores 43 and 33, five `cut_off` cells
+  all owned by B (F1, G1, H1, H2, G3), a `battle` at F6 (5 against 3) followed by A's `capture`
+  of it, troops 22 and 24, Nodes held 2 and 1, and 27 playable hexes hidden from B, which is
+  the fog frame's number. The map's 91 hexes hold 79 playable ones and 7 Nodes, so the board is
+  worth 93 points, and the log's `result.margin` is unsigned (`Math.abs`) as the server writes
+  it, not the golden logs' signed margin.
+- The root `tsconfig.json` compiles `games/salient/**/*.ts` under `tsconfig.base.json`, whose
+  `lib` is `["ES2023"]` with no DOM, so the viewer needs its own project with the DOM lib and a
+  second `tsc` pass in the `typecheck` script rather than a change to the base config. Vite
+  8.3.2 is already in `pnpm-lock.yaml` through vitest; `happy-dom` is not, and the viewer's DOM
+  tests need it.
 - The server reports absolute hex labels to both seats. A bot that ranks moves in board
   coordinates is seat-biased: identical bots in the prototype split 25% to 69% by seat from
   move ordering alone (rules, "Harness and fairness").
