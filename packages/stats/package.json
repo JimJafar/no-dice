@@ -3,9 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Match and series statistics: one salient-log/1 becomes brief §6.7's per-model counts, split by turn depth.",
+  "description": "Match and series statistics: win rate and margin from brief §6.5 and §6.7, and one salient-log/1's per-model counts split by turn depth.",
   "exports": {
-    "./match-metrics": "./src/match-metrics.ts"
+    "./match-metrics": "./src/match-metrics.ts",
+    "./wilson": "./src/wilson.ts",
+    "./margin": "./src/margin.ts"
   },
   "dependencies": {
     "@no-dice/log": "workspace:*"
