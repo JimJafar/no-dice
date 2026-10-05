@@ -18,9 +18,8 @@ is seed **135** under `DEFAULT_CONFIG` (25 turns), seat A the Pi seat, seat B th
 Greedy bot. The match ran its 25 turns out and ended by time, B winning 89–1.
 
 The provider-dependent lines of the checklist — cache reads on Jim's Marvin
-server, and what happened to that model's reasoning output — are **not answered
-here**; they need a real model in the seat and are recorded by
-`scripts/measure-match.mjs` (task `pi-measure-match`) in the section at the end.
+server, and what happened to that model's reasoning output — are answered by the
+real match in section 7, played with `scripts/measure-match.mjs`.
 
 ---
 
@@ -156,17 +155,124 @@ next section.
 
 ---
 
-## Provider-dependent lines — not yet answered
+## 7. The first run against a real provider: Marvin, seed 135
 
-To be filled in by the first real match (`scripts/measure-match.mjs`, task
-`pi-measure-match`), against `marvin/subagent`:
+One match, played by the operator script this section records it from:
 
-- Are `tokens.cacheRead` figures non-zero over a whole match? (Marvin reports
-  `cached_tokens: 0` on a cold single call, so only a match answers this. The
-  stub, which reports its own cache reads, is not evidence either way.)
-- Did the MCP connection and the tool lock-down hold against a real model
-  rather than the stub?
-- What happened to the model's `reasoning_content` output, and what
-  `--thinking` level does that imply?
-- Does a 25-turn match fit the `contextWindow` chosen for Marvin, or does
-  compaction have to be re-decided?
+```bash
+node scripts/measure-match.mjs --model marvin/subagent --seed 135 --out reports/pi-cost.md
+```
+
+Seat A is Pi with `marvin/subagent` at `--thinking medium`, seat B the Greedy
+bot, seed **135**, `DEFAULT_CONFIG`'s 25 turns. It played all 25 and ended by
+time, B winning **58–31**. The table is `reports/pi-cost.md`; the log it is
+rendered from, `reports/135-marvin-subagent-greedy.json`, validates against
+`salient-log/1`. Pi is the same 1.0.2 in the same RPC mode, with the same seat
+home and the same seven tools as the scripted match above — only the model
+behind the endpoint changed.
+
+**What the provider entry rests on, measured versus decided.** The entry is
+written in `scripts/measure-match.mjs`, and it was checked against the server
+from this box:
+
+- `/v1/models` answers, and lists `subagent` as a loaded alias of `Strata-IQ3S`.
+  It reports **no context length**, no cost and no output cap, so
+  `contextWindow: 131072` is a decision. The log's
+  `players.A.context_window: 131072` is Pi reading that decision back, which is
+  what makes the header's number trustworthy rather than circular.
+- `apiKey: "none"` passes Pi's credential check, and Marvin checks no key.
+- `reasoning: true` is right: the endpoint streams a `reasoning_content` field,
+  and it streams it whatever `reasoning_effort` says — asked with `medium` and
+  with the field absent, the same reasoning arrives.
+- The answer's `model` field names `qwen3.8-flash-next-iq3_s`, not `subagent`.
+  Pi's transcript records `subagent`, the id it was given. Neither name
+  identifies what answered, so nothing here treats either as an identity check.
+
+### Are `tokens.cacheRead` figures non-zero over a whole match?
+
+**Yes, and they are almost the whole match.** All 25 turns report a non-zero
+`cache_read`; 4,301,838 of the match's 4,523,986 prompt tokens — **95.1%** —
+came out of Marvin's prompt cache rather than off disk. `cache_write` stays 0
+throughout: llama.cpp's KV cache is not reported as a write. The cold single
+call that reports `cached_tokens: 0` is therefore not what a match looks like;
+a match is the case the cache is for.
+
+The share is not flat. Turn 1 is 7% cached (42,569 input tokens against 2,999
+read), turn 4 30%, turn 17 67% — Marvin re-evaluated most of the conversation
+on those turns, and they are the three slowest of the match at 164.6 s, 135.1 s
+and 70.5 s. Every other turn is 99–100% cached and takes 14–50 s. A series has
+to budget for the re-evaluations, not for the average.
+
+### Did the MCP connection and the tool lock-down hold against a real model?
+
+**The connection did. The lock-down held on the match that finished, and voided
+the one before it.**
+
+The MCP connection: one Pi process, one session, one server connection for all
+25 turns and 78 tool calls, no reconnect and no turn that failed to reach a
+tool.
+
+The lock-down, as the finished match used it: 78 calls, 6 of the seven names
+(`read_notes` was never called), every one inside the seven, and the seat's
+transcript declares exactly the seven `mcp__salient__*` tools — so
+`defaultTools: []`, the disabled built-in extensions and `--no-builtin-tools`
+held against a real model in the sense §6 means.
+
+The lock-down, as the attempt before it found it: on turn 3 of the first
+attempt the seat called `simulate` — the short name, not
+`mcp__salient__simulate`. Pi answered `Tool simulate not found`, the harness
+saw a tool name outside the seven and voided the match with `tool_surface`, as
+brief §6.3 requires. That is the lock-down working, but it is also the first
+real cost of it: `marvin/subagent` shortens a tool name often enough to matter —
+it was the 11th call of that attempt, against 0 of 78 on the match that
+finished, and two attempts are far too little to put a rate on it. A series of
+150 matches against this model should expect to lose some of them this way, and
+the game's prompt (`games/salient/prompts/player-system.md`) never names the
+tools, which is where a fix would start if losing them is not acceptable.
+
+### What happened to the model's reasoning output, and what level does that imply?
+
+**Pi kept it, and it is most of what the seat costs in output.** 91 of the 93
+assistant messages in the seat's transcript carry a `thinking` block, 101,408
+characters in all, recorded at `thinkingLevel: medium`. Those blocks are inside
+the `output` token counts: 61,748 output tokens over the match, 2,470 a turn,
+against 222,148 input.
+
+`--thinking` is not the lever for that. Marvin emits reasoning whether Pi asks
+for it or not, so turning thinking off on the Pi side does not stop the tokens
+arriving; the per-turn output budget of brief §10 is the only thing that can.
+The level still belongs in the log header, because it is part of what the seat
+was played at.
+
+### Does a 25-turn match fit the `contextWindow` chosen for Marvin?
+
+**Yes, with room, and compaction never fired.** Context went from 9,675 tokens
+on turn 1 to 94,659 on turn 25 — **72.2%** of the 131,072 window, growing 3,541
+tokens a turn on average. Pi's compaction threshold is
+`contextWindow - 16,384 = 114,688`, which this match never reached; the log
+records `compaction: true` in the header and `compacted: false` on all 25 turns.
+
+So 131,072 stands as the window for a 25-turn match, and it is not comfortable:
+at this growth rate the threshold falls around turn 31. A longer game, or a
+model that writes longer notes, crosses it and has to be re-decided then rather
+than now.
+
+### What one match costs, and what §10 and §11 have to take from it
+
+Seat A over 25 turns: **222,148 input, 61,748 output, 4,301,838 cache-read, 0
+cache-write tokens**, and **1,128.6 s** of turn time — 18.8 minutes, 45.1 s a
+turn, slowest 164.6 s. `cost_usd` is 0.000000 in every turn and in the totals,
+because Marvin is Jim's own hardware: no key, no billing, and the entry prices
+every token at 0. Tokens and wall time are the price, and the report prints them
+in place of money.
+
+- **Brief §10's per-turn output budget:** no turn of this match produced more
+  than 4,559 output tokens, and the mean was 2,470. A budget of 8,000 would
+  have bound on none of these turns and would still stop a seat that started
+  rambling. `--per-turn-output` is the flag that enforces it; this run was
+  played without one, deliberately, so the figures above are unbounded.
+- **Brief §11's series ceiling:** one match is 4.59M tokens and 19 minutes of
+  Marvin's time. A 150-match series is **~688M tokens and ~48 hours** of seat
+  time at this rate — one seat, so a two-model matchup doubles it. That is the
+  number the ceiling has to be set against, and it is wall time on Jim's
+  hardware rather than money.

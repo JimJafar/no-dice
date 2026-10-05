@@ -2,4 +2,7 @@ node_modules/
 dist/
 series/
 matches/
+# A measurement run's log and its seat homes; the report beside them is kept.
+reports/*.json
+reports/*-match/
 *.tsbuildinfo
