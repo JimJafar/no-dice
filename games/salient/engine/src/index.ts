@@ -9,8 +9,8 @@ export const enginePackage = {
   name: "@no-dice/salient-engine",
 } as const;
 
-export { DEFAULT_CONFIG, type Config } from "./config";
-export { generateMap } from "./board";
+export { DEFAULT_CONFIG, type Config } from "./config.ts";
+export { generateMap } from "./board.ts";
 export {
   HEX_DIRECTIONS,
   boardCells,
@@ -21,10 +21,10 @@ export {
   neighbourKeys,
   parseHexKey,
   rotateHalfTurn,
-} from "./hex";
-export { mulberry32 } from "./rng";
-export { resolveTurn, type TurnOutcome } from "./resolve";
-export { score, visibleHexes, type ScoreResult } from "./supply";
+} from "./hex.ts";
+export { mulberry32 } from "./rng.ts";
+export { resolveTurn, type TurnOutcome } from "./resolve.ts";
+export { score, visibleHexes, type ScoreResult } from "./supply.ts";
 export type {
   BattleEvent,
   CaptureEvent,
@@ -41,5 +41,5 @@ export type {
   TurnEvent,
   WasteReason,
   WastedOrder,
-} from "./types";
-export { validateOrders, type ValidationResult } from "./validate-orders";
+} from "./types.ts";
+export { validateOrders, type ValidationResult } from "./validate-orders.ts";

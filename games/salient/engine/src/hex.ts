@@ -2,7 +2,7 @@
  * Hex geometry: the axial coordinate system, labels, distances and
  * neighbours. Whole-number arithmetic only.
  */
-import type { HexCoord, HexKey } from "./types";
+import type { HexCoord, HexKey } from "./types.ts";
 
 /** The six neighbour directions, in the order the rules list them. */
 export const HEX_DIRECTIONS: readonly (readonly [number, number])[] = [

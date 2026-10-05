@@ -14,8 +14,8 @@
  */
 import { mulberry32 } from "@no-dice/salient-engine";
 
-import { botBoard } from "./board";
-import type { Bot, BotOrder } from "./types";
+import { botBoard } from "./board.ts";
+import type { Bot, BotOrder } from "./types.ts";
 
 export function randomBot(seed: number): Bot {
   const random = mulberry32(seed);

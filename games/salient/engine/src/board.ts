@@ -4,10 +4,10 @@
  * chosen by the seeded generator and rotated onto the other half by
  * `(q, r) -> (-q, -r)`, which is what makes every map fair for both seats.
  */
-import { DEFAULT_CONFIG, type Config } from "./config";
-import { boardCells, hexDistance, hexKey, hexLabel, neighbourKeys, rotateHalfTurn } from "./hex";
-import { mulberry32 } from "./rng";
-import type { Hex, HexCoord, HexKey, MatchState, Terrain } from "./types";
+import { DEFAULT_CONFIG, type Config } from "./config.ts";
+import { boardCells, hexDistance, hexKey, hexLabel, neighbourKeys, rotateHalfTurn } from "./hex.ts";
+import { mulberry32 } from "./rng.ts";
+import type { Hex, HexCoord, HexKey, MatchState, Terrain } from "./types.ts";
 
 /** The centre hex, which always holds the seventh Node. */
 const CENTRE: HexCoord = { q: 0, r: 0 };

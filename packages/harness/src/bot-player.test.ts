@@ -30,8 +30,8 @@ import {
 } from "@no-dice/salient-server";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { BotPlayer } from "./bot-player";
-import type { BotPlayerOptions, SubmitVerdict } from "./bot-player";
+import { BotPlayer } from "./bot-player.ts";
+import type { BotPlayerOptions, SubmitVerdict } from "./bot-player.ts";
 
 /**
  * How a game that answers `{ accepted, wasted }` reads to the harness: the

@@ -26,15 +26,15 @@ export {
   type ToolOutcome,
   type TurnCounters,
   type TurnPlayerRecords,
-} from "./session";
-export { MatchServer, type CreatedMatch, type TokenOwner } from "./server";
-export { startServer, playerToolServer, type RunningServer, type StartServerOptions } from "./http";
+} from "./session.ts";
+export { MatchServer, type CreatedMatch, type TokenOwner } from "./server.ts";
+export { startServer, playerToolServer, type RunningServer, type StartServerOptions } from "./http.ts";
 export {
   NOTES_CHAR_LIMIT,
   SIMULATE_LIMIT,
   SUBMISSION_NOTE_CHARS,
   TOOL_CALL_LIMIT,
-} from "./limits";
+} from "./limits.ts";
 export {
   eventsToLog,
   keyToLabel,
@@ -43,14 +43,14 @@ export {
   ordersToEngine,
   ordersToLog,
   wastedToLog,
-} from "./labels";
+} from "./labels.ts";
 export {
   simulateTurn,
   type SimulatedHexView,
   type SimulateInput,
   type SimulateOutcome,
   type SimulateView,
-} from "./simulate";
+} from "./simulate.ts";
 export {
   knownHexes,
   matchConstants,
@@ -67,4 +67,4 @@ export {
   type StateEventView,
   type StateHexView,
   type StateView,
-} from "./view";
+} from "./view.ts";

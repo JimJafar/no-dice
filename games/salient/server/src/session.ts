@@ -36,10 +36,10 @@ import type {
   WastedLogOrder,
 } from "@no-dice/runner/log";
 
-import { eventsToLog, labelToKey, ordersToEngine, wastedToLog } from "./labels";
-import { NOTES_CHAR_LIMIT, SIMULATE_LIMIT, SUBMISSION_NOTE_CHARS, TOOL_CALL_LIMIT } from "./limits";
-import { simulateTurn } from "./simulate";
-import { rulesView, scoutView, stateView, type StateView } from "./view";
+import { eventsToLog, labelToKey, ordersToEngine, wastedToLog } from "./labels.ts";
+import { NOTES_CHAR_LIMIT, SIMULATE_LIMIT, SUBMISSION_NOTE_CHARS, TOOL_CALL_LIMIT } from "./limits.ts";
+import { simulateTurn } from "./simulate.ts";
+import { rulesView, scoutView, stateView, type StateView } from "./view.ts";
 
 /** The seven tools a player can call, named as the log names them. */
 export const TOOL_NAMES = [

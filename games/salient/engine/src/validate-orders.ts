@@ -4,8 +4,8 @@
  * the start of the turn and changes nothing, and it only ever looks at one
  * seat, so it can be called for either player in any order.
  */
-import { neighbourKeys } from "./hex";
-import type { Hex, HexKey, MatchState, Order, Seat, WasteReason, WastedOrder } from "./types";
+import { neighbourKeys } from "./hex.ts";
+import type { Hex, HexKey, MatchState, Order, Seat, WasteReason, WastedOrder } from "./types.ts";
 
 export interface ValidationResult {
   accepted: Order[];

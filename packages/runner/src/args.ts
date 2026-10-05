@@ -12,7 +12,7 @@
  */
 import { join } from "node:path";
 
-import type { BotName } from "./match";
+import type { BotName } from "./match.ts";
 
 /** The games v0 has. `--game` accepts only these until another game lands. */
 export const GAMES = ["salient"] as const;

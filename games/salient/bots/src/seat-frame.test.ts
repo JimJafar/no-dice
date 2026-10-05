@@ -14,9 +14,9 @@ import { MatchServer } from "@no-dice/salient-server";
 import type { RulesView, StateView } from "@no-dice/salient-server";
 import { describe, expect, it } from "vitest";
 
-import { greedyBot } from "./greedy";
-import { randomBot } from "./random";
-import type { Bot, BotOrder, BotRules, BotState } from "./types";
+import { greedyBot } from "./greedy.ts";
+import { randomBot } from "./random.ts";
+import type { Bot, BotOrder, BotRules, BotState } from "./types.ts";
 
 const RADIUS = DEFAULT_CONFIG.radius;
 

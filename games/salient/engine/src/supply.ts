@@ -4,9 +4,9 @@
  * points. Both walk the board in one fixed order — row, then column — so neither
  * result can depend on the order the hexes happen to be keyed in.
  */
-import type { Config } from "./config";
-import { hexKey, neighbourKeys } from "./hex";
-import type { Hex, HexKey, MatchState, Seat, Terrain } from "./types";
+import type { Config } from "./config.ts";
+import { hexKey, neighbourKeys } from "./hex.ts";
+import type { Hex, HexKey, MatchState, Seat, Terrain } from "./types.ts";
 
 export interface ScoreResult {
   points: number;

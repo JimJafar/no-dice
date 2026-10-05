@@ -10,13 +10,13 @@ import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
-import { generateMap } from "./board";
-import { DEFAULT_CONFIG, type Config } from "./config";
-import { boardCells, hexDistance, hexKey, neighbourKeys, parseHexKey } from "./hex";
-import { mulberry32 } from "./rng";
-import { resolveTurn, type TurnOutcome } from "./resolve";
-import { score } from "./supply";
-import type { Hex, HexKey, MatchState, Order, Seat, Terrain, WastedOrder } from "./types";
+import { generateMap } from "./board.ts";
+import { DEFAULT_CONFIG, type Config } from "./config.ts";
+import { boardCells, hexDistance, hexKey, neighbourKeys, parseHexKey } from "./hex.ts";
+import { mulberry32 } from "./rng.ts";
+import { resolveTurn, type TurnOutcome } from "./resolve.ts";
+import { score } from "./supply.ts";
+import type { Hex, HexKey, MatchState, Order, Seat, Terrain, WastedOrder } from "./types.ts";
 
 const B6 = "-4,0"; // seat A's Base, 5 troops at the start of the turn
 const C6 = "-3,0"; // plain, next to B6

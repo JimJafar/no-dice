@@ -16,6 +16,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@no-dice/runner": "workspace:*",
     "@types/node": "^24.19.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"

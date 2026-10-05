@@ -26,10 +26,10 @@ import type { Seat } from "@no-dice/salient-engine";
 import { turnPlayerSchema } from "@no-dice/runner/log";
 import { describe, expect, it } from "vitest";
 
-import { MatchServer } from "./server";
-import { NOTES_CHAR_LIMIT, SIMULATE_LIMIT, TOOL_CALL_LIMIT } from "./limits";
-import { TOOL_NAMES, type ToolName, type ToolOutcome } from "./session";
-import type { StateView } from "./view";
+import { MatchServer } from "./server.ts";
+import { NOTES_CHAR_LIMIT, SIMULATE_LIMIT, TOOL_CALL_LIMIT } from "./limits.ts";
+import { TOOL_NAMES, type ToolName, type ToolOutcome } from "./session.ts";
+import type { StateView } from "./view.ts";
 
 /** A match with its first turn open, and both seats' tokens in hand. */
 function openedMatch(seed = 135): {

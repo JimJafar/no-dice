@@ -14,8 +14,8 @@ import { MatchServer } from "@no-dice/salient-server";
 import type { RulesView, StateView } from "@no-dice/salient-server";
 import { describe, expect, it } from "vitest";
 
-import { greedyBot } from "./greedy";
-import type { BotState } from "./types";
+import { greedyBot } from "./greedy.ts";
+import type { BotState } from "./types.ts";
 
 /** A match with its first turn open, so both seats can call the read-only tools. */
 function openedMatch(seed: number): { server: MatchServer; matchId: string } {

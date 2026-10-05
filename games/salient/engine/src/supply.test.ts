@@ -7,11 +7,11 @@ import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
-import { generateMap } from "./board";
-import { DEFAULT_CONFIG, type Config } from "./config";
-import { boardCells, hexKey } from "./hex";
-import { score, visibleHexes } from "./supply";
-import type { Hex, HexKey, MatchState, Seat, Terrain } from "./types";
+import { generateMap } from "./board.ts";
+import { DEFAULT_CONFIG, type Config } from "./config.ts";
+import { boardCells, hexKey } from "./hex.ts";
+import { score, visibleHexes } from "./supply.ts";
+import type { Hex, HexKey, MatchState, Seat, Terrain } from "./types.ts";
 
 const B6 = "-4,0"; // seat A's Base, 5 troops at the start of the turn
 const C6 = "-3,0";

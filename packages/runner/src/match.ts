@@ -26,7 +26,7 @@ import { greedyBot, randomBot } from "@no-dice/salient-bots";
 import type { Bot, BotOrder } from "@no-dice/salient-bots";
 import { boardCells, DEFAULT_CONFIG, hexKey, score } from "@no-dice/salient-engine";
 import type { Config, Hex, MatchState, Seat } from "@no-dice/salient-engine";
-import engineManifest from "@no-dice/salient-engine/package.json";
+import engineManifest from "@no-dice/salient-engine/package.json" with { type: "json" };
 import {
   keyToLabel,
   matchConstants,
@@ -40,7 +40,7 @@ import {
 } from "@no-dice/salient-server";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
-import { cellsFor, matchLogSchema } from "./log";
+import { cellsFor, matchLogSchema } from "./log.ts";
 import type {
   BoardAfter,
   LogResult,
@@ -49,7 +49,7 @@ import type {
   PlayerHeader,
   TurnPlayerRecord,
   TurnRecord,
-} from "./log";
+} from "./log.ts";
 
 /** The five minutes brief §6.3 gives a turn before the seat is taken to have passed. */
 const TURN_TIMEOUT_MS = 300_000;

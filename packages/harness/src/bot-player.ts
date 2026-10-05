@@ -32,7 +32,7 @@ import type {
   RejectedSubmission,
   ToolCallRecord,
   TurnOutcome,
-} from "./player";
+} from "./player.ts";
 
 /** The three tools a bot plays a turn with, named for the game being played. */
 export interface BotTools {

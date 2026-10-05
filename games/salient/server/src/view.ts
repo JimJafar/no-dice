@@ -28,9 +28,9 @@ import { boardCells, hexKey, neighbourKeys, score, visibleHexes } from "@no-dice
 import type { Config, HexKey, MatchState, Seat, Terrain } from "@no-dice/salient-engine";
 import type { HexLabel, LogConfig, LogEvent, LogOrder, WastedLogOrder } from "@no-dice/runner/log";
 
-import { keyToLabel, labelToKey } from "./labels";
-import { SIMULATE_LIMIT, TOOL_CALL_LIMIT } from "./limits";
-import type { SettledTurn, TurnCounters } from "./session";
+import { keyToLabel, labelToKey } from "./labels.ts";
+import { SIMULATE_LIMIT, TOOL_CALL_LIMIT } from "./limits.ts";
+import type { SettledTurn, TurnCounters } from "./session.ts";
 
 /** A seat as the player looking at it knows itself and its opponent. */
 export type SeatView = "you" | "enemy";

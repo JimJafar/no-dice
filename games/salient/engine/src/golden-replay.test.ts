@@ -19,12 +19,12 @@ import { readFileSync, readdirSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { generateMap } from "./board";
-import { DEFAULT_CONFIG, type Config } from "./config";
-import { hexKey } from "./hex";
-import { resolveTurn } from "./resolve";
-import { score } from "./supply";
-import type { Hex, HexKey, MatchState, Order, Seat, Terrain, TurnEvent } from "./types";
+import { generateMap } from "./board.ts";
+import { DEFAULT_CONFIG, type Config } from "./config.ts";
+import { hexKey } from "./hex.ts";
+import { resolveTurn } from "./resolve.ts";
+import { score } from "./supply.ts";
+import type { Hex, HexKey, MatchState, Order, Seat, Terrain, TurnEvent } from "./types.ts";
 
 /** The five matches, in the order they are numbered. */
 const LOG_NAMES = [

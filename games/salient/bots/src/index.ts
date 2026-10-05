@@ -11,6 +11,6 @@ export const botsPackage = {
   name: "@no-dice/salient-bots",
 } as const;
 
-export { greedyBot } from "./greedy";
-export { randomBot } from "./random";
-export type { Bot, BotOrder, BotRules, BotState, BotTurn, Holder } from "./types";
+export { greedyBot } from "./greedy.ts";
+export { randomBot } from "./random.ts";
+export type { Bot, BotOrder, BotRules, BotState, BotTurn, Holder } from "./types.ts";

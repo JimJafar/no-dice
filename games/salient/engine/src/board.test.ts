@@ -7,8 +7,8 @@ import { createRequire } from "node:module";
 
 import { describe, expect, it } from "vitest";
 
-import { generateMap } from "./board";
-import { DEFAULT_CONFIG } from "./config";
+import { generateMap } from "./board.ts";
+import { DEFAULT_CONFIG } from "./config.ts";
 import {
   HEX_DIRECTIONS,
   boardCells,
@@ -19,9 +19,9 @@ import {
   neighbourKeys,
   parseHexKey,
   rotateHalfTurn,
-} from "./hex";
-import { mulberry32 } from "./rng";
-import type { Hex, HexKey, MatchState, Seat, Terrain } from "./types";
+} from "./hex.ts";
+import { mulberry32 } from "./rng.ts";
+import type { Hex, HexKey, MatchState, Seat, Terrain } from "./types.ts";
 
 const CELLS = boardCells(DEFAULT_CONFIG.radius);
 

@@ -12,11 +12,11 @@
  * Whole numbers only, no clock, and no dependence on the order the hexes happen
  * to be keyed in: the board is walked in one fixed order, row then column.
  */
-import { DEFAULT_CONFIG, type Config } from "./config";
-import { parseHexKey } from "./hex";
-import { score } from "./supply";
-import type { Hex, HexKey, MatchState, Order, Seat, TurnEvent, WastedOrder } from "./types";
-import { validateOrders } from "./validate-orders";
+import { DEFAULT_CONFIG, type Config } from "./config.ts";
+import { parseHexKey } from "./hex.ts";
+import { score } from "./supply.ts";
+import type { Hex, HexKey, MatchState, Order, Seat, TurnEvent, WastedOrder } from "./types.ts";
+import { validateOrders } from "./validate-orders.ts";
 
 const SEATS: readonly Seat[] = ["A", "B"];
 

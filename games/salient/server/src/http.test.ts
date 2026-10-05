@@ -18,10 +18,10 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 
-import { startServer, type RunningServer } from "./http";
-import { MatchServer } from "./server";
-import { TOOL_NAMES } from "./session";
-import type { RulesView, StateView } from "./view";
+import { startServer, type RunningServer } from "./http.ts";
+import { MatchServer } from "./server.ts";
+import { TOOL_NAMES } from "./session.ts";
+import type { RulesView, StateView } from "./view.ts";
 
 /** One server holding every match these tests play, and the endpoint over it. */
 let matches: MatchServer;

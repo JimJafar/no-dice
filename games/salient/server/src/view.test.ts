@@ -15,8 +15,8 @@ import { matchConfigSchema } from "@no-dice/runner/log";
 import type { HexLabel } from "@no-dice/runner/log";
 import { describe, expect, it } from "vitest";
 
-import { MatchServer } from "./server";
-import { PLAYER_SYSTEM_PROMPT, playerRulesText, stateView, type RulesView, type StateView } from "./view";
+import { MatchServer } from "./server.ts";
+import { PLAYER_SYSTEM_PROMPT, playerRulesText, stateView, type RulesView, type StateView } from "./view.ts";
 
 /** A match with its first turn open, and both seats able to call. */
 function openedMatch(seed = 135): { server: MatchServer; matchId: string } {

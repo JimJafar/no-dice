@@ -12,8 +12,8 @@ import type { Seat } from "@no-dice/salient-engine";
 import { MatchServer, type RulesView, type StateView, type TurnPlayerRecords } from "@no-dice/salient-server";
 import { describe, expect, it } from "vitest";
 
-import { randomBot } from "./random";
-import type { Bot, BotOrder } from "./types";
+import { randomBot } from "./random.ts";
+import type { Bot, BotOrder } from "./types.ts";
 
 /** A match with its first turn open, so both seats can call the read-only tools. */
 function openedMatch(seed: number): { server: MatchServer; matchId: string } {

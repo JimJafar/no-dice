@@ -30,9 +30,9 @@ import type { Config, Hex, HexKey, MatchState, Seat } from "@no-dice/salient-eng
 import { orderSchema } from "@no-dice/runner/log";
 import type { HexLabel, LogOrder, WastedLogOrder } from "@no-dice/runner/log";
 
-import { keyToLabel, ordersToEngine, ordersToLog, wastedToLog } from "./labels";
-import type { TurnCounters } from "./session";
-import { knownHexes, opponent, ownerAsView, type SeatView } from "./view";
+import { keyToLabel, ordersToEngine, ordersToLog, wastedToLog } from "./labels.ts";
+import type { TurnCounters } from "./session.ts";
+import { knownHexes, opponent, ownerAsView, type SeatView } from "./view.ts";
 
 /** One hex the projection moved, in the seat's own words. */
 export interface SimulatedHexView {

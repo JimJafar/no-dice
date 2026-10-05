@@ -8,7 +8,7 @@ import type { TurnEvent } from "@no-dice/salient-engine";
 import { hexLabelSchema } from "@no-dice/runner/log";
 import { describe, expect, it } from "vitest";
 
-import { eventsToLog, keyToLabel, labelToCoord, labelToKey, ordersToEngine, wastedToLog } from "./labels";
+import { eventsToLog, keyToLabel, labelToCoord, labelToKey, ordersToEngine, wastedToLog } from "./labels.ts";
 
 describe("labels", () => {
   it("names every hex of a generated board, and reads the label back", () => {

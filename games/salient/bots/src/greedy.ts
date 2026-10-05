@@ -18,9 +18,9 @@
  * stack it can see close by, and it keeps enough on a Node of its own to hold it
  * against the enemy stacks standing next to it.
  */
-import { botBoard, type BotBoard, type BotHex } from "./board";
-import { withinNote } from "./limits";
-import type { Bot, HexName } from "./types";
+import { botBoard, type BotBoard, type BotHex } from "./board.ts";
+import { withinNote } from "./limits.ts";
+import type { Bot, HexName } from "./types.ts";
 
 /** How much the bot likes each kind of move, in the prototype's `expander` style. */
 interface Weights {

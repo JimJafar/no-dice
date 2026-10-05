@@ -14,8 +14,8 @@ import { matchLogSchema as publishedMatchLogSchema } from "@no-dice/runner/log";
 import { describe, expect, it } from "vitest";
 import type { ZodIssue } from "zod";
 
-import { cellsFor, cellsSchema, matchLogSchema } from "./log";
-import type { Cell } from "./log";
+import { cellsFor, cellsSchema, matchLogSchema } from "./log.ts";
+import type { Cell } from "./log.ts";
 
 /**
  * Brief §7's example, field for field. Two places are written out where the

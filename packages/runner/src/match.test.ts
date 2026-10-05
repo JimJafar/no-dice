@@ -34,10 +34,10 @@ import { eventsToLog, playerToolServer, wastedToLog } from "@no-dice/salient-ser
 import type { MatchServer } from "@no-dice/salient-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { cellsFor, matchLogSchema } from "./log";
-import type { BoardAfter, LogOrder, MatchLog, Seat } from "./log";
-import { runMatch, salientVerdict } from "./match";
-import type { SeatSpec } from "./match";
+import { cellsFor, matchLogSchema } from "./log.ts";
+import type { BoardAfter, LogOrder, MatchLog, Seat } from "./log.ts";
+import { runMatch, salientVerdict } from "./match.ts";
+import type { SeatSpec } from "./match.ts";
 
 /** The timestamp every run here is given, so two runs can be compared. */
 const CREATED = "2026-10-04T22:00:00.000Z";

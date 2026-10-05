@@ -11,6 +11,6 @@ export const harnessPackage = {
   name: "@no-dice/harness",
 } as const;
 
-export { BotPlayer } from "./bot-player";
-export type { BotPlayerOptions, BotTools, Decision, SubmitVerdict } from "./bot-player";
-export type { Player, PlayerContext, RejectedSubmission, ToolCallRecord, TurnOutcome } from "./player";
+export { BotPlayer } from "./bot-player.ts";
+export type { BotPlayerOptions, BotTools, Decision, SubmitVerdict } from "./bot-player.ts";
+export type { Player, PlayerContext, RejectedSubmission, ToolCallRecord, TurnOutcome } from "./player.ts";

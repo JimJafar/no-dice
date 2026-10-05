@@ -12,7 +12,7 @@ import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import type { Config, Seat } from "@no-dice/salient-engine";
 import type { LogEvent, LogResult } from "@no-dice/runner/log";
 
-import { MatchSession, type ToolOutcome, type TurnPlayerRecords } from "./session";
+import { MatchSession, type ToolOutcome, type TurnPlayerRecords } from "./session.ts";
 
 /**
  * A seat's token: random and opaque, so nothing about the match can be guessed

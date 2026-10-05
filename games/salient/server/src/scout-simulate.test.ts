@@ -19,9 +19,9 @@ import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import type { Seat } from "@no-dice/salient-engine";
 import { describe, expect, it } from "vitest";
 
-import { MatchServer } from "./server";
-import type { SimulateView } from "./simulate";
-import type { ScoutView, StateHexView, StateView } from "./view";
+import { MatchServer } from "./server.ts";
+import type { SimulateView } from "./simulate.ts";
+import type { ScoutView, StateHexView, StateView } from "./view.ts";
 
 /** A match with its first turn open. */
 function openedMatch(seed = 135): { server: MatchServer; matchId: string } {

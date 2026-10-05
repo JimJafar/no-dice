@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@no-dice/runner':
+        specifier: workspace:*
+        version: link:packages/runner
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1

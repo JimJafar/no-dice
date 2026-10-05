@@ -24,8 +24,8 @@ import { MatchServer } from "@no-dice/salient-server";
 import type { RulesView, StateView } from "@no-dice/salient-server";
 import { describe, expect, it } from "vitest";
 
-import { greedyBot } from "./greedy";
-import type { Bot, BotRules, BotState } from "./types";
+import { greedyBot } from "./greedy.ts";
+import type { Bot, BotRules, BotState } from "./types.ts";
 
 /** The seeds the gate runs on: brief §8's 300. */
 const SEEDS = Array.from({ length: 300 }, (_, index) => index + 1);

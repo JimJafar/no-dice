@@ -30,8 +30,8 @@ import { z } from "zod";
 
 import { hexLabelSchema, orderSchema } from "@no-dice/runner/log";
 
-import type { MatchServer, TokenOwner } from "./server";
-import { TOOL_NAMES, type ToolName, type ToolOutcome } from "./session";
+import type { MatchServer, TokenOwner } from "./server.ts";
+import { TOOL_NAMES, type ToolName, type ToolOutcome } from "./session.ts";
 
 /** The loopback address brief §6.2 binds the server to. Not a choice. */
 const HOST = "127.0.0.1";

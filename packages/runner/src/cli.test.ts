@@ -6,6 +6,9 @@
  * - a match between two bots played from the flags brief §1 names, its log on
  *   disk validating against `salient-log/1`, and the run printing where the log
  *   is and how the match ended;
+ * - the `no-dice` bin started by a shell rather than by vitest: bare `node` on
+ *   the file the package declares, and the same file reached through a symlinked
+ *   directory, which is the shape of a package manager's bin shim;
  * - the default log path — `matches/<seed>-<a>-<b>.json` under the current
  *   directory, with the directory made on the way;
  * - every way a command line can be wrong (an unknown flag, a flag with no
@@ -17,16 +20,19 @@
  *
  * Seed 135 is the map the other suites use.
  */
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { runCli } from "./cli";
-import type { CliIo } from "./cli";
-import { matchLogSchema } from "./log";
-import type { MatchLog } from "./log";
+import runnerManifest from "../package.json" with { type: "json" };
+import { runCli } from "./cli.ts";
+import type { CliIo } from "./cli.ts";
+import { matchLogSchema } from "./log.ts";
+import type { MatchLog } from "./log.ts";
 
 /** Where the logs land, in a directory that is gone when the suite is done. */
 let dir: string;
@@ -58,6 +64,32 @@ const run = async (argv: readonly string[], cwd?: string): Promise<Run> => {
 
 /** The flags that ask for a Greedy-versus-Random match on seed 135. */
 const MATCH = ["match", "--game", "salient", "--a", "bot:greedy", "--b", "bot:random", "--seed", "135"];
+
+/**
+ * The file this package declares as its `no-dice` bin, as an absolute path, so
+ * the shell-level tests below run what a shell would run rather than a copy of
+ * the path that could drift away from the declaration.
+ */
+const BIN = fileURLToPath(new URL(runnerManifest.bin["no-dice"], new URL("../package.json", import.meta.url)));
+
+/** The lines a process printed, without the trailing newline. */
+const lines = (output: string): string[] => output.split("\n").filter((line) => line !== "");
+
+/**
+ * Run one command line in a separate `node` process, as a shell does, and hand
+ * back its exit code and what it printed. A failure to start the process counts
+ * as a non-zero run, so the assertions below say what went wrong.
+ */
+const runInShell = (file: string, argv: readonly string[], cwd: string): Promise<Run> =>
+  new Promise((settled) => {
+    execFile(process.execPath, [file, ...argv], { cwd }, (error, stdout, stderr) => {
+      settled({
+        code: error === null ? 0 : typeof error.code === "number" ? error.code : 1,
+        out: lines(stdout),
+        err: lines(stderr),
+      });
+    });
+  });
 
 /**
  * The one line a run prints for a log: its result type, its winner, and the
@@ -123,6 +155,40 @@ describe("no-dice match between two bots", () => {
     expect(result.code).not.toBe(0);
     expect(result.err[0]).toMatch(/^error: /);
     expect(existsSync(out)).toBe(false);
+  }, 60_000);
+});
+
+describe("the no-dice bin started by a shell", () => {
+  it("plays a match under bare node, with no loader or build step involved", async () => {
+    const out = join(dir, "bin", "135-greedy-random.json");
+
+    const result = await runInShell(BIN, [...MATCH, "--out", out], dir);
+
+    expect(result.err).toEqual([]);
+    expect(result.code).toBe(0);
+    // The log is there, and it is a match: the imports the workspace makes —
+    // `./match.ts`, the engine's `package.json` — are ones a bare Node ESM
+    // loader resolves, which is what a shell needs and vitest hides.
+    const log = matchLogSchema.parse(JSON.parse(await readFile(out, "utf8")) as unknown);
+    expect(log.seed).toBe(135);
+    expect(result.out[0]).toBe(out);
+    expect(result.out[1]).toMatch(resultLine(log));
+  }, 60_000);
+
+  it("still runs itself when the path to it goes through a symlinked directory", async () => {
+    // A package manager's bin shim reaches the file through a symlinked package
+    // directory, so `process.argv[1]` and the module Node loaded name one file by
+    // different routes. The main guard has to notice, or a run from a shell does
+    // nothing at all and leaves the terminal wondering.
+    const linked = join(dir, "pkg");
+    await symlink(dirname(BIN), linked, "dir");
+
+    const result = await runInShell(join(linked, "cli.ts"), [], dir);
+
+    // The command line was empty, so the guard ran the command and the command
+    // said what was missing — rather than the process exiting 0 in silence.
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("no command given");
   }, 60_000);
 });
 

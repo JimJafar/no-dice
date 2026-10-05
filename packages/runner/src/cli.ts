@@ -13,22 +13,23 @@
  * is one line that names what is wrong, because a run that took a minute to
  * reach its argument should not have to be guessed at.
  *
- * The `no-dice` bin of this package points here. What stops a shell running it
- * today is not the types — Node 22.18 and later strip those — but the imports:
- * the workspace imports each other without extensions (`./args`, `./match`) and
- * `./match` reads the engine's `package.json`, neither of which a bare Node ESM
- * loader resolves. Running the command from a shell therefore needs a
- * TypeScript-aware runner, which is what the milestone that builds a `dist/`
- * will give it; the tests drive `runCli` directly, which is the same code.
+ * The `no-dice` bin of this package points here, and a shell can run it as it
+ * stands: Node 22.18 and later strip the types themselves, and every import in
+ * the workspace names its file (`./args.ts`, `./match.ts`, the engine's
+ * `package.json` read with `with { type: "json" }`), which is what a bare Node
+ * ESM loader resolves and an extensionless one does not. `tsconfig.base.json`
+ * allows those specifiers through `allowImportingTsExtensions`, and nothing
+ * builds a `dist/` in order to run a match.
  */
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-import { defaultOutName, parseArgs } from "./args";
-import type { SeatArg } from "./args";
-import { runMatch } from "./match";
-import type { SeatSpec } from "./match";
-import type { LogResult } from "./log";
+import { defaultOutName, parseArgs } from "./args.ts";
+import type { SeatArg } from "./args.ts";
+import { runMatch } from "./match.ts";
+import type { SeatSpec } from "./match.ts";
+import type { LogResult } from "./log.ts";
 
 /** Where a run reports, injectable so a test can read it instead of a terminal. */
 export interface CliIo {
@@ -101,8 +102,25 @@ export async function runCli(argv: readonly string[], io: CliIo = {}): Promise<n
   }
 }
 
+/** The real path of the file this process was started on, or `null` when it is not there. */
+const realpathOf = (path: string | undefined): string | null => {
+  if (path === undefined) return null;
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+};
+
 // The bin: run the command line this process was started with, and leave the
 // exit code for the shell. Only when executed — importing `runCli` must not.
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+//
+// Both sides are compared after resolving symlinks. A package bin is started
+// through the shim in `node_modules/.bin`, whose path to this file runs through
+// a symlinked package directory, while Node loads the module it was given at its
+// real path — so the two name one file by different routes, and comparing them
+// as written leaves a run from a shell doing nothing at all.
+const invoked = realpathOf(process.argv[1]);
+if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
   process.exitCode = await runCli(process.argv.slice(2));
 }

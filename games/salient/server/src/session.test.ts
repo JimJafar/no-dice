@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import { turnEventSchema, turnPlayerSchema } from "@no-dice/runner/log";
 import { describe, expect, it } from "vitest";
 
-import { MatchServer } from "./server";
+import { MatchServer } from "./server.ts";
 
 /** A match with its first turn open, and both seats' tokens in hand. */
 function openedMatch(seed = 135): {

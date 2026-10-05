@@ -21,7 +21,7 @@
 import { HEX_DIRECTIONS, hexDistance } from "@no-dice/salient-engine";
 import type { Terrain } from "@no-dice/salient-engine";
 
-import type { BotRules, BotState, Holder, HexName } from "./types";
+import type { BotRules, BotState, Holder, HexName } from "./types.ts";
 
 /** One hex of the bot's board: what the map says, plus what the seat can see on it. */
 export interface BotHex {

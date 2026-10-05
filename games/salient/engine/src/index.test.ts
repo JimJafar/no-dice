@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { enginePackage } from "./index";
+import { enginePackage } from "./index.ts";
 
 describe("salient engine package", () => {
   it("is wired into the workspace", () => {
