@@ -23,6 +23,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { networkInterfaces, tmpdir, type NetworkInterfaceInfo } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import { MatchServer, TOOL_NAMES, startServer, type RunningServer } from "@no-dice/salient-server";
@@ -136,6 +137,8 @@ describe("the stub endpoint", () => {
 
     // The same port on another interface has nothing on it: a seat's prompts
     // and tool results are not something a match leaves the machine through.
+    // A container with no non-loopback interface has nothing outside to try, and
+    // there the bound address above is what carries the guarantee.
     for (const address of externalIpv4()) {
       const elsewhere = await fetch(`http://${address}:${bound.port}/v1/chat/completions`, {
         method: "POST",
@@ -288,15 +291,114 @@ describe("the stub endpoint", () => {
     expect(elapsed).toBeGreaterThanOrEqual(200);
   });
 
+  it("answers a caller that asked for no stream with one JSON completion", async () => {
+    const scripted = await StubModel.start([
+      { text: "Holding.", toolCalls: [{ name: salientToolName("scout"), args: { hex: "F6" } }] },
+    ]);
+    const response = await fetch(`${scripted.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...probeBody(SEVEN), stream: false }),
+    });
+    const contentType = response.headers.get("content-type");
+    const completion = (await response.json()) as Record<string, unknown>;
+    await scripted.stop();
+
+    // Pi always streams, but the stub is described as an OpenAI-compatible
+    // endpoint, so a caller that asked not to stream gets what it asked for
+    // rather than an event stream it would not parse.
+    expect(response.status).toBe(200);
+    expect(contentType).toContain("application/json");
+    expect(completion.object).toBe("chat.completion");
+    expect(completion.model).toBe("stub-1");
+    const choice = (completion.choices as Record<string, unknown>[])[0];
+    expect(choice.finish_reason).toBe("tool_calls");
+    expect(choice.message).toMatchObject({
+      role: "assistant",
+      content: "Holding.",
+      tool_calls: [{ type: "function", function: { name: salientToolName("scout"), arguments: '{"hex":"F6"}' } }],
+    });
+    expect((completion.usage as Record<string, unknown>).prompt_tokens_details).toMatchObject({ cached_tokens: 0 });
+  });
+
+  it("answers a script that fails as a 500 naming the script, rather than going unanswered", async () => {
+    // A script that throws, or tool-call arguments that cannot be serialised, is
+    // a bug in the test. The seat has to fail at the script rather than hang
+    // until its client times out.
+    const broken = await StubModel.start(() => {
+      throw new Error("the script was written wrong");
+    });
+    const answer = await chat(broken, probeBody([]));
+    await broken.stop();
+
+    expect(answer.status).toBe(500);
+    expect(answer.text).toContain("the script was written wrong");
+  });
+
   it("refuses a path it does not speak, rather than answering everything", async () => {
+    // From the origin, not from `baseUrl`, which already ends in `/v1`: these
+    // are the paths a client might send to a provider, named in full.
+    const origin = `http://127.0.0.1:${stub.port}`;
     for (const [method, path] of [
       ["POST", "/v1/completions"],
       ["GET", "/v1/models"],
       ["GET", "/v1/chat/completions"],
     ] as const) {
-      const response = await fetch(`${stub.baseUrl}${path}`, { method });
+      const response = await fetch(`${origin}${path}`, { method });
       expect(response.status, `${method} ${path}`).toBe(404);
     }
+  });
+
+  it("refuses a request for a model it is not, rather than answering any model", async () => {
+    const before = stub.requestCount;
+    const answer = await chat(stub, { ...probeBody([]), model: "stub-one" });
+
+    // A seat whose `--model` names the wrong id is a configuration mistake, and
+    // a stub that answered it would play a turn no test scripted.
+    expect(answer.status).toBe(400);
+    expect(answer.text).toContain("stub-1");
+    expect(answer.text).toContain("stub-one");
+    // And a request that was refused consumed nothing from the script.
+    expect(stub.requestCount).toBe(before);
+  });
+
+  it("lets a stopped stub exit rather than sitting out the rest of a delayed reply", async () => {
+    // The milestone's deadline case scripts a reply that sleeps past the turn.
+    // A harness aborts the seat long before that ends, and a stub that leaves
+    // the wait running keeps the test process alive for the whole deadline. So
+    // this is proved in a child that would otherwise not exit by itself.
+    const modulePath = pathToFileURL(join(import.meta.dirname, "stub-model.ts")).href;
+    const childScript = [
+      `const { StubModel, sleepsPastDeadline } = await import(${JSON.stringify(modulePath)});`,
+      "const stub = await StubModel.start(sleepsPastDeadline(300_000));",
+      // A seat's request, still waiting for its answer when the harness gives up.
+      "fetch(stub.baseUrl + '/chat/completions', {",
+      "  method: 'POST',",
+      "  body: JSON.stringify({ stream: true, messages: [] }),",
+      "}).catch(() => {});",
+      "await new Promise((resolve) => setTimeout(resolve, 200));",
+      "await stub.stop();",
+    ].join("\n");
+
+    let stderr = "";
+    const started = Date.now();
+    const code = await new Promise<number | null>((resolve) => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", childScript], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      child.stderr.setEncoding("utf-8");
+      child.stderr.on("data", (chunk: string) => (stderr += chunk));
+      // Only a stub that cancelled nothing leaves the child running, in which
+      // case this is what ends the run, five minutes short of where it should.
+      const killer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+      child.on("close", (status) => {
+        clearTimeout(killer);
+        resolve(status);
+      });
+    });
+
+    expect(code, `the child did not exit on its own: ${stderr}`).toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
 
@@ -395,15 +497,18 @@ describe("a Pi seat played by the stub", () => {
     prompt: string,
   ): Promise<{ status: number | null; stdout: string; stderr: string }> =>
     new Promise((settled, failed) => {
-      // No provider credential of any kind in the child's environment: the stub
-      // is the only thing this seat can reach, so nothing in this milestone can
-      // be passing because it found a real key on this machine.
-      const env: NodeJS.ProcessEnv = { ...process.env, ...home.env, PI_OFFLINE: "1" };
-      for (const name of Object.keys(env)) {
-        if (/^(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI|AWS|AZURE|XAI|MISTRAL|DEEPSEEK|GROQ|COHERE|AI)_/i.test(name)) {
-          delete env[name];
-        }
+      // The child's environment is an allowlist rather than `process.env` with
+      // the known key names taken out: a machine can hold a provider credential
+      // under a name nobody thought to list, and the point of these tests is
+      // that a seat needs none of them. The stub is the only thing a seat here
+      // can reach, so nothing in this milestone can be passing because it found
+      // a real key on this machine.
+      const env: NodeJS.ProcessEnv = { PI_OFFLINE: "1" };
+      for (const name of ["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "TZ"]) {
+        const value = process.env[name];
+        if (value !== undefined) env[name] = value;
       }
+      Object.assign(env, home.env);
 
       const child = spawn(
         process.execPath,
@@ -494,6 +599,8 @@ describe("a Pi seat played by the stub", () => {
       // What the model was actually offered, read off the body Pi sent rather
       // than off what the seat home was configured with.
       for (const request of stub.recorded) {
+        // The seat asked this stub for the id its own `models.json` names.
+        expect(request.body.model).toBe("stub-1");
         expect(request.toolNames.slice().sort()).toEqual(SEVEN.slice().sort());
         expect(request.systemPrompts).toHaveLength(1);
         expect(request.systemPrompts[0]).toContain("You act only through the salient tools.");

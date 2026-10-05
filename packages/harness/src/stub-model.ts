@@ -144,12 +144,6 @@ const replyJson = (res: ServerResponse, status: number, body: unknown): void => 
   res.end(payload);
 };
 
-/** Wait, without holding anything. */
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
 /** The name a Salient tool has in a model request: the MCP server's name, then the tool's. */
 export const salientToolName = (tool: string): string => `mcp__salient__${tool}`;
 
@@ -199,6 +193,8 @@ export class StubModel {
   private scriptPosition = 0;
   private callSeq = 0;
   private stopped = false;
+  /** The waits a delayed reply is sitting in, so `stop` can cancel them. */
+  private readonly waits = new Set<() => void>();
 
   // Assigned in the body rather than as constructor parameters: the `no-dice`
   // bin runs this file through Node's type stripping, which erases annotations
@@ -308,13 +304,34 @@ export class StubModel {
     return path;
   }
 
-  /** Stop listening, and drop the keep-alive sockets an SDK client holds open. */
+  /**
+   * Stop listening, drop the keep-alive sockets an SDK client holds open, and
+   * cancel the wait a delayed reply is sitting in — a seat aborted mid-turn
+   * must not keep the test process alive for the rest of its deadline.
+   */
   stop(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
+    for (const cancel of this.waits) cancel();
+    this.waits.clear();
     return new Promise((resolve) => {
       this.server.closeAllConnections();
       this.server.close(() => resolve());
+    });
+  }
+
+  /** Sleep, cancellable by `stop`, so an aborted seat leaves nothing running. */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.waits.delete(cancel);
+        resolve();
+      }, ms);
+      const cancel = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.waits.add(cancel);
     });
   }
 
@@ -359,6 +376,20 @@ export class StubModel {
       return;
     }
 
+    // A seat pointed at a model the stub is not is a configuration mistake, and
+    // the stub is the only thing in the way that can notice. Answering it would
+    // let a seat play a turn nobody scripted.
+    if (typeof body.model === "string" && body.model !== this.modelId) {
+      replyJson(res, 400, {
+        error: {
+          message: `the stub is model ${this.modelId}; it was asked for ${body.model}`,
+          type: "invalid_request_error",
+          code: "model_not_found",
+        },
+      });
+      return;
+    }
+
     const messages = Array.isArray(body.messages) ? (body.messages as Record<string, unknown>[]) : [];
     const tools = Array.isArray(body.tools) ? (body.tools as Record<string, unknown>[]) : [];
     const request: StubRequest = {
@@ -375,9 +406,41 @@ export class StubModel {
     };
     this.requests.push(request);
 
+    // A script that throws, or tool-call arguments that cannot be serialised, is
+    // a bug in the test rather than in the seat. Answering with the message makes
+    // the seat fail at the script, instead of leaving the request unanswered
+    // until the client times out and an unhandled rejection lands somewhere else.
+    try {
+      await this.answer(request, body, res);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (res.headersSent) {
+        if (!res.writableEnded) res.end();
+      } else {
+        replyJson(res, 500, {
+          error: {
+            message: `the stub's script failed: ${message}`,
+            type: "server_error",
+            code: "script_error",
+          },
+        });
+      }
+    }
+  }
+
+  /**
+   * Answer one recorded request from the script: one JSON completion when the
+   * caller asked not to stream, and the streamed form otherwise, which is what
+   * Pi asks for and what every scripted reply in this milestone travels in.
+   */
+  private async answer(
+    request: StubRequest,
+    body: Record<string, unknown>,
+    res: ServerResponse,
+  ): Promise<void> {
     const reply = this.replyFor(request);
     if (reply.delayMs !== undefined && reply.delayMs > 0) {
-      await sleep(reply.delayMs);
+      await this.sleep(reply.delayMs);
     }
     // A harness that aborted its seat stopped caring about this answer.
     if (res.writableEnded || res.destroyed) return;
@@ -395,14 +458,68 @@ export class StubModel {
     }
 
     const usage = { ...this.defaultUsage(request.index), ...reply.usage };
-    const toolCalls = reply.toolCalls ?? [];
+    const id = `chatcmpl-stub-${request.index + 1}`;
+    const created = Math.floor(Date.now() / 1000);
+    // The calls are put in their wire form once, before anything is answered, so
+    // arguments that cannot be serialised fail as a status rather than as a
+    // half-written stream.
+    const calls = (reply.toolCalls ?? []).map((call, position) => ({
+      index: position,
+      id: call.id ?? `stub-call-${request.index + 1}-${(this.callSeq += 1)}`,
+      name: call.name,
+      arguments: JSON.stringify(call.args ?? {}),
+    }));
+    const finishReason = calls.length > 0 ? "tool_calls" : "stop";
+    const usagePayload = {
+      prompt_tokens: usage.input + usage.cacheRead + usage.cacheWrite,
+      completion_tokens: usage.output,
+      total_tokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+      prompt_tokens_details: {
+        cached_tokens: usage.cacheRead,
+        ...(usage.cacheWrite > 0 ? { cache_write_tokens: usage.cacheWrite } : {}),
+      },
+      completion_tokens_details: {},
+    };
+
+    // Pi always asks for a stream. A caller that does not is answered with the
+    // one JSON completion it asked for, rather than an event stream it would
+    // not parse.
+    if (body.stream === false) {
+      replyJson(res, 200, {
+        id,
+        object: "chat.completion",
+        created,
+        model: this.modelId,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: reply.text ?? null,
+              ...(calls.length > 0
+                ? {
+                    tool_calls: calls.map((call) => ({
+                      id: call.id,
+                      type: "function",
+                      function: { name: call.name, arguments: call.arguments },
+                    })),
+                  }
+                : {}),
+            },
+            logprobs: null,
+            finish_reason: finishReason,
+          },
+        ],
+        usage: usagePayload,
+      });
+      return;
+    }
+
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
-    const id = `chatcmpl-stub-${request.index + 1}`;
-    const created = Math.floor(Date.now() / 1000);
     const chunk = (payload: Record<string, unknown>): void => {
       if (res.writableEnded || res.destroyed) return;
       const chunkBody = JSON.stringify({
@@ -425,10 +542,8 @@ export class StubModel {
     // is exercised against a tool call that is parsed as it arrives rather than
     // one that lands whole in a single delta.
     const ARGUMENT_SLICE = 64;
-    toolCalls.forEach((call, position) => {
-      const args = JSON.stringify(call.args ?? {});
-      const callId = call.id ?? `stub-call-${request.index + 1}-${(this.callSeq += 1)}`;
-      const first = args.slice(0, ARGUMENT_SLICE);
+    for (const call of calls) {
+      const first = call.arguments.slice(0, ARGUMENT_SLICE);
       chunk({
         choices: [
           {
@@ -436,8 +551,8 @@ export class StubModel {
             delta: {
               tool_calls: [
                 {
-                  index: position,
-                  id: callId,
+                  index: call.index,
+                  id: call.id,
                   type: "function",
                   function: { name: call.name, arguments: first },
                 },
@@ -448,7 +563,7 @@ export class StubModel {
           },
         ],
       });
-      for (let offset = ARGUMENT_SLICE; offset < args.length; offset += ARGUMENT_SLICE) {
+      for (let offset = ARGUMENT_SLICE; offset < call.arguments.length; offset += ARGUMENT_SLICE) {
         chunk({
           choices: [
             {
@@ -456,9 +571,9 @@ export class StubModel {
               delta: {
                 tool_calls: [
                   {
-                    index: position,
+                    index: call.index,
                     type: "function",
-                    function: { arguments: args.slice(offset, offset + ARGUMENT_SLICE) },
+                    function: { arguments: call.arguments.slice(offset, offset + ARGUMENT_SLICE) },
                   },
                 ],
               },
@@ -468,25 +583,9 @@ export class StubModel {
           ],
         });
       }
-    });
-    chunk({
-      choices: [
-        { index: 0, delta: {}, logprobs: null, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" },
-      ],
-    });
-    chunk({
-      choices: [],
-      usage: {
-        prompt_tokens: usage.input + usage.cacheRead + usage.cacheWrite,
-        completion_tokens: usage.output,
-        total_tokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
-        prompt_tokens_details: {
-          cached_tokens: usage.cacheRead,
-          ...(usage.cacheWrite > 0 ? { cache_write_tokens: usage.cacheWrite } : {}),
-        },
-        completion_tokens_details: {},
-      },
-    });
+    }
+    chunk({ choices: [{ index: 0, delta: {}, logprobs: null, finish_reason: finishReason }] });
+    chunk({ choices: [], usage: usagePayload });
     res.write("data: [DONE]\n\n");
     res.end();
   }

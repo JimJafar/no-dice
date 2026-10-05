@@ -25,6 +25,7 @@ export { createSeatHome } from "./pi-home.ts";
 export type { SeatHome, SeatHomeOptions, SeatId } from "./pi-home.ts";
 export {
   StubModel,
+  MODELS_FILE,
   STUB_MODEL_ID,
   STUB_PROVIDER,
   callsToolThenSubmits,

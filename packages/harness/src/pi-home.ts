@@ -9,9 +9,10 @@
  * tools, and a different system prompt and set of skills than the next match
  * had. `PI_CODING_AGENT_DIR` moves Pi's whole config directory, which is the
  * one switch that takes all of that out; on a fresh match directory the two
- * files written here are the only configuration a seat has, and the
- * `settings.json` written here plus the flags brief §6.3 lists leave it the
- * seven Salient tools and nothing else.
+ * files written here are the only configuration a seat has — the runner may add
+ * a third, the `models.json` that `StubModel.writeModelsJson` writes to name the
+ * model the seat plays — and the `settings.json` written here plus the flags
+ * brief §6.3 lists leave it the seven Salient tools and nothing else.
  *
  * The three directories are separate on purpose. `pi-home-<seat>/` is what Pi
  * reads and writes as its config; `cwd-<seat>/` is the empty working directory
