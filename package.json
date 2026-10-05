@@ -9,7 +9,7 @@
     "games/salient/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p games/salient/viewer",
     "test": "vitest run"
   },
   "engines": {

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Salient replay viewer</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/src/viewer.css">
+</head>
+<body>
+<div id="frame" class="frame">
+<div id="load" class="load">
+<div class="load-title">SALIENT REPLAY VIEWER</div>
+<p id="status" class="status" role="status"></p>
+<label class="pick"><input id="log-file" type="file" accept=".json,application/json">Choose a match log</label>
+<div class="hint">…or drop a log anywhere on this frame, or open the page as <code>?log=&lt;url&gt;</code>.</div>
+</div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

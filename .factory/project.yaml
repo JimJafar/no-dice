@@ -16,3 +16,8 @@ gates:
     run: pnpm test
     expect:
       minTests: previous
+
+  # The viewer is a browser app the root tsconfig project deliberately excludes,
+  # so `tsc` alone would not notice a viewer that cannot be bundled.
+  - name: viewer-build
+    run: pnpm --filter @no-dice/salient-viewer build

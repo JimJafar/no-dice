@@ -5,5 +5,13 @@
     "packages/**/*.ts",
     "games/salient/**/*.ts",
     "vitest.config.ts"
+  ],
+  // The viewer is a browser app and gets its own project, whose `lib` has the
+  // DOM. Listing it here would give every node package DOM globals too, so the
+  // base project's `exclude` is repeated rather than overridden away.
+  "exclude": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "games/salient/viewer/**"
   ]
 }

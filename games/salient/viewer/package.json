@@ -1,0 +1,23 @@
+{
+  "name": "@no-dice/salient-viewer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Salient replay viewer: a static Vite app that replays one salient-log/1 file in a browser and reads nothing else.",
+  "main": "./src/main.ts",
+  "types": "./src/main.ts",
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@no-dice/log": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "^8.3.2"
+  }
+}
