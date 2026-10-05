@@ -1,0 +1,13 @@
+{
+  "name": "@no-dice/stats",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Match and series statistics: one salient-log/1 becomes brief §6.7's per-model counts, split by turn depth.",
+  "exports": {
+    "./match-metrics": "./src/match-metrics.ts"
+  },
+  "dependencies": {
+    "@no-dice/log": "workspace:*"
+  }
+}
