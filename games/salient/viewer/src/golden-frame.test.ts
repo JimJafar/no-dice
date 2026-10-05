@@ -5,7 +5,7 @@
  *
  * Every other file here checks one view-model or one renderer. This one
  * assembles the frame the way `main.ts` does — the fixture read as the bytes
- * Vite serves at `?log=/golden-01-time-win.json`, put through the same
+ * Vite serves at `?log=/fixtures/golden-01-time-win.json`, put through the same
  * `parseLog` the page puts a log through, the frame index asked for turn 11 the
  * way the scrubber asks for it, and the four renderers drawing into elements of
  * the kinds `index.html` owns — and then reads the mock-up's numbers off the
@@ -110,13 +110,19 @@ function barHeight(slot: HTMLElement): string {
   return slot.querySelector<HTMLElement>(".lead")?.style.height ?? "";
 }
 
+/** An arrow as it is placed: its description, its pixel and its rotation. */
+function placed(arrow: HTMLElement): string {
+  return `${arrow.title} ${arrow.style.left}/${arrow.style.top} ${arrow.style.transform}`;
+}
+
 describe("the fixture reaches the page as a log", () => {
   it("is the file ?log= names in dev, and a log the viewer accepts", () => {
-    // Vite serves `fixtures/` at the root of the dev server, so this is the URL
-    // the page fetches; the test hands the same bytes to the same `parseLog`.
-    expect(pickLogSource("?log=/golden-01-time-win.json", [])).toEqual({
+    // The fixtures sit under Vite's root, so the dev server serves them at
+    // `/fixtures/<name>.json`; that is the URL the page fetches, and the test
+    // hands the same bytes to the same `parseLog` the fetch hands it.
+    expect(pickLogSource("?log=/fixtures/golden-01-time-win.json", [])).toEqual({
       kind: "url",
-      url: "/golden-01-time-win.json",
+      url: "/fixtures/golden-01-time-win.json",
     });
     expect(log.format).toBe("salient-log/1");
     expect(log.turns).toHaveLength(25);
@@ -167,26 +173,33 @@ describe("the turn-11 frame of golden-01", () => {
   it("outlines the fight at F6 and draws the mock-up's twelve order arrows", () => {
     const { board } = draw(TURN_11);
     // One outline, on the hex the turn's `battle` was fought on: F6, which A
-    // then took. The captures and the outline are the same fight, told twice.
+    // then took, at the mock-up's 318 px / 274 px. The captures and the outline
+    // are the same fight, told twice.
     expect(labels(board, ".hl")).toEqual(["F6"]);
+    const outline = board.querySelector<HTMLElement>(".hl")!;
+    expect(`${outline.style.left}/${outline.style.top}`).toBe("318px/274px");
 
     const arrows = [...board.querySelectorAll<HTMLElement>(".ar")];
     expect(arrows).toHaveLength(12);
-    // A's six orders then B's six, each as the mock-up's tooltip names it, which
-    // is the log's own record of what each seat submitted.
-    expect(arrows.map((arrow) => arrow.title)).toEqual([
-      "A: 5 from F5 to F6",
-      "A: 2 from F5 to G4",
-      "A: 2 from D6 to D7",
-      "A: 2 from C6 to D6",
-      "A: 2 from C7 to D7",
-      "A: 2 from B6 to C6",
-      "B: 4 from H6 to H5",
-      "B: 1 from K1 to K2",
-      "B: 2 from I6 to H6",
-      "B: 2 from I5 to H5",
-      "B: 2 from J6 to I6",
-      "B: 2 from J4 to J3",
+    // A's six orders then B's six, each as the mock-up's tooltip names it, at
+    // the pixel the log's own `q`/`r` puts it: the midpoint of the two hex
+    // centres, at the angle that edge runs. The six along a row are at the
+    // mock-up's markup exactly; the six diagonal ones are a few pixels off the
+    // positions that markup hand-placed, which is why the pixel is pinned here
+    // rather than compared to the file (`docs/viewer-notes.md` §4).
+    expect(arrows.map(placed)).toEqual([
+      "A: 5 from F5 to F6 326px/281px rotate(60deg)",
+      "A: 2 from F5 to G4 326px/225px rotate(-60deg)",
+      "A: 2 from D6 to D7 230px/336px rotate(60deg)",
+      "A: 2 from C6 to D6 182px/309px rotate(0deg)",
+      "A: 2 from C7 to D7 214px/364px rotate(0deg)",
+      "A: 2 from B6 to C6 118px/309px rotate(0deg)",
+      "B: 4 from H6 to H5 455px/281px rotate(-120deg)",
+      "B: 1 from K1 to K2 519px/59px rotate(60deg)",
+      "B: 2 from I6 to H6 503px/309px rotate(180deg)",
+      "B: 2 from I5 to H5 471px/253px rotate(180deg)",
+      "B: 2 from J6 to I6 567px/309px rotate(180deg)",
+      "B: 2 from J4 to J3 519px/170px rotate(-120deg)",
     ]);
   });
 
@@ -225,19 +238,26 @@ describe("the turn-11 frame of golden-01", () => {
     expect(slots.slice(0, 11).map(barHeight)).toEqual([
       "4px", "8px", "8px", "4px", "12px", "4px", "4px", "12px", "16px", "8px", "40px",
     ]);
+    // And nothing past the last played turn: the axis runs the length of the
+    // match, so the fourteen turns still to come stand empty.
+    expect(slots.slice(11).map(barHeight)).toEqual(Array.from({ length: 14 }, () => ""));
   });
 });
 
 describe("the same turn under B's fog", () => {
   it("hides 27 playable hexes, and draws them as fog rather than not at all", () => {
     const { board } = draw(TURN_11, "B");
-    const playable = new Set(log.map.filter((hex) => hex.terrain !== "blocked").map((hex) => hex.id));
-    const hidden = labels(board, ".hx.f");
-    expect(hidden).toHaveLength(27);
-    for (const label of hidden) expect(playable.has(label), `${label} is not playable`).toBe(true);
-    // A blocked hex has no owner and no troops whoever looks at it, so the
-    // mock-up's 12 dark hatches are unchanged by the toggle.
+    // The mock-up's 27, in the map's own order: every playable hex that is
+    // neither B's nor next to one of B's. A blocked hex is nobody's and holds
+    // nothing whoever looks at it, so the 12 dark hatches are unchanged by the
+    // toggle, and the 5 cut-off hexes — all B's, so all in B's sight — stay.
+    expect(labels(board, ".hx.f")).toEqual([
+      "D3", "C4", "D4", "E4", "B5", "C5", "D5", "E5", "F5", "A6", "B6", "C6", "D6",
+      "A7", "B7", "C7", "A8", "B8", "C8", "B9", "D9", "A10", "B10", "D10", "A11",
+      "B11", "D11",
+    ]);
     expect(board.querySelectorAll(".hx.x")).toHaveLength(12);
+    expect(board.querySelectorAll(".hx.bc")).toHaveLength(5);
     // The board is the same board, in the same box.
     expect(board.style.width).toBe("705px");
     expect(board.style.height).toBe("629px");

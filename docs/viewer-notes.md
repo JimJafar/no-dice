@@ -31,7 +31,9 @@ http://localhost:5173/?log=/fixtures/golden-01-time-win.json
 ```
 
 `?log=` is an ordinary `fetch`, so any static server will do for a log of your
-own — a match the runner wrote, or a series' `matches/` directory:
+own — a match the runner wrote, or a series' `matches/` directory. The fixtures
+are served by `dev` only: `build` copies nothing out of `fixtures/`, so a
+`preview` page needs the log served beside it.
 
 ```bash
 pnpm --filter @no-dice/salient-viewer build
@@ -42,8 +44,10 @@ pnpm --filter @no-dice/salient-viewer preview   # the built page, on 4173
 
 A log the page cannot take is reported as one readable line — not JSON at all,
 or JSON that is not a `salient-log/1` log, with the offending field paths named.
-The prototype's golden logs under `games/salient/golden/` are the usual mistake:
-they carry no `format` field, so they are rejected rather than half-read.
+A `?log=` path nothing serves is the same message rather than a 404, because a
+Vite page answers an unknown path with its own HTML. The prototype's golden logs
+under `games/salient/golden/` are the usual mistake: they carry no `format`
+field, so they are rejected rather than half-read.
 
 The viewer reads the log and nothing else. It never imports the engine, never
 calls the match server and never recomputes a turn; `src/module-graph.test.ts`
@@ -122,9 +126,10 @@ chart — so the comparison does not have to be repeated by eye next time.
 - The panels: 22 troops / 2 Nodes / 6 of 6 actions, and 24 / 1 / 6 of 6.
 - The chart: 25 slots for a 25-turn match, bars of 4, 8, 8, 4, 12, 4, 4, 12, 16,
   8 and 40 px for turns 1 to 11, turn 10 below the line and turn 11 marked `+10`.
-- The fog frame: 27 playable hexes drawn as fog, the 12 blocked hexes unchanged,
-  a `?` inside A's Base and inside the two Nodes of A's that B cannot see, and
-  both Bases and all 7 Nodes still on the board.
+- The fog frame: 27 playable hexes drawn as fog — the mock-up's 27, hex for
+  hex — the 12 blocked hexes unchanged, a `?` inside A's Base and inside the two
+  Nodes of A's that B cannot see, and both Bases and all 7 Nodes still on the
+  board.
 
 **What did not, and why.**
 
@@ -147,10 +152,13 @@ chart — so the comparison does not have to be repeated by eye next time.
   B's hexes" — it names every capture the turn logged, not only the one the
   mock-up chose to feature, and names a Node by its terrain because the log has
   no word "centre" in it. The page does not draw it yet (section 3).
-- Six arrows, the diagonal ones, sit 4 px right and 2 px up from the mock-up's
-  markup. The mock-up placed those by hand a few pixels off its own geometry;
-  the viewer puts every arrow at the midpoint of its two hex centres, at the
-  angle that edge runs, which is where the mock-up's row arrows already are.
+- Six arrows, the diagonal ones, are a few pixels off the mock-up's markup:
+  five sit 4 px right and 2 px up, and `A: 2 from F5 to G4` sits 4 px left and
+  2 px up. The mock-up placed those by hand a little off its own geometry; the
+  viewer puts every arrow at the midpoint of its two hex centres, at the angle
+  that edge runs, which is where the mock-up's six row arrows already are. The
+  test pins all twelve pixels and rotations, so a geometry change shows up there
+  rather than in the comparison.
 - Blocked hexes carry their labels. The mock-up leaves its 12 unlabelled, though
   the log names them, and the rules and the orders use those names.
 - The page has controls the mock-up does not — Back, a scrub slider, Forward,
