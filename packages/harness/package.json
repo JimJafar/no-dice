@@ -1,0 +1,21 @@
+{
+  "name": "@no-dice/harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The player harness: the Player interface the match runner drives, and a BotPlayer that plays a turn through ordinary MCP calls.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.0"
+  },
+  "devDependencies": {
+    "@no-dice/salient-bots": "workspace:*",
+    "@no-dice/salient-engine": "workspace:*",
+    "@no-dice/salient-server": "workspace:*",
+    "zod": "^4.1.11"
+  }
+}

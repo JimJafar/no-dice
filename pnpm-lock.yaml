@@ -45,6 +45,25 @@ importers:
         specifier: ^4.1.11
         version: 4.6.5
 
+  packages/harness:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.0
+        version: 1.32.0(zod@4.6.5)
+    devDependencies:
+      '@no-dice/salient-bots':
+        specifier: workspace:*
+        version: link:../../games/salient/bots
+      '@no-dice/salient-engine':
+        specifier: workspace:*
+        version: link:../../games/salient/engine
+      '@no-dice/salient-server':
+        specifier: workspace:*
+        version: link:../../games/salient/server
+      zod:
+        specifier: ^4.1.11
+        version: 4.6.5
+
   packages/runner:
     dependencies:
       zod:
