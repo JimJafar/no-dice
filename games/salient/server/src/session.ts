@@ -11,10 +11,11 @@
  * gives back what the log needs for the turn.
  *
  * Nothing here is an MCP tool: the runner reaches a session in-process. The
- * read-only tools — `get_rules` and `get_state`, answered by `view` — are wired
- * up here; the tools that change something, and the limit errors, come in the
- * tasks that follow. The state they all read, and the counting they all refuse
- * against, is built here.
+ * tools that only read — `get_rules` and `get_state`, answered by `view` — and
+ * the two that spend something without committing it — `scout` and `simulate` —
+ * are wired up here; the tools that change something, and the limit errors, come
+ * in the tasks that follow. The state they all read, and the counting they all
+ * refuse against, is built here.
  */
 import { generateMap, resolveTurn as engineResolveTurn, visibleHexes } from "@no-dice/salient-engine";
 import type { Config, HexKey, MatchResult, MatchState, Order, Seat } from "@no-dice/salient-engine";
@@ -30,7 +31,8 @@ import type {
 } from "@no-dice/runner/log";
 
 import { eventsToLog, labelToKey, ordersToEngine, wastedToLog } from "./labels";
-import { rulesView, stateView, type StateView } from "./view";
+import { simulateTurn } from "./simulate";
+import { rulesView, scoutView, stateView, type StateView } from "./view";
 
 /** The seven tools a player can call, named as the log names them. */
 export const TOOL_NAMES = [
@@ -146,6 +148,8 @@ export class MatchSession {
     {
       get_rules: (seat) => ({ ok: true, result: rulesView(this.board, seat, this.config) }),
       get_state: (seat) => ({ ok: true, result: this.viewFor(seat) }),
+      scout: (seat, args) => this.scout(seat, args),
+      simulate: (seat, args) => this.simulate(seat, args),
       submit_orders: (seat, args) => this.submitOrders(seat, args),
     };
 
@@ -341,6 +345,38 @@ export class MatchSession {
     }
     this.live.seats[seat].submission = { orders: parsed, intent, prediction };
     return { ok: true, result: { accepted: true } };
+  }
+
+  /**
+   * `scout`: one action point for the hex the seat asked for and the hexes
+   * touching it, as they stand on the board the turn opened on. A submission
+   * commits nothing until `resolveTurn`, so what the other seat has handed in
+   * has not moved these hexes yet. `count` is where the action point is spent —
+   * and refuses to spend one on a hex that is not on the board — and where the
+   * hex joins the ones the seat knows for the rest of the turn.
+   */
+  private scout(seat: Seat, args: unknown): HandlerResult {
+    const key = labelToKey(scoutHex(args), this.config.radius);
+    if (key === null) return { ok: false, error: "unknown_hex" };
+    return { ok: true, result: scoutView(this.board, seat, this.config, key) };
+  }
+
+  /**
+   * `simulate`: what the seat's orders would do, worked out on what the seat
+   * knows and costing one of its three simulations. `simulate` builds the board
+   * it runs on; nothing here commits anything.
+   */
+  private simulate(seat: Seat, args: unknown): HandlerResult {
+    const called = args as { orders?: unknown; assumed_enemy_orders?: unknown } | null;
+    const outcome = simulateTurn({
+      state: this.board,
+      seat,
+      config: this.config,
+      used: this.live.seats[seat],
+      orders: called?.orders,
+      assumed_enemy_orders: called?.assumed_enemy_orders,
+    });
+    return outcome.ok ? { ok: true, result: outcome.view } : { ok: false, error: outcome.error };
   }
 
   /** What `seat` is allowed to be told about the turn that is open. */

@@ -72,9 +72,9 @@ describe("call", () => {
   it("counts every call a seat makes, including the ones that answer an error", () => {
     const { server, matchId } = openedMatch();
 
-    // `scout` is the one real tool still to be wired up, so it answers the same
-    // way an unrecognised name does.
-    expect(server.call(matchId, "A", "scout", { hex: "C6" }).error).toBe("unknown_tool");
+    // `read_notes` is one of the real tools still to be wired up, so it answers
+    // the same way an unrecognised name does.
+    expect(server.call(matchId, "A", "read_notes", {}).error).toBe("unknown_tool");
     server.call(matchId, "A", "not_a_salient_tool", {});
     server.call(matchId, "A", "submit_orders", { orders: [], intent: "hold", prediction: "nothing moves" });
 
@@ -82,7 +82,7 @@ describe("call", () => {
     // and still count.
     expect(server.match(matchId).counters("A").toolCalls).toBe(2);
     const transcript = server.turnRecord(matchId, 1).A.tool_calls;
-    expect(transcript.map((call) => call.tool)).toEqual(["scout", "not_a_salient_tool", "submit_orders"]);
+    expect(transcript.map((call) => call.tool)).toEqual(["read_notes", "not_a_salient_tool", "submit_orders"]);
     expect(transcript.map((call) => call.error)).toEqual([true, true, false]);
   });
 
@@ -144,7 +144,7 @@ describe("status and openTurn", () => {
       scouted: [],
     });
     expect(server.turnRecord(matchId, 2).A.tool_calls).toEqual([]);
-    expect(server.call(matchId, "A", "scout", { hex: "C6" }).error).toBe("unknown_tool");
+    expect(server.call(matchId, "A", "read_notes", {}).error).toBe("unknown_tool");
   });
 
   it("keeps the turn before it readable once the next one opens", () => {

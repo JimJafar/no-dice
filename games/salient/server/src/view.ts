@@ -1,20 +1,26 @@
 /**
- * What a seat is allowed to see: the two read-only tools, `get_rules` and
- * `get_state`.
+ * What a seat is allowed to see: the answers `get_rules` and `get_state` give,
+ * and the hex list `scout` gives.
  *
  * `get_rules` answers the half of the match that never changes — the rules text,
  * the constants, the two Bases and the whole map — so a player calls it once, on
  * turn 1, and is never told any of it again. `get_state` answers the half that
  * changes, and holds to the rules' "Visibility and scouting": a seat sees the
- * hexes it owns, the hexes next to them, and whatever it scouted this turn, and
- * nothing else. Terrain is known for every hex of every map, so `get_state`
- * sends none of it, and a hex the seat cannot see is left out rather than
+ * hexes it owns and the hexes next to them, and whatever it has scouted this
+ * turn together with the hexes next to that, and nothing else. Terrain is known
+ * for every hex of every map, so `get_state` sends none of it, and a hex the
+ * seat cannot see is left out rather than
  * reported empty — an empty hex would tell the seat the hex exists and is
  * unowned, which is exactly what hiding it is for.
  *
- * Both answers are written in the seat's own words — `you`, `enemy`,
- * `your_orders` — so no field of either one names the other seat. The only
+ * Every answer is written in the seat's own words — `you`, `enemy`,
+ * `your_orders` — so no field of any one names the other seat. The only
  * difference between the two seats' `get_rules` is which Base is called `you`.
+ *
+ * `scout` is the third answer here because it is the same view of the same
+ * hexes: one action point buys the seat a hex and the hexes touching it, in the
+ * shape `get_state` reports them, and the hexes stay known for the rest of the
+ * turn. What the scout costs is counted in `session`, not here.
  */
 import { readFileSync } from "node:fs";
 
@@ -48,13 +54,13 @@ export function playerRulesText(): string {
 }
 
 /** The seat `seat` is playing against. */
-const opponent = (seat: Seat): Seat => (seat === "A" ? "B" : "A");
+export const opponent = (seat: Seat): Seat => (seat === "A" ? "B" : "A");
 
 /** `seat`, seen from `viewer`'s side of the board. */
 const asView = (seat: Seat, viewer: Seat): SeatView => (seat === viewer ? "you" : "enemy");
 
 /** An owner, seen from `viewer`'s side, with a neutral hex staying neutral. */
-const ownerAsView = (owner: Seat | null, viewer: Seat): SeatView | null =>
+export const ownerAsView = (owner: Seat | null, viewer: Seat): SeatView | null =>
   owner === null ? null : asView(owner, viewer);
 
 /** Every hex a move can stand on: the board without its blocked hexes. */
@@ -195,16 +201,7 @@ export function stateView(input: StateViewInput): StateView {
     // Unknown hexes are left out, and so are blocked ones, which have nothing to
     // report and whose terrain the seat already has from `get_rules`.
     if (!known.has(key) || hex.terrain === "blocked") continue;
-    const entry: StateHexView = {
-      id: hex.id,
-      owner: ownerAsView(hex.owner, seat),
-      troops: hex.troops,
-    };
-    if (hex.owner === seat && hex.troops > 0) {
-      entry.neighbours = neighboursOf(key, passable, config.radius);
-    }
-    if (hex.terrain === "node" && hex.owner === null) entry.garrison = hex.garrison;
-    hexes.push(entry);
+    hexes.push(hexView(state, key, seat, config, passable));
   }
 
   return {
@@ -224,6 +221,54 @@ export function stateView(input: StateViewInput): StateView {
   };
 }
 
+/**
+ * One hex as `seat` is allowed to see it: who holds it, how many stand there,
+ * the hexes it can move to when `seat` can move from it, and the garrison an
+ * attacker has to beat on a Node no one has taken.
+ */
+function hexView(
+  state: MatchState,
+  key: HexKey,
+  seat: Seat,
+  config: Config,
+  passable: ReadonlySet<HexKey>,
+): StateHexView {
+  const hex = state.hexes[key];
+  const entry: StateHexView = {
+    id: hex.id,
+    owner: ownerAsView(hex.owner, seat),
+    troops: hex.troops,
+  };
+  if (hex.owner === seat && hex.troops > 0) {
+    entry.neighbours = neighboursOf(key, passable, config.radius);
+  }
+  if (hex.terrain === "node" && hex.owner === null) entry.garrison = hex.garrison;
+  return entry;
+}
+
+/** What `scout` answers: the hexes one scout reveals, in the board's one order. */
+export interface ScoutView {
+  hexes: StateHexView[];
+}
+
+/**
+ * The hex `key` and the hexes touching it, as they stand on `state` — which is
+ * the board the turn opened on, since a submission commits nothing. Blocked
+ * hexes are left out as `get_state` leaves them out: they have no owner and no
+ * troops to report, and their terrain is already in `get_rules`.
+ */
+export function scoutView(state: MatchState, seat: Seat, config: Config, key: HexKey): ScoutView {
+  const passable = passableKeys(state);
+  const revealed = new Set<HexKey>([key, ...neighbourKeys(key, passable)]);
+  const hexes: StateHexView[] = [];
+  for (const cell of boardCells(config.radius)) {
+    const at = hexKey(cell.q, cell.r);
+    if (!revealed.has(at) || state.hexes[at].terrain === "blocked") continue;
+    hexes.push(hexView(state, at, seat, config, passable));
+  }
+  return { hexes };
+}
+
 /** Last turn as `seat` is allowed to hear it. */
 function lastTurnView(previous: SettledTurn, seat: Seat, config: Config): LastTurnView {
   return {
@@ -238,17 +283,25 @@ function lastTurnView(previous: SettledTurn, seat: Seat, config: Config): LastTu
   };
 }
 
-/** The hexes the seat knows this turn: what owning reveals, plus what it scouted. */
-function knownHexes(
+/**
+ * The hexes the seat knows this turn: what owning reveals, plus what it has
+ * scouted. A scout reveals the hex it asked for and the hexes touching it, so
+ * all seven count as known from then on — `get_state` and `simulate` have to
+ * agree with what the seat was shown.
+ */
+export function knownHexes(
   state: MatchState,
   seat: Seat,
   config: Config,
   scouted: readonly HexLabel[],
 ): Set<HexKey> {
+  const passable = passableKeys(state);
   const known = visibleHexes(state, seat);
   for (const label of scouted) {
     const key = labelToKey(label, config.radius);
-    if (key !== null) known.add(key);
+    if (key === null) continue;
+    known.add(key);
+    for (const neighbour of neighbourKeys(key, passable)) known.add(neighbour);
   }
   return known;
 }

@@ -5,9 +5,10 @@
  * turn, resolve it, read the turn record — and `MatchSession` is the match
  * itself, holding the board, the seats' submissions and the per-turn counters.
  * `labels` is where the engine's `"q,r"` keys and the labels the players and the
- * log use are translated, and `view` is what each seat is allowed to see: the
- * answers `get_rules` and `get_state` give, with the other seat's name nowhere
- * in them.
+ * log use are translated, `view` is what each seat is allowed to see — the
+ * answers `get_rules` and `get_state` give and the hexes `scout` reveals, with
+ * the other seat's name nowhere in them — and `simulate` is the projection
+ * `simulate` answers, run on a board of nothing but what the caller knows.
  */
 export const serverPackage = {
   name: "@no-dice/salient-server",
@@ -32,17 +33,28 @@ export {
   labelToCoord,
   labelToKey,
   ordersToEngine,
+  ordersToLog,
   wastedToLog,
 } from "./labels";
 export {
+  simulateTurn,
+  type SimulatedHexView,
+  type SimulateInput,
+  type SimulateOutcome,
+  type SimulateView,
+} from "./simulate";
+export {
+  knownHexes,
   matchConstants,
   PLAYER_SYSTEM_PROMPT,
   playerRulesText,
   rulesView,
+  scoutView,
   stateView,
   type LastTurnView,
   type MapHexView,
   type RulesView,
+  type ScoutView,
   type SeatView,
   type StateEventView,
   type StateHexView,

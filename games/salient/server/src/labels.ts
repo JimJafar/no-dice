@@ -50,6 +50,15 @@ export function ordersToEngine(orders: readonly LogOrder[], radius: number): Ord
   }));
 }
 
+/** The engine's orders, back in the labels the players and the log name hexes by. */
+export function ordersToLog(orders: readonly Order[], radius: number): LogOrder[] {
+  return orders.map((order) => ({
+    from: keyToLabel(order.from, radius),
+    to: keyToLabel(order.to, radius),
+    troops: order.troops,
+  }));
+}
+
 /** The engine's dropped orders, back in the labels the log names hexes by. */
 export function wastedToLog(wasted: readonly WastedOrder[], radius: number): WastedLogOrder[] {
   return wasted.map((waste) => ({
