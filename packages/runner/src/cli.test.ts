@@ -33,6 +33,7 @@ import { runCli } from "./cli.ts";
 import type { CliIo } from "./cli.ts";
 import { matchLogSchema } from "./log.ts";
 import type { MatchLog } from "./log.ts";
+import { withoutAnthropicCredentials } from "./test-credentials.ts";
 
 /** Where the logs land, in a directory that is gone when the suite is done. */
 let dir: string;
@@ -277,10 +278,7 @@ describe("a seat given a model", () => {
     // A seat's Pi home is empty, so an exported key is the only credential this
     // run could find. Take it away, or the run would be a real one against
     // Anthropic.
-    const saved = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].map(
-      (name) => [name, process.env[name]] as const,
-    );
-    for (const [name] of saved) delete process.env[name];
+    const restore = withoutAnthropicCredentials();
     try {
       for (const flag of ["--a", "--b"]) {
         const out = join(dir, `model-${flag}.json`);
@@ -299,9 +297,7 @@ describe("a seat given a model", () => {
         expect(existsSync(out)).toBe(false);
       }
     } finally {
-      for (const [name, value] of saved) {
-        if (value !== undefined) process.env[name] = value;
-      }
+      restore();
     }
   }, 60_000);
 });

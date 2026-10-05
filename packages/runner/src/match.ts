@@ -159,7 +159,12 @@ export interface RunMatchOptions {
    * stats package would replay it as a different game.
    */
   config?: Config;
-  /** Who plays each seat. */
+  /**
+   * Who plays each seat. A Pi seat's header records the context window Pi
+   * reported for its model, and only a played turn surfaces one: a Pi seat that
+   * never got a turn answered — every provider dead, its abort ignored too —
+   * fails the run at the header rather than writing a window no seat ran with.
+   */
   seats: Record<Seat, SeatSpec>;
   /** The clock `created` is taken from. Injectable so two runs can be compared. */
   clock?: () => Date;
@@ -175,7 +180,8 @@ export interface RunMatchOptions {
   /**
    * The directory a Pi seat's config home, working directory and session
    * transcripts are made in. Defaults to a directory with the log's name and its
-   * extension taken off: `matches/135.json` gets `matches/135/`.
+   * extension taken off: `matches/135.json` gets `matches/135/`, and a log named
+   * without an extension gets `matches/run1-match/`.
    */
   matchDir?: string;
   /**
@@ -387,9 +393,18 @@ const playSeat = async (
   // only keeps Node from calling an unhandled rejection fatal in between.
   played.catch(() => undefined);
   const stopWatching = watchSubmission(limits.hasSubmission, limits.afterSubmissionMs, abort);
-  let outcome = await within(played, limits.timeoutMs);
+  let outcome: TurnOutcome | null = null;
+  try {
+    outcome = await within(played, limits.timeoutMs);
+  } finally {
+    // Stopped whatever the turn did, including rejecting. A match voided by a
+    // seat that reached a tool outside the seven throws past here, and a watcher
+    // left polling holds the event loop open for ever — the operator reads the
+    // error and then a `no-dice` that never exits — while going on to abort a
+    // seat that has already been taken down.
+    stopWatching();
+  }
   const timedOut = outcome === null;
-  stopWatching();
   if (timedOut) {
     await abort();
     outcome = await within(played, ABORT_GRACE_MS);
@@ -406,9 +421,11 @@ const playSeat = async (
  * submission, and say nothing if the turn ended first.
  *
  * The asking is a poll because the server gives no notice: `MatchSession.status`
- * is a read of an in-memory record, and it stops as soon as the turn does. An
- * abort that fails is not reported from here — the turn is still bounded by its
- * own timeout, and the abort that answers a timeout is the one that reports.
+ * is a read of an in-memory record, and it stops as soon as the turn does. A
+ * watcher that cannot ask, or cannot abort, says nothing and stops: the turn is
+ * still bounded by its own timeout, and the abort that answers a timeout is the
+ * one that reports. Nothing in here may reject unawaited, which Node treats as
+ * fatal.
  */
 const watchSubmission = (
   hasSubmission: () => boolean,
@@ -427,11 +444,15 @@ const watchSubmission = (
       };
     });
   void (async () => {
-    while (!stopped && !hasSubmission()) await wait(SUBMISSION_POLL_MS);
-    if (stopped) return;
-    await wait(graceMs);
-    if (stopped) return;
-    await abort().catch(() => undefined);
+    try {
+      while (!stopped && !hasSubmission()) await wait(SUBMISSION_POLL_MS);
+      if (stopped) return;
+      await wait(graceMs);
+      if (stopped) return;
+      await abort();
+    } catch {
+      // The seat is bounded by the turn's own timeout either way.
+    }
   })();
   return () => {
     stopped = true;
@@ -521,11 +542,19 @@ interface Seated {
 }
 
 /**
- * The directory a match's own files go in: the log, and beside it a directory of
- * the same name holding each Pi seat's home, working directory and session
- * transcripts. A rerun on the same `out` overwrites both.
+ * The directory a match's own files go in: the log, and beside it a directory
+ * holding each Pi seat's home, working directory and session transcripts. A
+ * rerun on the same `out` overwrites both.
+ *
+ * The directory is never the log path itself: `--out` takes any name, and a
+ * `matches/run1` whose seat homes were made under `matches/run1/` would leave
+ * the log a directory to rename over. A name that does not say `.json` gets its
+ * homes in a directory of their own with `-match` on the end.
  */
-const matchDirOf = (out: string): string => out.replace(/\.json$/i, "");
+const matchDirOf = (out: string): string => {
+  const stripped = out.replace(/\.json$/i, "");
+  return stripped === out ? `${out}-match` : stripped;
+};
 
 /** The seats a run plays through the Pi harness. */
 const piSeats = (options: RunMatchOptions): PiSeat[] =>

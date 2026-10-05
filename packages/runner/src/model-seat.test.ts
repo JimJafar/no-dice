@@ -18,15 +18,31 @@
  * with no credential, a name with no provider in it — and checks the run stops
  * there, in one line, instead of playing 25 turns of provider errors.
  *
+ * Two more play a turn that passes for a reason only the seat can see — a
+ * provider that kept refusing, a turn over its output budget — because the runner
+ * carries the seat's reason to the log rather than guessing `no_submission`. One
+ * plays a match voided by a seat that reached a tool outside the seven, in a
+ * process of its own: the runner has to let go of everything it started when a
+ * turn rejects, not only when it ends, and only a process can show that.
+ *
  * A Pi seat is seconds to start and seconds to prompt, so every test here carries
  * a timeout of its own.
  */
+import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { StubModel, piCli, salientToolName, stubModelsJson } from "@no-dice/harness";
-import type { StubReply, StubRequest } from "@no-dice/harness";
+import {
+  StubModel,
+  callsToolThenSubmits,
+  piCli,
+  providerError,
+  salientToolName,
+  stubModelsJson,
+} from "@no-dice/harness";
+import type { StubReply, StubRequest, StubScript, StubUsage } from "@no-dice/harness";
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -34,6 +50,7 @@ import { runMatch } from "./match.ts";
 import type { PiSeat, RunMatchOptions, SeatSpec } from "./match.ts";
 import { matchLogSchema } from "./log.ts";
 import type { MatchLog, TurnPlayerRecord } from "./log.ts";
+import { withoutAnthropicCredentials } from "./test-credentials.ts";
 
 /** A seat played by a Pi process: seconds to start, seconds per turn. */
 const SEAT_TIMEOUT_MS = 180_000;
@@ -50,6 +67,9 @@ const SUBMISSION = {
   intent: "The stub is holding still.",
   prediction: "The other seat moves east.",
 };
+
+/** A reply whose output tokens are over the budget one test below gives its seat. */
+const OVER_BUDGET: StubUsage = { input: 100, output: 5_000, cacheRead: 0, cacheWrite: 0 };
 
 /** Where each test's match lives: its log, and the directory of seat homes. */
 let dir: string;
@@ -93,7 +113,7 @@ const playsEveryTurn = (request: StubRequest): StubReply => {
 };
 
 /** Start a stub whose model entry costs something, so a turn has a price to read. */
-const startStub = async (script: (request: StubRequest) => StubReply): Promise<StubModel> =>
+const startStub = async (script: StubScript): Promise<StubModel> =>
   StubModel.start(script, { contextWindow: CONTEXT_WINDOW, cost: COST });
 
 /** The seat spec that plays a stub through the Pi harness. */
@@ -265,24 +285,59 @@ describe("a seat that has submitted and is still running", () => {
   }, SEAT_TIMEOUT_MS);
 });
 
-/** The variables that would hand this machine an Anthropic credential. */
-const ANTHROPIC_CREDENTIALS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
-
 /**
- * Take this machine's Anthropic credentials away for one test, and give them
- * back. A seat's home is empty, so an exported key is the only credential the
- * check could find from here — and if it found one, the test below would play a
- * real match against Anthropic.
+ * A match's first turn, played by a seat that passes it for a reason only the
+ * seat can see. The server knows no submission arrived; brief §6.3's table names
+ * why, and the runner is meant to carry the seat's answer rather than guess.
  */
-const withoutAnthropicCredentials = (): (() => void) => {
-  const saved = ANTHROPIC_CREDENTIALS.map((name) => [name, process.env[name]] as const);
-  for (const [name] of saved) delete process.env[name];
-  return () => {
-    for (const [name, value] of saved) {
-      if (value !== undefined) process.env[name] = value;
+describe("a Pi seat's own reason for passing a turn", () => {
+  it("records provider_error, which the server cannot see", async () => {
+    const stub = await startStub(providerError());
+    const paths = pathsFor("provider-error");
+    try {
+      const { log } = await runMatch({
+        out: paths.out,
+        seed: 135,
+        config: { ...DEFAULT_CONFIG, turns: 1 },
+        seats: { A: stubSeat(stub), B: GREEDY },
+        matchDir: paths.matchDir,
+      });
+      const seat = log.turns[0].players.A;
+      // Pi retried the provider and its retries ran out. `no_submission` would
+      // read as a model that chose to sit the turn out.
+      expect(seat.passed).toBe("provider_error");
+      expect(seat.tool_calls).toEqual([]);
+      expect(stub.requestCount).toBeGreaterThan(1);
+    } finally {
+      await stub.stop();
     }
-  };
-};
+  }, SEAT_TIMEOUT_MS);
+
+  it("records token_budget when the turn went over its output budget", async () => {
+    // The script would have submitted; the budget is what stops it.
+    const stub = await startStub(
+      callsToolThenSubmits("get_state").map((reply) => ({ ...reply, usage: OVER_BUDGET })),
+    );
+    const paths = pathsFor("token-budget");
+    try {
+      const { log } = await runMatch({
+        out: paths.out,
+        seed: 135,
+        config: { ...DEFAULT_CONFIG, turns: 1 },
+        seats: { A: { ...stubSeat(stub), outputTokenBudget: 1_000 }, B: GREEDY },
+        matchDir: paths.matchDir,
+      });
+      const seat = log.turns[0].players.A;
+      // Neither `no_submission` nor the runner's own `timeout`: the seat stopped
+      // its turn over its output budget, and that is what the log says.
+      expect(seat.passed).toBe("token_budget");
+      expect(seat.tool_calls.map((call) => call.tool)).not.toContain("submit_orders");
+      expect(seat.usage.output).toBeGreaterThan(1_000);
+    } finally {
+      await stub.stop();
+    }
+  }, SEAT_TIMEOUT_MS);
+});
 
 describe("a model seat the run cannot play", () => {
   it("stops the run in one line, before a turn is played", async () => {
@@ -323,4 +378,61 @@ describe("a model seat the run cannot play", () => {
     );
     expect(existsSync(paths.out)).toBe(false);
   }, SEAT_TIMEOUT_MS);
+});
+
+describe("a log named without an extension", () => {
+  it("writes the log, and keeps a Pi seat's homes out of its way", async () => {
+    const stub = await startStub(playsEveryTurn);
+    // `--out` takes any name, and the seat homes default to a directory beside
+    // it: homes under the log's own path would leave the log a directory to
+    // rename over, after the whole match had been played.
+    const out = join(dir, "no-extension");
+    try {
+      await runMatch({
+        out,
+        seed: 135,
+        config: { ...DEFAULT_CONFIG, turns: 1 },
+        seats: { A: stubSeat(stub), B: GREEDY },
+      });
+      const written = matchLogSchema.parse(JSON.parse(readFileSync(out, "utf8")) as unknown);
+      expect(written.turns).toHaveLength(1);
+      expect(existsSync(join(`${out}-match`, "pi-home-A"))).toBe(true);
+    } finally {
+      await stub.stop();
+    }
+  }, SEAT_TIMEOUT_MS);
+});
+
+describe("a match voided by a seat that reached a tool outside the seven", () => {
+  it("rejects, writes no log, and lets its own process go", async () => {
+    const paths = pathsFor("voided");
+    const scenario = fileURLToPath(new URL("./voided-match-scenario.ts", import.meta.url));
+
+    const ran = await new Promise<{ code: number; out: string; err: string }>((done) => {
+      execFile(
+        process.execPath,
+        [scenario, paths.out, paths.matchDir],
+        // The timeout is the assertion: a submission watcher still polling after
+        // the turn rejected would hold the child's event loop open for ever, and
+        // the child would be killed here instead of exiting.
+        { timeout: 60_000 },
+        (error, stdout, stderr) => {
+          done({
+            code: error === null ? 0 : typeof error.code === "number" ? error.code : 1,
+            out: stdout,
+            err: stderr,
+          });
+        },
+      );
+    });
+
+    expect(ran.out).toContain("rejected:");
+    expect(ran.out).toContain("voided");
+    // The child finished by itself. The runner stops watching a seat for its
+    // submission when the turn ends, and it has to stop when the turn rejects
+    // too — otherwise the operator reads the error and waits for a `no-dice`
+    // that never exits.
+    expect(ran.code).toBe(0);
+    expect(existsSync(paths.out)).toBe(false);
+  }, 90_000);
 });

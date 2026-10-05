@@ -6,9 +6,10 @@
  * was asked for or as one line naming exactly what is wrong with it, which is
  * what the CLI prints and exits non-zero on.
  *
- * A model seat parses here even though nothing can play one yet: `<provider>/
- * <model-id>` is well-formed, and it is the harness that is missing, so the CLI
- * says so rather than the parser pretending the shape is unknown.
+ * A model seat parses here and is played by the Pi harness: `<provider>/
+ * <model-id>` is the shape the runner seats a model with, and a provider with no
+ * credential is reported by the runner in one line, not by the parser pretending
+ * the shape is unknown.
  */
 import { join } from "node:path";
 
