@@ -9,6 +9,8 @@
  * answers `get_rules` and `get_state` give and the hexes `scout` reveals, with
  * the other seat's name nowhere in them — and `simulate` is the projection
  * `simulate` answers, run on a board of nothing but what the caller knows.
+ * `http` puts those seven tools behind Streamable HTTP on the loopback address,
+ * where a seat's bearer token is the only identity a caller has.
  */
 export const serverPackage = {
   name: "@no-dice/salient-server",
@@ -26,6 +28,7 @@ export {
   type TurnPlayerRecords,
 } from "./session";
 export { MatchServer, type CreatedMatch, type TokenOwner } from "./server";
+export { startServer, type RunningServer, type StartServerOptions } from "./http";
 export {
   NOTES_CHAR_LIMIT,
   SIMULATE_LIMIT,
