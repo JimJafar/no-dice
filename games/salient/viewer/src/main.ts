@@ -3,18 +3,20 @@
  * owns the frame, the three ways of handing the page a log — the picker, a drop
  * anywhere on the frame, and `?log=<url>` — and the line that says what went
  * wrong when the file is not one. It draws the board through `render-board.ts`,
- * the seat panels through `render-panels.ts`, the lead chart through
- * `render-chart.ts`, and holds the view mode the toggle asks for: the spectator
- * frame by default, a seat's fog on request. The frame index — step back, step
- * forward, scrub, autoplay — is `turns.ts`, and this file is the only place that
- * owns a clock: it steps that index from a timer, and the index never looks at
- * one.
+ * the seat panels through `render-panels.ts`, the turn's headline through
+ * `render-headline.ts`, the lead chart through `render-chart.ts`, and holds the
+ * view mode the toggle asks for: the spectator frame by default, a seat's fog on
+ * request. The frame index — step back, step forward, scrub, autoplay — is
+ * `turns.ts`, and this file is the only place that owns a clock: it steps that
+ * index from a timer, and the index never looks at one.
  */
 import { parseLog, pickLogSource, readLogSource } from "./load.ts";
 import type { LogSource } from "./load.ts";
 import { boardView } from "./board.ts";
 import { headerView } from "./header.ts";
 import { renderHeader } from "./render-header.ts";
+import { headline } from "./headline.ts";
+import { renderHeadline } from "./render-headline.ts";
 import { chartView } from "./chart.ts";
 import { renderChart } from "./render-chart.ts";
 import { fogView } from "./fog.ts";
@@ -40,6 +42,7 @@ const frame = element<HTMLDivElement>("#frame");
 const status = element<HTMLParagraphElement>("#status");
 const fileInput = element<HTMLInputElement>("#log-file");
 const header = element<HTMLDivElement>("#header");
+const headlineRow = element<HTMLDivElement>("#headline");
 const stage = element<HTMLDivElement>("#stage");
 const board = element<HTMLDivElement>("#board");
 const panelA = element<HTMLDivElement>("#panel-a");
@@ -75,17 +78,17 @@ function say(message: string, bad = false): void {
 }
 
 /**
- * The frame the page shows: the header, the board and the lead chart at the
- * frame the index is on, with each seat's panel beside it, seen through the mode
- * the toggle is on. Fog is a lens over that one board — the same hexes in the
- * same places — so the only thing it changes is what the frame knows about each
- * of them, never what the match scored, what each seat did, or how far ahead
- * either seat was.
+ * The frame the page shows: the header, the headline, the board and the lead
+ * chart at the frame the index is on, with each seat's panel beside it, seen
+ * through the mode the toggle is on. Fog is a lens over that one board — the same
+ * hexes in the same places — so the only thing it changes is what the frame knows
+ * about each of them, never what the match scored, what each seat did, or how far
+ * ahead either seat was.
  *
  * The board is the only part that moves mid-turn: it shows the board the frame
- * is animating from until the turn settles, while the header, the panels and the
- * chart describe the frame's turn throughout, because they state facts about the
- * turn rather than its picture.
+ * is animating from until the turn settles, while the header, the headline, the
+ * panels and the chart describe the frame's turn throughout, because they state
+ * facts about the turn rather than its picture.
  */
 function redraw(): void {
   if (log === null || frames === null) return;
@@ -94,6 +97,7 @@ function redraw(): void {
   // previous turn's — the seat's knowledge follows the picture, not the counter.
   const fog = mode === "spectator" ? null : fogView(log, view.board, mode);
   header.hidden = false;
+  headlineRow.hidden = false;
   stage.hidden = false;
   board.hidden = false;
   panelA.hidden = false;
@@ -102,6 +106,7 @@ function redraw(): void {
   chart.hidden = false;
   toggleBar.hidden = false;
   renderHeader(header, headerView(log, view.frame));
+  renderHeadline(headlineRow, headline(log, view.frame));
   renderBoard(board, boardView(log, view.board), fog, view);
   const panels = panelsView(log, view.frame);
   renderPanel(panelA, panels.A);

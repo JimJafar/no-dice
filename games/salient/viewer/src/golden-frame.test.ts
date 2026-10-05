@@ -7,7 +7,7 @@
  * assembles the frame the way `main.ts` does — the fixture read as the bytes
  * Vite serves at `?log=/fixtures/golden-01-time-win.json`, put through the same
  * `parseLog` the page puts a log through, the frame index asked for turn 11 the
- * way the scrubber asks for it, and the four renderers drawing into elements of
+ * way the scrubber asks for it, and the renderers drawing into elements of
  * the kinds `index.html` owns — and then reads the mock-up's numbers off the
  * result. A view-model that quietly moves a number fails here even if every
  * unit test still passes on its own reading of it, which is the point.
@@ -16,9 +16,10 @@
  * `salient/docs/mockups/spectator-view.html` and `fog-of-war-view.html`.
  * `docs/viewer-notes.md` records that comparison in full, including the panel
  * sentences that cannot match the mock-up's because the fixture's are generated
- * from the orders — the scripted prototype bots wrote nothing. The one line of
- * the mock-up the page does not draw yet is the headline above the board, so it
- * is not asserted here; `headline.test.ts` covers the sentence itself.
+ * from the orders — the scripted prototype bots wrote nothing — and the headline,
+ * which the page generates from the turn's events rather than writing the
+ * mock-up's one featured capture by hand. `headline.test.ts` covers the sentence
+ * itself; this file covers the line being there at all.
  */
 import { describe, expect, it } from "vitest";
 
@@ -27,10 +28,12 @@ import { turnFrames } from "./turns.ts";
 import type { TurnFrame } from "./turns.ts";
 import { boardView } from "./board.ts";
 import { headerView } from "./header.ts";
+import { headline } from "./headline.ts";
 import { panelsView } from "./panels.ts";
 import { chartView } from "./chart.ts";
 import { fogView } from "./fog.ts";
 import { renderHeader } from "./render-header.ts";
+import { renderHeadline } from "./render-headline.ts";
 import { renderBoard } from "./render-board.ts";
 import { renderPanel } from "./render-panels.ts";
 import { renderChart } from "./render-chart.ts";
@@ -48,6 +51,7 @@ const log = parseLog(fixtureText);
 /** The elements `index.html` holds for one frame, and the frame drawn into them. */
 interface Page {
   readonly header: HTMLElement;
+  readonly headline: HTMLElement;
   readonly board: HTMLElement;
   readonly panelA: HTMLElement;
   readonly panelB: HTMLElement;
@@ -58,8 +62,8 @@ interface Page {
 
 /**
  * The frame one turn and one view mode shows, built as `main.ts`'s `redraw`
- * builds it: the frame index settled on the turn, then the same four renderers
- * over the same view-models, in the same order. Stepping to a frame by hand
+ * builds it: the frame index settled on the turn, then the same renderers over
+ * the same view-models, in the same order. Stepping to a frame by hand
  * lands on its settled step, which is the step the mock-up is.
  */
 function draw(turn: number, mode: BoardMode = "spectator"): Page {
@@ -70,6 +74,7 @@ function draw(turn: number, mode: BoardMode = "spectator"): Page {
 
   const page: Page = {
     header: document.createElement("div"),
+    headline: document.createElement("div"),
     board: document.createElement("div"),
     panelA: document.createElement("div"),
     panelB: document.createElement("div"),
@@ -78,6 +83,7 @@ function draw(turn: number, mode: BoardMode = "spectator"): Page {
   };
 
   renderHeader(page.header, headerView(log, frame.frame));
+  renderHeadline(page.headline, headline(log, frame.frame));
   renderBoard(page.board, boardView(log, frame.board), fog, frame);
   const panels = panelsView(log, frame.frame);
   renderPanel(page.panelA, panels.A);
@@ -140,6 +146,16 @@ describe("the fixture reaches the page as a log", () => {
 });
 
 describe("the turn-11 frame of golden-01", () => {
+  it("draws the turn's headline above the board, in the mock-up's place for it", () => {
+    // The mock-up's line features one capture — "A takes the centre Node, 5
+    // against 3, and cuts off five of B's hexes". The page's names every capture
+    // the turn logged, and says "the Node" where the log has no word "centre"
+    // (`docs/viewer-notes.md` §4).
+    expect(draw(TURN_11).headline.textContent).toBe(
+      "B takes K2, A takes G4, A takes the Node, 5 against 3, and cuts off five of B's hexes",
+    );
+  });
+
   it("reads 43 and 33 across a 43 / 17 / 33 bar and a lead of 10", () => {
     const { header } = draw(TURN_11);
     expect(text(header, ".seat-a .score")).toBe("43");
@@ -244,6 +260,29 @@ describe("the turn-11 frame of golden-01", () => {
   });
 });
 
+describe("the headline follows the frame", () => {
+  it("opens on the start position's line, and moves to the next turn's", () => {
+    // Frame 0 has no events of its own, and turn 12 is two fights each followed
+    // by the capture it won: neither line is the turn 11 one, and neither is
+    // empty.
+    expect(draw(0).headline.textContent).toBe(
+      "The match opens with A holding its Base at B6 and B holding its Base at J6",
+    );
+    expect(draw(12).headline.textContent).toBe(
+      "B takes G5, 1 against 4, A takes E7, 3 against 1, and cuts off five of B's hexes",
+    );
+  });
+
+  it("leaves no frame of the match without a line", () => {
+    // A turn whose orders moved troops between hexes their owner already held
+    // gets the line that says so, rather than a gap above the board.
+    for (let turn = 0; turn <= log.turns.length; turn += 1) {
+      const line = draw(turn).headline.textContent?.trim() ?? "";
+      expect(line, `turn ${turn} shows no line`).not.toBe("");
+    }
+  });
+});
+
 describe("the same turn under B's fog", () => {
   it("hides 27 playable hexes, and draws them as fog rather than not at all", () => {
     const { board } = draw(TURN_11, "B");
@@ -283,10 +322,13 @@ describe("the same turn under B's fog", () => {
     expect(text(board, '.hx[data-hex="H6"] .nd')).toBe("3");
   });
 
-  it("changes the board only: header, panels and chart stay the log's", () => {
+  it("changes the board only: header, headline, panels and chart stay the log's", () => {
     const spectator = draw(TURN_11);
     const fogged = draw(TURN_11, "B");
     expect(fogged.header.textContent).toBe(spectator.header.textContent);
+    // The line says what the turn did, which is the logged truth rather than one
+    // seat's knowledge of it.
+    expect(fogged.headline.textContent).toBe(spectator.headline.textContent);
     expect(fogged.panelA.textContent).toBe(spectator.panelA.textContent);
     expect(fogged.panelB.textContent).toBe(spectator.panelB.textContent);
     expect(fogged.chart.textContent).toBe(spectator.chart.textContent);

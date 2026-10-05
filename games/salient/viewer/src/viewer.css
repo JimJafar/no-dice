@@ -2,7 +2,13 @@
    classes — hexes, symbols, arrows. The colours and type are the mock-ups'
    (salient/docs/salient-mockups.md, "Build notes"). */
 body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',system-ui,sans-serif;--team-a:#2c6fd1;--team-b:#e06f35}
-.frame{width:1920px;height:1080px;box-sizing:border-box;padding:36px;display:flex;flex-direction:column;gap:24px;background:#12161c;color:#eef1f5}
+/* The mock-up's 1920 × 1080 box and its 36 px of padding. Its rows are 24 px
+   apart; these are 12 px apart, because the page has three rows the mock-up does
+   not — the view toggle, the replay controls and the headline — and the 72 px the
+   mock-up leaves spare in its middle row does not cover them at 24 px: the 629 px
+   board box would be pushed out of the frame. Every row's own height, and
+   everything inside every row, is still the mock-up's (docs/viewer-notes.md §4). */
+.frame{width:1920px;height:1080px;box-sizing:border-box;padding:36px;display:flex;flex-direction:column;gap:12px;background:#12161c;color:#eef1f5}
 .frame.dropping{outline:4px dashed var(--team-a,#2c6fd1);outline-offset:-16px}
 .load{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#1a2028;border-radius:8px}
 .load-title{font:600 24px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.16em;color:#aab3bf}
@@ -63,6 +69,18 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 .tick{position:absolute;left:50%;top:-6px;width:2px;height:32px;margin-left:-1px;background:#eef1f5}
 .summary{font-size:17px;line-height:1.2;color:#eef1f5}
 .series{font-size:15px;line-height:1.2;color:#aab3bf}
+
+/* The headline: the one line above the board, the sentence `headline.ts` builds
+   from the turn's events and `render-headline.ts` puts here. Copied out of
+   salient/docs/mockups/spectator-view.html, where it is the first child of the
+   centre column, directly above the board box; the page draws it as its own row
+   because the board keeps its own box with the panels beside it, and centres it
+   the way the mock-up does — over the middle of the board, which is the middle of
+   the frame. One line, as the mock-up leaves it: a sentence wider than the frame
+   is cut short rather than left to wrap over the board. */
+.headline{flex:none;align-self:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 24px/1.2 'Barlow Semi Condensed','Arial Narrow',sans-serif;text-align:center}
+/* `hidden` until a log arrives, which an author `display` would otherwise win. */
+.headline[hidden]{display:none}
 
 /* The stage: each seat's panel and the board between them, which is the mock-up's
    middle row (`salient/docs/mockups/spectator-view.html`) — the board keeps its

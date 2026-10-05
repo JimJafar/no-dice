@@ -96,10 +96,11 @@ timings are all driven by those fields, not by the fixture.
 | The mock-up's six-symbol key beside the board | The symbols are on the board itself, and the chart carries its own two-line legend. A legend for the board is not in the plan's tasks. |
 | A context meter on a bot seat | Not a missing feature: a bot seat keeps no conversation and has no window to measure against, so the panel draws no meter rather than one reading zero. |
 
-**Not in the page yet: the headline.** `src/headline.ts` builds the turn's
-sentence from its events and is tested against the fixtures, but `index.html`
-holds no element for it and `main.ts` does not draw it. Everything else the
-mock-up draws above and beside the board is drawn by the page.
+Nothing the mock-up draws above or beside the board is missing from the page now.
+The headline was the last of them: `src/headline.ts` builds the turn's sentence
+from its events and the supply the turn leaves, `render-headline.ts` puts it in
+the `#headline` row above the board, and `main.ts` redraws it with every frame.
+What it says for the turn the mock-up was drawn from is compared in section 4.
 
 ## 4. Comparing the frame with the mock-up
 
@@ -108,8 +109,8 @@ The comparison was made by eye: the dev page at
 `salient/docs/mockups/spectator-view.png` (and `fog-of-war-view.png` for the fog
 frame). What the eye checked is pinned by `golden-frame.test.ts`, which loads the
 fixture through the same `parseLog` the page uses, steps the frame index to turn
-11 and asserts the drawn frame — the header, the board, both panels and the
-chart — so the comparison does not have to be repeated by eye next time.
+11 and asserts the drawn frame — the header, the headline, the board, both panels
+and the chart — so the comparison does not have to be repeated by eye next time.
 
 **What matched.**
 
@@ -151,7 +152,8 @@ chart — so the comparison does not have to be repeated by eye next time.
   "B takes K2, A takes G4, A takes the Node, 5 against 3, and cuts off five of
   B's hexes" — it names every capture the turn logged, not only the one the
   mock-up chose to feature, and names a Node by its terrain because the log has
-  no word "centre" in it. The page does not draw it yet (section 3).
+  no word "centre" in it. The line sits above the board in the mock-up's 24 px
+  Barlow style, and `golden-frame.test.ts` pins the generated sentence.
 - Six arrows, the diagonal ones, are a few pixels off the mock-up's markup:
   five sit 4 px right and 2 px up, and `A: 2 from F5 to G4` sits 4 px left and
   2 px up. The mock-up placed those by hand a little off its own geometry; the
@@ -165,3 +167,9 @@ chart — so the comparison does not have to be repeated by eye next time.
   Play, and the three view-mode buttons — because a mock-up is one frozen frame
   and a replay is not. They are drawn in the palette's own style rather than
   invented for the comparison.
+- The page's rows sit 12 px apart rather than the mock-up's 24. The mock-up stacks
+  three rows in its 1080 px frame and leaves 72 px spare in the middle one; the
+  page stacks five — the view toggle, the headline and the replay controls are
+  extra — and at 24 px of gap the 629 px board box is pushed out of the frame.
+  Every row's own height, and everything inside every row, is still the mock-up's:
+  the 104 px header, the 705 × 629 px board and the 112 px chart are unchanged.
