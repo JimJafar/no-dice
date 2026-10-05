@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
-import { matchLogSchema } from "@no-dice/runner/log";
+import { matchLogSchema } from "@no-dice/log";
 import { runMatch } from "@no-dice/runner/match";
 
 // The stub model lives in a workspace package the root does not depend on, so it

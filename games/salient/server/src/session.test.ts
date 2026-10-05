@@ -6,7 +6,7 @@
  * every call kept for the log.
  */
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
-import { turnEventSchema, turnPlayerSchema } from "@no-dice/runner/log";
+import { turnEventSchema, turnPlayerSchema } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 
 import { MatchServer } from "./server.ts";

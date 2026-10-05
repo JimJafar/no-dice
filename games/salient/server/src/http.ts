@@ -28,7 +28,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { hexLabelSchema, orderSchema } from "@no-dice/runner/log";
+import { hexLabelSchema, orderSchema } from "@no-dice/log";
 
 import type { MatchServer, TokenOwner } from "./server.ts";
 import { TOOL_NAMES, type ToolName, type ToolOutcome } from "./session.ts";

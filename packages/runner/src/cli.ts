@@ -26,12 +26,12 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 import type { PiThinkingLevel } from "@no-dice/harness";
+import type { LogResult } from "@no-dice/log";
 
 import { defaultOutName, parseArgs } from "./args.ts";
 import type { SeatArg } from "./args.ts";
 import { runMatch } from "./match.ts";
 import type { SeatSpec } from "./match.ts";
-import type { LogResult } from "./log.ts";
 
 /** Where a run reports, injectable so a test can read it instead of a terminal. */
 export interface CliIo {

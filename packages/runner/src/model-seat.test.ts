@@ -43,13 +43,13 @@ import {
   stubModelsJson,
 } from "@no-dice/harness";
 import type { StubReply, StubRequest, StubScript, StubUsage } from "@no-dice/harness";
+import { matchLogSchema } from "@no-dice/log";
+import type { MatchLog, TurnPlayerRecord } from "@no-dice/log";
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { runMatch } from "./match.ts";
 import type { PiSeat, RunMatchOptions, SeatSpec } from "./match.ts";
-import { matchLogSchema } from "./log.ts";
-import type { MatchLog, TurnPlayerRecord } from "./log.ts";
 import { withoutAnthropicCredentials } from "./test-credentials.ts";
 
 /** A seat played by a Pi process: seconds to start, seconds per turn. */

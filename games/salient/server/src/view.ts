@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 
 import { boardCells, hexKey, neighbourKeys, score, visibleHexes } from "@no-dice/salient-engine";
 import type { Config, HexKey, MatchState, Seat, Terrain } from "@no-dice/salient-engine";
-import type { HexLabel, LogConfig, LogEvent, LogOrder, WastedLogOrder } from "@no-dice/runner/log";
+import type { HexLabel, LogConfig, LogEvent, LogOrder, WastedLogOrder } from "@no-dice/log";
 
 import { keyToLabel, labelToKey } from "./labels.ts";
 import { SIMULATE_LIMIT, TOOL_CALL_LIMIT } from "./limits.ts";

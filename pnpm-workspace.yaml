@@ -2,10 +2,9 @@ packages:
   - "packages/*"
   - "games/salient/*"
 
-# pnpm warns about a cyclic workspace dependency here, and it is right about the
-# packages: `@no-dice/runner` plays a match through `@no-dice/salient-server`, and
-# that server answers with the log shapes of `@no-dice/runner/log`. The modules
-# themselves are straight — `runner/log` imports nothing but zod and never reaches
-# the server — so nothing installs or builds in a loop. Quieting the warning means
-# giving `salient-log/1` a package of its own, which is also what a stats package
-# that reads logs without the runner would want.
+# `salient-log/1` has a package of its own, `@no-dice/log`, so no workspace package
+# depends back on `@no-dice/runner`: the server answers with the log shapes of
+# `@no-dice/log`, and the stats package will read them from the same place. The
+# cycle pnpm used to warn about — `bots` → `server` → `runner` → `harness` →
+# `bots` — went with the `server` → `runner` edge, and nothing here installs or
+# builds in a loop.

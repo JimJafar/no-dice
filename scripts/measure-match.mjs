@@ -58,7 +58,7 @@ import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } fro
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { matchLogSchema } from "@no-dice/runner/log";
+import { matchLogSchema } from "@no-dice/log";
 import { runMatch } from "@no-dice/runner/match";
 
 /** What a run prints when its command line did not parse. */

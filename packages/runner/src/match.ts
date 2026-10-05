@@ -36,6 +36,16 @@ import type {
   PlayerContext,
   TurnOutcome,
 } from "@no-dice/harness";
+import { cellsFor, matchLogSchema } from "@no-dice/log";
+import type {
+  BoardAfter,
+  LogResult,
+  MapHex,
+  MatchLog,
+  PlayerHeader,
+  TurnPlayerRecord,
+  TurnRecord,
+} from "@no-dice/log";
 import { greedyBot, randomBot } from "@no-dice/salient-bots";
 import type { Bot, BotOrder } from "@no-dice/salient-bots";
 import { boardCells, DEFAULT_CONFIG, hexKey, score } from "@no-dice/salient-engine";
@@ -53,17 +63,6 @@ import {
   type StateView,
 } from "@no-dice/salient-server";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-
-import { cellsFor, matchLogSchema } from "./log.ts";
-import type {
-  BoardAfter,
-  LogResult,
-  MapHex,
-  MatchLog,
-  PlayerHeader,
-  TurnPlayerRecord,
-  TurnRecord,
-} from "./log.ts";
 
 /** The five minutes brief §6.3 gives a turn before the seat is taken to have passed. */
 const TURN_TIMEOUT_MS = 300_000;

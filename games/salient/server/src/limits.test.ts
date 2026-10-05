@@ -23,7 +23,7 @@
  */
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import type { Seat } from "@no-dice/salient-engine";
-import { turnPlayerSchema } from "@no-dice/runner/log";
+import { turnPlayerSchema } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 
 import { MatchServer } from "./server.ts";

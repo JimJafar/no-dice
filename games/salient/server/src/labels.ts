@@ -9,7 +9,7 @@
  */
 import { hexKey, hexLabel, isOnBoard, parseHexKey } from "@no-dice/salient-engine";
 import type { HexCoord, HexKey, Order, TurnEvent, WastedOrder } from "@no-dice/salient-engine";
-import type { HexLabel, LogEvent, LogOrder, WastedLogOrder } from "@no-dice/runner/log";
+import type { HexLabel, LogEvent, LogOrder, WastedLogOrder } from "@no-dice/log";
 
 /** A board label: one letter for the column, one or two digits for the row. */
 const LABEL = /^([A-Z])([0-9]{1,2})$/;

@@ -24,7 +24,7 @@ import {
   visibleHexes,
 } from "@no-dice/salient-engine";
 import type { Config, HexKey, MatchResult, MatchState, Order, Seat } from "@no-dice/salient-engine";
-import { orderSchema } from "@no-dice/runner/log";
+import { orderSchema } from "@no-dice/log";
 import type {
   HexLabel,
   LogEvent,
@@ -34,7 +34,7 @@ import type {
   ToolCallRecord,
   TurnPlayerRecord,
   WastedLogOrder,
-} from "@no-dice/runner/log";
+} from "@no-dice/log";
 
 import { eventsToLog, labelToKey, ordersToEngine, wastedToLog } from "./labels.ts";
 import { NOTES_CHAR_LIMIT, SIMULATE_LIMIT, SUBMISSION_NOTE_CHARS, TOOL_CALL_LIMIT } from "./limits.ts";

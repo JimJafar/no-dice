@@ -24,7 +24,7 @@ export interface PlayerContext {
 
 /**
  * One tool call the player made, in the shape the log records it
- * (`toolCallSchema` in `@no-dice/runner/log`), so the runner can put these
+ * (`toolCallSchema` in `@no-dice/log`), so the runner can put these
  * straight into a turn without translating them.
  */
 export interface ToolCallRecord {
@@ -50,7 +50,7 @@ export interface RejectedSubmission {
 
 /**
  * Why a seat played no orders this turn, in the words brief §6.3's turn-outcome
- * table gives and `passReasonSchema` in `@no-dice/runner/log` accepts. The last
+ * table gives and `passReasonSchema` in `@no-dice/log` accepts. The last
  * two are not turns at all: they end the match, and a player reports them by
  * throwing `MatchVoided` rather than by handing back an outcome.
  *
@@ -94,7 +94,7 @@ export class MatchVoided extends Error {
  *
  * A model seat knows these and a bot seat does not, which is why they travel
  * together and apart: the runner copies them into the log's turn record, where
- * `usageSchema` and `turnPlayerSchema` in `@no-dice/runner/log` hold the same
+ * `usageSchema` and `turnPlayerSchema` in `@no-dice/log` hold the same
  * fields under the same names.
  */
 export interface ProviderTurn {

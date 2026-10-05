@@ -28,14 +28,14 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
+import { cellsFor, matchLogSchema } from "@no-dice/log";
+import type { BoardAfter, LogOrder, MatchLog, Seat } from "@no-dice/log";
 import { boardCells, DEFAULT_CONFIG, generateMap, hexKey, resolveTurn, score } from "@no-dice/salient-engine";
 import type { Config, Hex, HexKey, MatchState, Order } from "@no-dice/salient-engine";
 import { eventsToLog, playerToolServer, wastedToLog } from "@no-dice/salient-server";
 import type { MatchServer } from "@no-dice/salient-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { cellsFor, matchLogSchema } from "./log.ts";
-import type { BoardAfter, LogOrder, MatchLog, Seat } from "./log.ts";
 import { runMatch, salientVerdict } from "./match.ts";
 import type { SeatSpec } from "./match.ts";
 

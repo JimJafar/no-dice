@@ -5,7 +5,7 @@
  */
 import { DEFAULT_CONFIG, generateMap } from "@no-dice/salient-engine";
 import type { TurnEvent } from "@no-dice/salient-engine";
-import { hexLabelSchema } from "@no-dice/runner/log";
+import { hexLabelSchema } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 
 import { eventsToLog, keyToLabel, labelToCoord, labelToKey, ordersToEngine, wastedToLog } from "./labels.ts";

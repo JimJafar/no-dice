@@ -11,8 +11,8 @@ import { readFileSync } from "node:fs";
 
 import { DEFAULT_CONFIG, boardCells, hexLabel } from "@no-dice/salient-engine";
 import type { Seat } from "@no-dice/salient-engine";
-import { matchConfigSchema } from "@no-dice/runner/log";
-import type { HexLabel } from "@no-dice/runner/log";
+import { matchConfigSchema } from "@no-dice/log";
+import type { HexLabel } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 
 import { MatchServer } from "./server.ts";

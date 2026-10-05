@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { generateMap, DEFAULT_CONFIG, boardCells, hexKey, score } from "@no-dice/salient-engine";
 import type { Hex, HexKey } from "@no-dice/salient-engine";
-import { matchLogSchema as publishedMatchLogSchema } from "@no-dice/runner/log";
+import { matchLogSchema as publishedMatchLogSchema } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 import type { ZodIssue } from "zod";
 
@@ -118,7 +118,7 @@ describe("salient-log/1", () => {
     expect(parsed).toEqual(BRIEF_LOG);
   });
 
-  it("is published at the @no-dice/runner/log subpath the viewer and the stats package import", () => {
+  it("is published as @no-dice/log, the package the viewer and the stats package import", () => {
     expect(publishedMatchLogSchema.safeParse(BRIEF_LOG).success).toBe(true);
   });
 

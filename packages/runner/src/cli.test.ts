@@ -28,11 +28,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { matchLogSchema } from "@no-dice/log";
+import type { MatchLog } from "@no-dice/log";
+
 import runnerManifest from "../package.json" with { type: "json" };
 import { runCli } from "./cli.ts";
 import type { CliIo } from "./cli.ts";
-import { matchLogSchema } from "./log.ts";
-import type { MatchLog } from "./log.ts";
 import { withoutAnthropicCredentials } from "./test-credentials.ts";
 
 /** Where the logs land, in a directory that is gone when the suite is done. */

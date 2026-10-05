@@ -27,8 +27,8 @@ import {
   validateOrders,
 } from "@no-dice/salient-engine";
 import type { Config, Hex, HexKey, MatchState, Seat } from "@no-dice/salient-engine";
-import { orderSchema } from "@no-dice/runner/log";
-import type { HexLabel, LogOrder, WastedLogOrder } from "@no-dice/runner/log";
+import { orderSchema } from "@no-dice/log";
+import type { HexLabel, LogOrder, WastedLogOrder } from "@no-dice/log";
 
 import { keyToLabel, ordersToEngine, ordersToLog, wastedToLog } from "./labels.ts";
 import type { TurnCounters } from "./session.ts";

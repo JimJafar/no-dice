@@ -3,9 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Match and series runner, and the salient-log/1 format the runner writes, the stats package reads and the viewer replays.",
+  "description": "Match and series runner: plays a match through the server and writes the log.",
   "exports": {
-    "./log": "./src/log.ts",
     "./match": "./src/match.ts",
     "./cli": "./src/cli.ts",
     "./args": "./src/args.ts"
@@ -16,6 +15,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.0",
     "@no-dice/harness": "workspace:*",
+    "@no-dice/log": "workspace:*",
     "@no-dice/salient-bots": "workspace:*",
     "@no-dice/salient-engine": "workspace:*",
     "@no-dice/salient-server": "workspace:*",
