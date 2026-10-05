@@ -117,9 +117,18 @@ export interface TurnFrame {
 /**
  * The arrows one turn's submitted orders make: A's in the order its record
  * lists them, then B's. A seat that passed played no orders, so it draws no
- * arrows whatever its record holds. An order naming a hex the map does not hold
- * cannot be placed and is left out — the panel already lists it, and the board
- * draws the board the log describes.
+ * arrows whatever its record holds.
+ *
+ * Every order the seat submitted is drawn, including one the engine dropped —
+ * the mock-ups' table maps arrows onto exactly `turns[n].players.*.orders`
+ * (`salient/docs/salient-mockups.md`), which is the seat's final submission,
+ * valid or not. What a dropped order did not do is move the board: `after` says
+ * so, and the seat's panel lists the order under `wasted` with its reason.
+ * No shipped fixture wastes an order, so the two readings differ only on a log
+ * none of the fixtures hold.
+ *
+ * An order naming a hex the map does not hold cannot be placed and is left out
+ * — the panel already lists it, and the board draws the board the log describes.
  */
 export function arrowsFor(log: MatchLog, record: TurnRecord): ArrowView[] {
   const arrows: ArrowView[] = [];
@@ -136,7 +145,10 @@ export function arrowsFor(log: MatchLog, record: TurnRecord): ArrowView[] {
         to: order.to,
         troops: order.troops,
         // The arrow stands on the edge the troops cross: the midpoint of the two
-        // hex centres, which is what the mock-up's arrows sit on.
+        // hex centres, at the angle that edge runs. That is where the mock-up's
+        // arrows sit for orders along a row; for its diagonal ones the markup is
+        // hand-placed a few pixels off its own geometry, and the geometry is
+        // followed rather than the markup's nudges.
         x: (from.x + to.x) / 2,
         y: (from.y + to.y) / 2,
         angle: Math.round((Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI),
@@ -151,6 +163,12 @@ export function arrowsFor(log: MatchLog, record: TurnRecord): ArrowView[] {
  * `battle` names one hex; a `clash` names an edge, so both hexes it crosses are
  * outlined — the fight happened on the edge, which is on both of them. A hex
  * that fought and was then captured is outlined once.
+ *
+ * Those two types are the whole of it, which is what the mock-ups' table says
+ * ("white outline around a hex — a fight happened there this turn — `events` of
+ * type `battle` or `clash`"). A `repelled` attack is a fight that was turned
+ * back, and it is deliberately not outlined: the outline marks where an attack
+ * was felt on the board, and a repelled one left the hex as it was.
  */
 export function outlinesFor(log: MatchLog, record: TurnRecord): OutlineView[] {
   const labels: string[] = [];

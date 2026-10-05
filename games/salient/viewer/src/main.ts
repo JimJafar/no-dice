@@ -23,7 +23,7 @@ import { panelsView } from "./panels.ts";
 import { renderPanel } from "./render-panels.ts";
 import { turnFrames } from "./turns.ts";
 import type { TurnFrames } from "./turns.ts";
-import { mountTurnControls } from "./render-turns.ts";
+import { frameHandlers, mountTurnControls } from "./render-turns.ts";
 import type { TurnControls } from "./render-turns.ts";
 import { DEFAULT_MODE, mountViewToggle } from "./view-mode.ts";
 import type { BoardMode } from "./view-mode.ts";
@@ -112,17 +112,20 @@ function redraw(): void {
   keepTimer(frames.playing());
 }
 
-/** Run the page's timer while the frame index is playing, and only while. */
+/**
+ * Run the page's timer while the frame index is playing, and only while. The
+ * interval is left alone between steps — restarting it on every redraw would
+ * make the step's length depend on how long the frame took to draw.
+ */
 function keepTimer(playing: boolean): void {
-  if (timer !== null) {
-    window.clearInterval(timer);
-    timer = null;
-  }
-  if (playing) {
+  if (playing && timer === null) {
     timer = window.setInterval(() => {
       frames?.tick();
       redraw();
     }, TICK_MS);
+  } else if (!playing && timer !== null) {
+    window.clearInterval(timer);
+    timer = null;
   }
 }
 
@@ -139,13 +142,10 @@ function showLog(next: MatchLog): void {
   frames = turnFrames(next);
   // Remounted per log, since the slider spans the log: its maximum is the last
   // turn this log holds, which for a knockout is short of `config.turns`.
-  controls = mountTurnControls(turnsBar, {
-    stepBack: () => frames?.stepBack(),
-    stepForward: () => frames?.stepForward(),
-    scrub: (frame) => frames?.scrub(frame),
-    play: () => frames?.play(),
-    pause: () => frames?.pause(),
-  });
+  // `frameHandlers` is what makes a click move the frame and then redraw the
+  // page, so the board, the header, the panels and the chart follow the index
+  // rather than staying where they were.
+  controls = mountTurnControls(turnsBar, frameHandlers(frames, redraw));
   redraw();
 }
 

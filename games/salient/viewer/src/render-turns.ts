@@ -12,7 +12,7 @@
  * (`salient/docs/salient-mockups.md`), so this is the palette's own control: the
  * same panels and small-caps labels the view toggle uses.
  */
-import type { FrameState } from "./turns.ts";
+import type { FrameState, TurnFrames } from "./turns.ts";
 
 /** What the viewer asks for; the page decides what any of it does to the frame. */
 export interface TurnControlHandlers {
@@ -26,6 +26,32 @@ export interface TurnControlHandlers {
 /** The handle the page uses to say which frame these controls are showing. */
 export interface TurnControls {
   select(state: FrameState): void;
+}
+
+/**
+ * The handlers the page hands the controls: each one moves `frames` and then
+ * calls `onFrame`, which is what makes the page draw where it moved to. A
+ * control that moved the index without saying so would leave the board, the
+ * header, the panels and the chart on the frame before — and autoplay would
+ * never start, since running the page's timer is part of drawing. Kept here
+ * rather than written out in `main.ts` so the wiring itself can be tested
+ * against a real frame index.
+ */
+export function frameHandlers(frames: TurnFrames, onFrame: () => void): TurnControlHandlers {
+  const move = (act: () => void): (() => void) => () => {
+    act();
+    onFrame();
+  };
+  return {
+    stepBack: move(() => frames.stepBack()),
+    stepForward: move(() => frames.stepForward()),
+    scrub: (frame) => {
+      frames.scrub(frame);
+      onFrame();
+    },
+    play: move(() => frames.play()),
+    pause: move(() => frames.pause()),
+  };
 }
 
 /**
