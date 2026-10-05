@@ -122,6 +122,13 @@ export interface StubModelOptions {
   maxTokens?: number;
   /** Whether Pi may send thinking levels for this model. */
   reasoning?: boolean;
+  /**
+   * The rates the seat's `models.json` gives, in US dollars per million tokens,
+   * which is what turns the stub's reported usage into a cost a harness can
+   * read back. All zero by default — running a stub costs nothing — but a test
+   * that checks the harness reports a cost has to be told what one is.
+   */
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
 }
 
 /** Read a whole request body. */
@@ -168,7 +175,7 @@ export const stubProviderEntry = (baseUrl: string, options: StubModelOptions = {
       contextWindow: options.contextWindow ?? 200_000,
       maxTokens: options.maxTokens ?? 2048,
       reasoning: options.reasoning ?? false,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...options.cost },
     },
   ],
 });

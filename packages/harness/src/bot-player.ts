@@ -33,6 +33,7 @@ import type {
   ToolCallRecord,
   TurnOutcome,
 } from "./player.ts";
+import { answerOf } from "./tool-answer.ts";
 
 /** The three tools a bot plays a turn with, named for the game being played. */
 export interface BotTools {
@@ -93,24 +94,6 @@ const httpTransport = (ctx: PlayerContext): Transport =>
   new StreamableHTTPClientTransport(new URL(ctx.serverUrl), {
     requestInit: { headers: { authorization: `Bearer ${ctx.token}` } },
   });
-
-/**
- * A tool's answer, as a value. A game server answers its players in JSON text —
- * what the Salient server sends, and what a model reads — so the text parts are
- * joined and parsed back. Anything that is not JSON is kept as the text it is,
- * and a call that answered nothing comes back as `null`.
- */
-const answerOf = (answered: CallToolResult): unknown => {
-  const text = (answered.content ?? [])
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("");
-  if (text === "") return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-};
 
 export class BotPlayer<Rules = unknown, State = unknown, Order = unknown> implements Player {
   private readonly options: BotPlayerOptions<Rules, State, Order>;

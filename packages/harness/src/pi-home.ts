@@ -77,9 +77,10 @@ export interface SeatHome {
 /**
  * The MCP server's name, which is what makes the tools read as
  * `mcp__salient__get_state` and the rest, and matches the name the Salient
- * server registers itself under.
+ * server registers itself under. `PiPlayer` strips the same prefix off the tool
+ * names Pi reports, so it is the one place the name is written.
  */
-const MCP_SERVER_NAME = "salient";
+export const MCP_SERVER_NAME = "salient";
 
 /** What Pi's system prompt says the server offers. */
 const MCP_DESCRIPTION = "Salient game tools for this match";
