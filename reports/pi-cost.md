@@ -4,12 +4,13 @@
 - **Seat B:** `kind: bot`, `greedy` — it runs no provider, so every figure below is seat A's
 - **Provider:** `https://marvin.akita-betelgeuse.ts.net:8033/v1` (`api: openai-completions`, `apiKey: "none"`, `reasoning: true`)
 - **contextWindow: 131,072 tokens — a decision, not a lookup.** Marvin's `/v1/models` reports no context length for `subagent`, so this is the window the run was played with; the log's `players.A.context_window` carries the same figure because it is Pi's reading of the seat's own `models.json`.
+- **maxTokens: 8,192 — also a decision, not a lookup.** Marvin reports no output cap either, so this is the cap the run's model requests were made under, and it bounds the output-token figures below; a run under a different cap is a different run.
 - **Seed:** 135 — **turns played:** 25 of 25
 - **Result:** `time`, seat B, A 31 – B 58
 - **Pi:** 1.0.2 in RPC mode, one session per seat — **engine:** 0.1.0 — **created:** 2026-10-05T13:50:40.210Z
-- **Log:** `/home/jim/.software-factory/workspaces/no-dice/pi-measure-match/reports/135-marvin-subagent-greedy.json`
-- **Report:** `/home/jim/.software-factory/workspaces/no-dice/pi-measure-match/reports/pi-cost.md`
-- **Seat transcript:** `/home/jim/.software-factory/workspaces/no-dice/pi-measure-match/reports/135-marvin-subagent-greedy-match/session-A` (1 session file)
+- **Log:** `reports/135-marvin-subagent-greedy.json` — sha256 `cd9fd73faa150836615bf57b8a0f8ad8c1f3e669d02c3c1b8e261553a2ce2842`
+- **Report:** `reports/pi-cost.md`
+- **Seat transcript:** `reports/135-marvin-subagent-greedy-match/session-A` (1 session file)
 
 **`cost_usd` is 0 in every turn and in the totals, and that is not a measurement failure:** the provider is Marvin, Jim's own llama-swap server: no API key, no billing, and its models.json entry prices input, output, cache-read and cache-write tokens at 0. Tokens and wall time are what this provider charges in.
 
@@ -58,6 +59,7 @@ Seat B played all 25 turns and costs nothing by construction: no provider, so `u
 ## What this run answers
 
 - **Cache reads (`tokens.cacheRead`):** 25 of 25 turns report a non-zero `cache_read`, 4,301,838 tokens in all, which is 95.1% of the 4,523,986 prompt tokens the match sent. Marvin's prompt cache **does** reach the harness over a whole match.
+- **Where the cache missed:** 5 of 25 turns read under 90.0% of their prompt from the cache — turn 1 at 6.6% (164.6 s), turn 2 at 72.2% (99.5 s), turn 3 at 63.2% (66.4 s), turn 4 at 30.5% (135.1 s), turn 17 at 66.9% (70.5 s), which are the 5 slowest turns of the match. The other 20 sit at 98.6–99.6% cached and 14.4–52.0 s. A series budgets for those re-evaluations, not for the average.
 - **The tool lock-down, as the seat used it:** 78 tool calls over 25 turns, 6 distinct tool names — `get_rules`, `get_state`, `scout`, `simulate`, `submit_orders`, `write_notes`. Every one is inside the seven, and the match was not voided for `tool_surface`.
 - **The tool lock-down, as the session recorded it:** 7 tools declared in the seat's transcript — `mcp__salient__get_rules`, `mcp__salient__get_state`, `mcp__salient__read_notes`, `mcp__salient__scout`, `mcp__salient__simulate`, `mcp__salient__submit_orders`, `mcp__salient__write_notes`. Exactly the seven, so `defaultTools: []`, the disabled built-in extensions and `--no-builtin-tools` held against a real model.
 - **Reasoning output:** 91 of 93 assistant messages in the transcript carry a `thinking` block, 101,408 characters in all, so Marvin's `reasoning_content` reached Pi and was kept as thinking — and thinking is inside the `output` token counts above. The seat was asked at thinking level `medium` and the messages record `medium`.
@@ -70,5 +72,6 @@ Seat B played all 25 turns and costs nothing by construction: no provider, so `u
 - `--max-tokens 10000000` — a ceiling on the match's total tokens, checked against the totals above. Not crossed.
 - `--max-cost 0.000000` — a ceiling on the match's cost, checked the same way. Not crossed.
 - `--per-turn-output none` — brief §6.3's per-turn output budget, the one ceiling the runner enforces while a match is still playing. The log's header records `output_token_budget: null`.
+- **Outcome:** no ceiling crossed, so the run exits 0.
 
-_Written by `scripts/measure-match.mjs` from the log at `/home/jim/.software-factory/workspaces/no-dice/pi-measure-match/reports/135-marvin-subagent-greedy.json`._
+_Written by `scripts/measure-match.mjs` from the log at `reports/135-marvin-subagent-greedy.json`._

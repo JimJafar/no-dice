@@ -53,6 +53,7 @@
  * seven. A voided run writes no log and no report, so the operator replays it:
  * measuring a match the harness refused to accept would measure nothing.
  */
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -64,13 +65,22 @@ import { runMatch } from "@no-dice/runner/match";
 const USAGE =
   "usage: node scripts/measure-match.mjs --model <provider>/<id> --seed <n> " +
   "[--out <report.md>] [--log <log.json>] [--thinking <level>] " +
-  "[--max-tokens <n>] [--max-cost <usd>] [--per-turn-output <n>]";
+  "[--max-tokens <n>] [--max-cost <usd>] [--per-turn-output <n>] [--match-dir <dir>]";
 
 /** The reasoning levels `--thinking` takes, as Pi and the log name them. */
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** The prefix Pi puts on every tool of the seat's MCP server, as the transcript names them. */
 const TOOL_PREFIX = "mcp__salient__";
+
+/**
+ * How much of a turn's prompt has to come from the provider's cache for the turn
+ * not to count as a re-evaluation. Marvin's cache covers 98.6% or more of a turn
+ * that hit it and 72% or less of one that did not, so any line between those two
+ * separates them; 90% is comfortably inside the gap and is stated in the report
+ * rather than left to the reader.
+ */
+const COLD_CACHE_SHARE = 0.9;
 
 /** The seven tools a seat is locked to, named as the log names them. */
 const SEVEN_TOOLS = [
@@ -322,6 +332,49 @@ const readSession = (sessionDir) => {
 const turnTokens = (record) =>
   record.usage.input + record.usage.output + record.usage.cache_read + record.usage.cache_write;
 
+/** What one seat's turn sent as prompt tokens: what the provider has to evaluate. */
+const promptTokens = (record) =>
+  record.usage.input + record.usage.cache_read + record.usage.cache_write;
+
+/** The share of a turn's prompt that came out of the provider's cache. */
+const cacheShare = (record) => {
+  const prompt = promptTokens(record);
+  return prompt === 0 ? 0 : record.usage.cache_read / prompt;
+};
+
+/** A share as a percentage, to one decimal. */
+const pct = (share) => (share * 100).toFixed(1);
+
+/**
+ * The ceilings the finished match crossed, each as the sentence naming it.
+ *
+ * This is the guard the operator ran the match under: an empty array means the
+ * run exits 0, and anything in it is both what the report prints and what the
+ * script prints to stderr on its way to exit 1. A match that went over its
+ * budget must not look like a match that finished inside it.
+ */
+const guardBreaches = (log, guards) => {
+  const totals = log.turns.reduce(
+    (sum, turn) => ({
+      tokens: sum.tokens + turnTokens(turn.players.A),
+      cost: sum.cost + turn.players.A.cost_usd,
+    }),
+    { tokens: 0, cost: 0 },
+  );
+  const breaches = [];
+  if (totals.tokens > guards.maxTokens) {
+    breaches.push(
+      `the match cost ${num(totals.tokens)} tokens, over --max-tokens ${num(guards.maxTokens)}`,
+    );
+  }
+  if (totals.cost > guards.maxCost + 1e-9) {
+    breaches.push(
+      `the match cost ${money(totals.cost)} USD, over --max-cost ${money(guards.maxCost)}`,
+    );
+  }
+  return breaches;
+};
+
 /**
  * The report: the run's facts, the per-turn table, the totals underneath it, what
  * one match costs, and the four questions the milestone asks of a real provider,
@@ -358,6 +411,26 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
   const tokens = total.input + total.output + total.cacheRead + total.cacheWrite;
   const modelId = model.slice(model.indexOf("/") + 1);
 
+  // Which turns the provider's cache missed, and whether they are the slow ones.
+  // A series budget is set from this, so it is computed from the log here rather
+  // than written down as prose somewhere that can drift from the table.
+  const byWall = turns.map((turn, index) => ({ n: turn.n, index, wallMs: records[index].wall_ms }));
+  const shareOf = (entry) => cacheShare(records[entry.index]);
+  const cold = byWall.filter((entry) => shareOf(entry) < COLD_CACHE_SHARE);
+  const warm = byWall.filter((entry) => shareOf(entry) >= COLD_CACHE_SHARE);
+  const warmShares = warm.map(shareOf);
+  const warmWalls = warm.map((entry) => entry.wallMs);
+  const slowestTurns = [...byWall].sort((a, b) => b.wallMs - a.wallMs).slice(0, cold.length);
+  const coldAreSlowest =
+    cold.length > 0 &&
+    cold.length < turns.length &&
+    cold.every((entry) => slowestTurns.some((slow) => slow.n === entry.n));
+
+  // The log's own bytes, so a committed report can be tied to the log it came
+  // from when the log itself is too big to commit.
+  const logSha = createHash("sha256").update(readFileSync(logPath)).digest("hex");
+  const breaches = guardBreaches(log, guards);
+
   const lines = [];
   lines.push(`# Pi cost report: ${model} versus Greedy`);
   lines.push("");
@@ -369,12 +442,15 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
   lines.push(
     `- **contextWindow: ${pretty(window)} tokens — a decision, not a lookup.** Marvin's \`/v1/models\` reports no context length for \`${modelId}\`, so this is the window the run was played with; the log's \`players.${seat}.context_window\` carries the same figure because it is Pi's reading of the seat's own \`models.json\`.`,
   );
+  lines.push(
+    `- **maxTokens: ${pretty(provider.maxTokens)} — also a decision, not a lookup.** Marvin reports no output cap either, so this is the cap the run's model requests were made under, and it bounds the output-token figures below; a run under a different cap is a different run.`,
+  );
   lines.push(`- **Seed:** ${String(log.seed)} — **turns played:** ${String(turns.length)} of ${String(log.config.turns)}`);
   lines.push(
     `- **Result:** \`${log.result.type}\`, seat ${log.result.winner ?? "nobody"}, A ${String(log.result.score.A)} – B ${String(log.result.score.B)}`,
   );
   lines.push(`- **Pi:** ${String(log.harness.pi_version)} in RPC mode, one session per seat — **engine:** ${String(log.engine_version)} — **created:** ${String(log.created)}`);
-  lines.push(`- **Log:** \`${logPath}\``);
+  lines.push(`- **Log:** \`${logPath}\` — sha256 \`${logSha}\``);
   lines.push(`- **Report:** \`${reportPath}\``);
   lines.push(
     `- **Seat transcript:** \`${join(matchDir, `session-${seat}`)}\` (${String(session.sessions)} session file${session.sessions === 1 ? "" : "s"})`,
@@ -469,14 +545,21 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
     `- **Money:** ${money(total.cost)} US dollars, because the provider is Jim's own hardware. The token counts above are the transferable figure: a paid provider at the same counts costs whatever its rates say.`,
   );
   lines.push(
-    `- **Prompt tokens:** ${pretty(total.prompt)} over the match. The conversation is re-sent on every model call, so this is what a series multiplies, and the cache-read share of it — ${((total.cacheRead / Math.max(1, total.prompt)) * 100).toFixed(1)}% — is what softens the cost of doing that.`,
+    `- **Prompt tokens:** ${pretty(total.prompt)} over the match. The conversation is re-sent on every model call, so this is what a series multiplies, and the cache-read share of it — ${pct(total.cacheRead / Math.max(1, total.prompt))}% — is what softens the cost of doing that.`,
   );
   lines.push("");
 
   lines.push("## What this run answers");
   lines.push("");
   lines.push(
-    `- **Cache reads (\`tokens.cacheRead\`):** ${cacheTurns} of ${turns.length} turns report a non-zero \`cache_read\`, ${pretty(total.cacheRead)} tokens in all, which is ${((total.cacheRead / Math.max(1, total.prompt)) * 100).toFixed(1)}% of the ${pretty(total.prompt)} prompt tokens the match sent. Marvin's prompt cache ${total.cacheRead > 0 ? "**does** reach the harness over a whole match" : "**does not** reach the harness over a whole match"}.`,
+    `- **Cache reads (\`tokens.cacheRead\`):** ${cacheTurns} of ${turns.length} turns report a non-zero \`cache_read\`, ${pretty(total.cacheRead)} tokens in all, which is ${pct(total.cacheRead / Math.max(1, total.prompt))}% of the ${pretty(total.prompt)} prompt tokens the match sent. Marvin's prompt cache ${total.cacheRead > 0 ? "**does** reach the harness over a whole match" : "**does not** reach the harness over a whole match"}.`,
+  );
+  lines.push(
+    cold.length === 0
+      ? `- **Where the cache missed:** no turn read less than ${pct(COLD_CACHE_SHARE)}% of its prompt from the cache, so every turn of this match was served from it.`
+      : `- **Where the cache missed:** ${String(cold.length)} of ${turns.length} turns read under ${pct(COLD_CACHE_SHARE)}% of their prompt from the cache — ${cold
+          .map((entry) => `turn ${String(entry.n)} at ${pct(shareOf(entry))}% (${seconds(entry.wallMs)} s)`)
+          .join(", ")}${coldAreSlowest ? `, which are the ${String(cold.length)} slowest turns of the match` : ""}. The other ${String(warm.length)} sit at ${pct(Math.min(...warmShares))}–${pct(Math.max(...warmShares))}% cached and ${seconds(Math.min(...warmWalls))}–${seconds(Math.max(...warmWalls))} s. A series budgets for those re-evaluations, not for the average.`,
   );
   lines.push(
     `- **The tool lock-down, as the seat used it:** ${num(total.calls)} tool calls over ${turns.length} turns, ${tools.size} distinct tool name${tools.size === 1 ? "" : "s"} — ${[...tools].sort().map((tool) => `\`${tool}\``).join(", ") || "none"}. ${outside.length === 0 ? "Every one is inside the seven, and the match was not voided for `tool_surface`." : `Outside the seven: ${outside.map((tool) => `\`${tool}\``).join(", ")}.`}`,
@@ -509,6 +592,11 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
   );
   lines.push(
     `- \`--per-turn-output ${guards.perTurnOutput === null ? "none" : num(guards.perTurnOutput)}\` — brief §6.3's per-turn output budget, the one ceiling the runner enforces while a match is still playing. The log's header records \`output_token_budget: ${log.harness.output_token_budget === null ? "null" : num(log.harness.output_token_budget)}\`.`,
+  );
+  lines.push(
+    breaches.length === 0
+      ? "- **Outcome:** no ceiling crossed, so the run exits 0."
+      : `- **Outcome:** ${breaches.join("; ")}, so the run exits 1.`,
   );
   lines.push("");
   lines.push(`_Written by \`scripts/measure-match.mjs\` from the log at \`${logPath}\`._`);
@@ -584,26 +672,9 @@ const main = async (command, cwd) => {
   console.log(report);
   console.log(`report written to ${reportPath}`);
 
-  const totals = log.turns.reduce(
-    (sum, turn) => ({
-      tokens: sum.tokens + turnTokens(turn.players.A),
-      cost: sum.cost + turn.players.A.cost_usd,
-    }),
-    { tokens: 0, cost: 0 },
-  );
-  if (totals.tokens > command.maxTokens) {
-    console.error(
-      `error: the match cost ${num(totals.tokens)} tokens, over --max-tokens ${num(command.maxTokens)}`,
-    );
-    return 1;
-  }
-  if (totals.cost > command.maxCost + 1e-9) {
-    console.error(
-      `error: the match cost ${money(totals.cost)} USD, over --max-cost ${money(command.maxCost)}`,
-    );
-    return 1;
-  }
-  return 0;
+  const breaches = guardBreaches(log, command);
+  for (const breach of breaches) console.error(`error: ${breach}`);
+  return breaches.length === 0 ? 0 : 1;
 };
 
 // The bin: run the command line this process was started with, and leave the
@@ -632,4 +703,4 @@ if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
   }
 }
 
-export { modelsJsonFor, parseArgs, renderReport, PROVIDERS };
+export { guardBreaches, modelsJsonFor, parseArgs, renderReport, PROVIDERS };

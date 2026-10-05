@@ -167,9 +167,12 @@ Seat A is Pi with `marvin/subagent` at `--thinking medium`, seat B the Greedy
 bot, seed **135**, `DEFAULT_CONFIG`'s 25 turns. It played all 25 and ended by
 time, B winning **58–31**. The table is `reports/pi-cost.md`; the log it is
 rendered from, `reports/135-marvin-subagent-greedy.json`, validates against
-`salient-log/1`. Pi is the same 1.0.2 in the same RPC mode, with the same seat
-home and the same seven tools as the scripted match above — only the model
-behind the endpoint changed.
+`salient-log/1`. That log is a megabyte of tool results and is not committed, so
+the report's header carries its sha256
+(`cd9fd73faa150836615bf57b8a0f8ad8c1f3e669d02c3c1b8e261553a2ce2842`) to tie the
+table to the bytes it came from. Pi is the same 1.0.2 in the same RPC mode, with
+the same seat home and the same seven tools as the scripted match above — only
+the model behind the endpoint changed.
 
 **What the provider entry rests on, measured versus decided.** The entry is
 written in `scripts/measure-match.mjs`, and it was checked against the server
@@ -180,6 +183,11 @@ from this box:
   `contextWindow: 131072` is a decision. The log's
   `players.A.context_window: 131072` is Pi reading that decision back, which is
   what makes the header's number trustworthy rather than circular.
+- `maxTokens: 8192` is a decision for the same reason — the server advertises no
+  output cap — and it is not a harmless one: it bounds the output of every model
+  request, so it bounds the output-token figures §10's per-turn budget will be
+  set from. The report's header prints it beside `contextWindow` for that reason.
+  A match played under a different cap is a different match.
 - `apiKey: "none"` passes Pi's credential check, and Marvin checks no key.
 - `reasoning: true` is right: the endpoint streams a `reasoning_content` field,
   and it streams it whatever `reasoning_effort` says — asked with `medium` and
@@ -197,20 +205,30 @@ throughout: llama.cpp's KV cache is not reported as a write. The cold single
 call that reports `cached_tokens: 0` is therefore not what a match looks like;
 a match is the case the cache is for.
 
-The share is not flat. Turn 1 is 7% cached (42,569 input tokens against 2,999
-read), turn 4 30%, turn 17 67% — Marvin re-evaluated most of the conversation
-on those turns, and they are the three slowest of the match at 164.6 s, 135.1 s
-and 70.5 s. Every other turn is 99–100% cached and takes 14–50 s. A series has
-to budget for the re-evaluations, not for the average.
+The share is not flat, and the shape of it is what a series budget has to be set
+from. **Five of the 25 turns read under 90% of their prompt from the cache —
+turn 1 at 6.6% (164.6 s), turn 2 at 72.2% (99.5 s), turn 3 at 63.2% (66.4 s),
+turn 4 at 30.5% (135.1 s) and turn 17 at 66.9% (70.5 s) — and those five are the
+five slowest turns of the match.** The other twenty sit at 98.6–99.6% cached and
+14.4–52.0 s. Marvin evicts and re-evaluates the conversation on the odd turn,
+including the first, and a series has to budget for those re-evaluations rather
+than for the average. The report prints this sentence from the log rather than
+from anyone's reading of the table, so it cannot drift from the figures above it.
 
 ### Did the MCP connection and the tool lock-down hold against a real model?
 
-**The connection did. The lock-down held on the match that finished, and voided
-the one before it.**
+**The connection held as far as this run can see; the lock-down held on the
+match that finished, and voided the one before it.**
 
-The MCP connection: one Pi process, one session, one server connection for all
-25 turns and 78 tool calls, no reconnect and no turn that failed to reach a
-tool.
+What the Marvin run actually shows about the connection: every one of the 25
+turns reached its tools — 2 to 7 calls a turn, 78 in all — no turn failed to get
+an answer back, and the seat's home holds a single session file for the whole
+match. What it does **not** show is the connection itself: no proxy sat between
+Pi and the MCP server here, and neither the log nor the transcript records an
+MCP session or a reconnect. "One connection, never re-established" is §1's
+answer, measured against the stub through a loopback proxy, and it is carried
+here by inference. If milestone 04 is to rely on it for a real provider, put the
+same proxy around a real seat and re-measure it.
 
 The lock-down, as the finished match used it: 78 calls, 6 of the seven names
 (`read_notes` was never called), every one inside the seven, and the seat's

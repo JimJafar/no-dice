@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,14 +17,17 @@ import {
   stubModelsJson,
 } from "../packages/harness/src/stub-model.ts";
 
-import { modelsJsonFor, parseArgs, renderReport, PROVIDERS } from "./measure-match.mjs";
+import { guardBreaches, modelsJsonFor, parseArgs, renderReport, PROVIDERS } from "./measure-match.mjs";
 
 /**
  * `scripts/measure-match.mjs` is an operator script, so its one run against a
  * real provider is not something a test can repeat. What a test can prove is the
- * two things the report is for: that the command line reaches the runner as the
- * operator meant it to, and that the table it prints is the log's own numbers —
- * one row per turn, the totals underneath, the cache columns present.
+ * three things the report is for: that the command line reaches the runner as the
+ * operator meant it to, that the table it prints is the log's own numbers — one
+ * row per turn, the totals underneath, the cache columns present, the turns the
+ * provider's cache missed counted from the log — and that the `--max-tokens` and
+ * `--max-cost` ceilings name what they crossed instead of letting an over-budget
+ * match exit 0.
  *
  * The log below comes from a stub-seeded match on the runner's default config:
  * 25 turns, the same shape a Marvin match writes, at the stub's cost.
@@ -164,9 +168,82 @@ describe("the report", () => {
     // The window the report prints is the one the log's header carries, which is
     // the stub entry's here and Marvin's 131,072 in a real run.
     expect(report).toContain("contextWindow: 65,536 tokens — a decision, not a lookup");
+    expect(report).toContain("maxTokens: 8,192 — also a decision, not a lookup");
     expect(report).toContain("**Cache reads (`tokens.cacheRead`):**");
     expect(report).toContain("**The tool lock-down, as the session recorded it:**");
     expect(report).toContain("Exactly the seven");
     expect(report).toContain("**Context growth:**");
+  });
+
+  it("counts the turns the provider's cache missed, from the log", () => {
+    // The sentence a series budget is set from, so it is checked against the log
+    // rather than against what the table happens to look like.
+    const cold = log.turns.filter((turn) => {
+      const usage = turn.players.A.usage;
+      const prompt = usage.input + usage.cache_read + usage.cache_write;
+      return usage.cache_read / prompt < 0.9;
+    });
+    expect(cold.length).toBeGreaterThan(0);
+    expect(report).toContain(
+      `**Where the cache missed:** ${String(cold.length)} of ${String(log.turns.length)} turns read under 90.0% of their prompt from the cache`,
+    );
+    for (const turn of cold) {
+      expect(report).toContain(`turn ${String(turn.n)} at `);
+    }
+  });
+
+  it("ties itself to the log it was rendered from", () => {
+    const sha = createHash("sha256").update(readFileSync(join(dir, "match.json"))).digest("hex");
+    expect(report).toContain(`sha256 \`${sha}\``);
+  });
+});
+
+describe("the guards", () => {
+  /** A two-turn log of the shape the guards read, with figures of its own. */
+  const costedLog = (costUsd) => ({
+    turns: [1, 2].map((n) => ({
+      n,
+      players: {
+        A: {
+          usage: { input: 1000, output: 500, cache_read: 2000, cache_write: 0 },
+          cost_usd: costUsd,
+        },
+      },
+    })),
+  });
+
+  it("says nothing when the match is inside both ceilings", () => {
+    expect(guardBreaches(costedLog(0.001), { maxTokens: 7000, maxCost: 0.002 })).toEqual([]);
+  });
+
+  it("names the token ceiling a runaway match crossed", () => {
+    const breaches = guardBreaches(costedLog(0), { maxTokens: 6999, maxCost: 0 });
+    expect(breaches).toEqual(["the match cost 7000 tokens, over --max-tokens 6999"]);
+  });
+
+  it("names the cost ceiling a match crossed", () => {
+    const breaches = guardBreaches(costedLog(0.001), { maxTokens: 1_000_000, maxCost: 0 });
+    expect(breaches).toEqual(["the match cost 0.002000 USD, over --max-cost 0.000000"]);
+  });
+
+  it("names both when both are crossed, so the run cannot exit 0", () => {
+    expect(guardBreaches(costedLog(1), { maxTokens: 1, maxCost: 0 })).toHaveLength(2);
+  });
+
+  it("reports the outcome the exit code will match", () => {
+    expect(report).toContain("**Outcome:** no ceiling crossed, so the run exits 0.");
+    const crossed = renderReport({
+      log,
+      logPath: join(dir, "match.json"),
+      reportPath: join(dir, "pi-cost.md"),
+      matchDir: join(dir, "match"),
+      model: "marvin/subagent",
+      thinking: "off",
+      provider: PROVIDERS.marvin,
+      runWallMs: 12_345,
+      guards: { maxTokens: 1, maxCost: 0, perTurnOutput: null },
+    });
+    expect(crossed).toContain("**Outcome:** the match cost ");
+    expect(crossed).toContain("over --max-tokens 1, so the run exits 1.");
   });
 });
