@@ -1,11 +1,12 @@
 /**
  * Brief §6.5's stopping rules, and brief §8's adaptive-stop test.
  *
- * The rules are asked at the end of every batch of 5 pairs, so the tests are
- * written the way brief §8 asks — with scripted results through the `playMatch`
- * seam, each leaving a real `salient-log/1` on disk (the fixture is
- * `./scripted-series.ts`, shared with the resume tests). Three things end a
- * series, and each is proved at the level it lives at:
+ * The rules are asked at the end of every batch of 5 pairs — and the ceilings
+ * also before the next batch starts — so the tests are written the way brief §8
+ * asks, with scripted results through the `playMatch` seam, each leaving a real
+ * `salient-log/1` on disk (the fixture is `./scripted-series.ts`, shared with the
+ * resume tests). Three things end a series, and each is proved at the level it
+ * lives at:
  *
  * - **The interval.** 18 wins in the first 20 matches stop the series at 10
  *   pairs, and `series.json` says it stopped early and names the 99% interval
@@ -17,11 +18,19 @@
  *   and what the totals were there, and never splits a pair — a ceiling passed
  *   on the third match still finishes its batch of 5 pairs. Totals are counted
  *   over the matches on disk, so a series resumed a week later is bounded by
- *   what it has already spent, not only by what this run played.
+ *   what it has already spent, not only by what this run played, and a ceiling
+ *   it has already passed stops that run before it plays another batch. A
+ *   `--max-tokens` the record could not hold is refused before a single match is
+ *   played.
  * - **The order they are asked in**, which is a pure decision and tested as one:
  *   the pair limit, then the ceilings, then the interval.
+ *
+ * And one thing about the record between runs: a rerun that dies inside its first
+ * batch leaves the decision an earlier run made, rather than a record claiming the
+ * series ran its full length.
  */
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,8 +40,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SeatArg } from "./args.ts";
 import { runSeries } from "./series.ts";
 import type { PlayMatch, SeriesRecord } from "./series.ts";
-import { checkCeilings, decideStop } from "./series-stop.ts";
-import type { PlayedMatch, SeriesTotals, StopRecord } from "./series-stop.ts";
+import { ceilingsPassed, checkCeilings, decideStop } from "./series-stop.ts";
+import type { PlayedMatch, SeriesTotals, StopInput, StopRecord } from "./series-stop.ts";
 import { scripted } from "./scripted-series.ts";
 import type { PlayCall } from "./scripted-series.ts";
 
@@ -352,20 +361,59 @@ describe("the cost and token ceilings", () => {
     expect(record.state.stopped_early).toBe(false);
   });
 
-  it("counts what an earlier run already spent, so a resumed series stops at once", async () => {
+  it("counts what an earlier run already spent, and stops before its first batch", async () => {
     const seriesDir = await seriesAt("resumed-ceiling");
     const first: PlayCall[] = [];
     await runSeries({
       dir: seriesDir,
       a: X,
       b: OPPONENT,
-      maxPairs: 5,
+      maxPairs: 3,
+      seedBase: 71,
+      playMatch: xWins(first),
+    });
+    const logs = await logsOf(seriesDir);
+
+    // The same series asked for longer, with a ceiling the 6 matches on disk have
+    // already passed. A batch is 5 pairs of 19-minute matches, so finding that
+    // out only after playing one is the most expensive way to learn it.
+    const again: PlayCall[] = [];
+    const run = await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 12,
+      maxTokens: 500,
+      seedBase: 71,
+      playMatch: xWins(again),
+    });
+
+    expect(again).toEqual([]);
+    expect(run.played).toBe(0);
+    expect(await logsOf(seriesDir)).toEqual(logs);
+
+    const record = await readRecord(seriesDir);
+    const stop = stoppedFor(record, "max_tokens");
+    expect(stop.ceiling_tokens).toBe(500);
+    expect(stop.totals.tokens.total).toBe(960);
+    expect(record.state.stopped_early).toBe(true);
+  });
+
+  it("plays on when the totals on disk have not passed the ceiling", async () => {
+    const seriesDir = await seriesAt("resumed-under-ceiling");
+    const first: PlayCall[] = [];
+    await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 3,
       seedBase: 71,
       playMatch: xWins(first),
     });
 
-    // The same series asked for longer, with a ceiling it has already passed on
-    // the matches that are on disk.
+    // The same series, with a ceiling the 960 tokens on disk have not passed: the
+    // run plays the pairs its first batch is missing and stops at the boundary
+    // after, once the totals it has spent are over the ceiling.
     const again: PlayCall[] = [];
     const run = await runSeries({
       dir: seriesDir,
@@ -377,15 +425,104 @@ describe("the cost and token ceilings", () => {
       playMatch: xWins(again),
     });
 
-    expect(again).toEqual([]);
-    expect(run.played).toBe(0);
-    expect(run.skipped).toBe(10);
+    // The first batch is 5 pairs and 3 of them were already played, so 2 pairs —
+    // 4 matches — are new, and none of them is half a pair.
+    expect(again).toHaveLength(4);
+    expect(run.played).toBe(4);
+    expect(run.skipped).toBe(6);
 
     const record = await readRecord(seriesDir);
+    expect(record.pairs).toHaveLength(5);
     const stop = stoppedFor(record, "max_tokens");
-    expect(stop.ceiling_tokens).toBe(1500);
     expect(stop.totals.tokens.total).toBe(1600);
     expect(record.state.stopped_early).toBe(true);
+  });
+
+  it("asks only the ceilings before a batch", () => {
+    const input = {
+      pairsPlayed: 12,
+      matches: played(12, 12),
+      totals: totalsOf(24),
+      maxPairs: 12,
+      ceilings: { maxTokens: 100 },
+    } satisfies StopInput;
+
+    // The pair limit and the interval are questions about what has been played,
+    // and before a batch they can only repeat the answer the last boundary gave.
+    // So a run resumed at its limit is not stopped by this ask — it walks its
+    // batches and counts the logs it finds — while a ceiling already passed is.
+    expect(ceilingsPassed(input)?.reason).toBe("max_tokens");
+    const atBoundary = decideStop(input);
+    if (!atBoundary.stopped) throw new Error("a series at its pair limit must stop at the boundary");
+    expect(atBoundary.stop.reason).toBe("max_pairs");
+    expect(ceilingsPassed({ ...input, ceilings: {} })).toBeNull();
+  });
+
+  it("refuses a --max-tokens that is not a whole number, before playing anything", async () => {
+    const seriesDir = await seriesAt("fractional-ceiling");
+    const calls: PlayCall[] = [];
+
+    // The record keeps `ceiling_tokens` as a whole number, which is what the run
+    // writes when a ceiling stops it: a fractional ceiling accepted here would be
+    // refused by the record after a whole batch had been played.
+    await expect(
+      runSeries({
+        dir: seriesDir,
+        a: X,
+        b: OPPONENT,
+        maxPairs: 12,
+        maxTokens: 1000.5,
+        seedBase: 1234,
+        playMatch: xWins(calls),
+      }),
+    ).rejects.toThrow("--max-tokens takes a whole number of 0 or more, not 1000.5");
+
+    expect(calls).toEqual([]);
+    expect(existsSync(join(seriesDir, "matches"))).toBe(false);
+    expect(existsSync(join(seriesDir, "series.json"))).toBe(false);
+  });
+
+  it("leaves the decision an earlier run made when it dies before its own first boundary", async () => {
+    const seriesDir = await seriesAt("interrupted-rerun");
+    const first: PlayCall[] = [];
+    await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 12,
+      seedBase: 5150,
+      playMatch: xWins(first, [3, 11]),
+    });
+    const firstRecord = await readRecord(seriesDir);
+    expect(firstRecord.state.stopped_early).toBe(true);
+    stoppedFor(firstRecord, "wilson_interval");
+
+    // A log something else wrote over, in the pair the rerun reads first, so it
+    // cannot say what its first batch did and dies before reaching a boundary of
+    // its own.
+    const broken = firstRecord.pairs[0].matches[0];
+    if (broken.status !== "played") throw new Error("expected the first pair to be played");
+    await writeFile(broken.path, "not a log\n", "utf8");
+
+    const again: PlayCall[] = [];
+    await expect(
+      runSeries({
+        dir: seriesDir,
+        a: X,
+        b: OPPONENT,
+        maxPairs: 12,
+        seedBase: 5150,
+        playMatch: xWins(again),
+      }),
+    ).rejects.toThrow(/not a salient-log\/1 log/);
+    expect(again).toEqual([]);
+
+    // The record still says the series stopped early at 10 pairs, which is what
+    // happened, rather than that it ran the 12 pairs it was asked for.
+    const record = await readRecord(seriesDir);
+    expect(record.state.stop_reason).toBe("wilson_interval");
+    expect(record.state.stopped_early).toBe(true);
+    expect(stoppedFor(record, "wilson_interval").test.win_rate.n).toBe(20);
   });
 
   it("names the token ceiling before the cost one, and before the interval", () => {
@@ -420,7 +557,16 @@ describe("the cost and token ceilings", () => {
       "--max-cost takes a number of 0 or more, not -1",
     );
     expect(() => checkCeilings({ maxTokens: Number.NaN })).toThrow(
-      "--max-tokens takes a number of 0 or more, not NaN",
+      "--max-tokens takes a whole number of 0 or more, not NaN",
     );
+    // A token count is a whole number, and the record keeps the ceiling as one.
+    expect(() => checkCeilings({ maxTokens: 1000.5 })).toThrow(
+      "--max-tokens takes a whole number of 0 or more, not 1000.5",
+    );
+    expect(() => checkCeilings({ maxTokens: Number.POSITIVE_INFINITY })).toThrow(
+      "--max-tokens takes a whole number of 0 or more, not Infinity",
+    );
+    // Cost is money, and money is not whole.
+    expect(() => checkCeilings({ maxCostUsd: 2.5 })).not.toThrow();
   });
 });

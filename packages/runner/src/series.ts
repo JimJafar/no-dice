@@ -28,12 +28,12 @@
  * was played, and it does not take the rest of its batch down with it.
  *
  * The stopping rules are brief §6.5's and live beside this loop, in
- * `./series-stop.ts`. They are asked at the end of every batch of 5 pairs and
- * never in the middle of a pair, and what they decide is written into the record:
- * which rule ended the run, the 99% interval if the interval test had been
- * reached at that boundary (and it is what decided the run when the result came
- * out clear), the cost and token totals there, and whether the series stopped
- * short of `--max-pairs`.
+ * `./series-stop.ts`. They are asked at the end of every batch of 5 pairs, and
+ * their ceilings also before the next batch starts, never in the middle of a
+ * pair, and what they decide is written into the record: which rule ended the
+ * run, the 99% interval if the interval test had been reached at that boundary
+ * (and it is what decided the run when the result came out clear), the cost and
+ * token totals there, and whether the series stopped short of `--max-pairs`.
  */
 import { readFile } from "node:fs/promises";
 
@@ -50,13 +50,14 @@ import { planSeries, seriesRecordPath, writeSeriesRecord } from "./series-plan.t
 import type { PlannedMatch } from "./series-plan.ts";
 import {
   BATCH_PAIRS,
+  ceilingsPassed,
   checkCeilings,
   decideStop,
   stopReasonSchema,
   stopRecordSchema,
   tokensSchema,
 } from "./series-stop.ts";
-import type { Ceilings, SeriesTokens, StopDecision, StopInput, StopRecord } from "./series-stop.ts";
+import type { Ceilings, SeriesTokens, StopInput, StopRecord } from "./series-stop.ts";
 
 /**
  * How one match of a series is played. It takes what `runMatch` takes — the
@@ -370,14 +371,14 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
    */
   const stopInput = (): StopInput => {
     const pairs = [...bySeed.values()];
-    const played = pairs
+    const playedMatches = pairs
       .flatMap((pair) => pair.matches)
       .filter(
         (match): match is Extract<SeriesMatchRecord, { status: "played" }> => match.status === "played",
       );
     const tokens = { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 };
     let costUsd = 0;
-    for (const match of played) {
+    for (const match of playedMatches) {
       tokens.input += match.tokens.input;
       tokens.output += match.tokens.output;
       tokens.cache_read += match.tokens.cache_read;
@@ -389,25 +390,28 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
       pairsPlayed: completePairs(pairs).length,
       // Every match with a result counts towards the win rate, including one
       // whose pair is not complete: it was played, and the report counts it too.
-      matches: played.map((match) => ({ seat: match.seat, result: { winner: match.result.winner } })),
+      matches: playedMatches.map((match) => ({ seat: match.seat, result: { winner: match.result.winner } })),
       totals: { cost_usd: costUsd, tokens },
       maxPairs: plan.maxPairs,
       ceilings,
     };
   };
 
-  /** Write what is known so far: this plan's pairs, plus any older played ones. */
-  const writeRecord = async (decision: StopDecision): Promise<SeriesRecord> => {
+  /**
+   * Write what is known so far: this plan's pairs, plus any older played ones.
+   * `stop` is what the rules decided at the last boundary this run reached, or
+   * null while it has not reached one that stopped.
+   */
+  const writeRecord = async (stop: StopRecord | null): Promise<SeriesRecord> => {
     const pairs = [...bySeed.values()];
-    const stop = decision.stopped ? decision.stop : null;
     const written = {
       ...existing,
       pairing: { a: options.a, b: options.b },
       pairs,
       state: stateOf(pairs, stop),
-      // A run that has not stopped leaves no decision behind, and clears the one
-      // an earlier run left, so the field always describes this series as it now
-      // stands rather than the last run that happened to stop.
+      // A boundary that stopped nothing leaves no decision behind, and clears the
+      // one an earlier run left, so the field always describes this series as it
+      // now stands rather than the last run that happened to stop.
       ...(stop === null ? { stop: undefined } : { stop }),
     };
     // Checked before it lands, so the only record a later run can read is one
@@ -418,10 +422,24 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
   };
 
   // Written once before anything is played, so a series killed in its first match
-  // still has a record, and again after every batch of 5 pairs.
-  let record = await writeRecord({ stopped: false, test: null });
+  // still has a record, and again after every batch of 5 pairs. That first write
+  // carries the decision an earlier run recorded rather than clearing it: a match
+  // takes 19 minutes, so a rerun interrupted inside its first batch would
+  // otherwise leave a series that had stopped early at 10 pairs claiming it ran
+  // its full length. This run overwrites it at the first boundary it reaches.
+  let record = await writeRecord(previous.success ? previous.data.stop ?? null : null);
 
   for (const batch of batchesOf(plan.pairs, BATCH_PAIRS)) {
+    // The ceilings are asked before the batch as well as after it, so a series
+    // resumed onto totals it has already passed does not spend another batch of
+    // matches finding that out. The pair limit and the interval are not asked
+    // here; they ask about what has been played, and nothing has been played
+    // since the boundary that last answered them.
+    const spent = ceilingsPassed(stopInput());
+    if (spent !== null) {
+      record = await writeRecord(spent);
+      break;
+    }
     for (const pair of batch) {
       bySeed.set(pair.seed, {
         seed: pair.seed,
@@ -431,7 +449,7 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
     // Brief §6.5's rules are asked at a batch boundary, never inside a pair, so a
     // series always stops with every pair it started complete on disk.
     const decision = decideStop(stopInput());
-    record = await writeRecord(decision);
+    record = await writeRecord(decision.stopped ? decision.stop : null);
     if (decision.stopped) break;
   }
 

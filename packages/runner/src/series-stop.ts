@@ -2,8 +2,9 @@
  * Brief §6.5's stopping rules: what ends a series, and what the record says
  * about the moment it ended.
  *
- * Three rules, each applied once the loop in `series.ts` has finished a batch of
- * 5 pairs:
+ * Three rules, each applied at a batch boundary in the loop in `series.ts` (the
+ * ceilings also before the next batch starts, which is what `ceilingsPassed`
+ * is for):
  *
  * - **The result is clear.** From 10 pairs on, model X's win rate over every
  *   match played — a draw counting half a win — gets a Wilson score interval,
@@ -41,6 +42,11 @@
  * named, because on the only hardware measured so far it is the one that binds.
  * The interval is recorded at that boundary either way, so a report can say what
  * the result looked like when the ceiling stopped the series.
+ *
+ * The ceilings are asked twice at each boundary, before the next batch as well as
+ * after the last one, because a series resumed a week later has already spent
+ * what the matches on disk cost it: `ceilingsPassed` is that earlier ask, and it
+ * asks only the ceilings, for the reason written there.
  */
 import { z } from "zod";
 
@@ -64,7 +70,14 @@ export const STOP_CONFIDENCE = 0.99 satisfies Confidence;
 /** The rate a series has no answer about: model X and its opponent even. */
 const EVEN_RATE = 0.5;
 
-/** Why a series stopped: brief §6.5's three rules, named. */
+/**
+ * Why a series stopped: brief §6.5's three rules, named. A run that ends with
+ * pairs it planned but never played — because every match of a pair has to have
+ * a log for the pair to count, and a voided match leaves one without — records
+ * `max_pairs` too: brief §6.5 gives that case no reason of its own, and
+ * `matches_failed` beside `pairs_played` is what says the pairs ran out rather
+ * than the series running its length.
+ */
 export const stopReasonSchema = z.enum(["max_pairs", "wilson_interval", "max_cost", "max_tokens"]);
 export type StopReason = z.infer<typeof stopReasonSchema>;
 
@@ -183,16 +196,19 @@ export interface Ceilings {
  * Check the ceilings a caller gave, the way `planSeries` checks `--max-pairs`.
  * A negative one would stop the series at its first boundary without playing
  * anything, which reads as a finished series rather than as a mistake.
+ *
+ * `--max-tokens` has to be a whole number, because the record keeps it as one:
+ * a fractional ceiling would pass this check, spend a batch, and then be refused
+ * by `series.json`'s own schema when the run came to write down the ceiling that
+ * stopped it — which is the worst possible time to find out.
  */
 export const checkCeilings = (ceilings: Ceilings): void => {
-  for (const [flag, value] of [
-    ["--max-cost", ceilings.maxCostUsd],
-    ["--max-tokens", ceilings.maxTokens],
-  ] as const) {
-    if (value === undefined) continue;
-    if (!Number.isFinite(value) || value < 0) {
-      throw new Error(`${flag} takes a number of 0 or more, not ${String(value)}`);
-    }
+  const { maxCostUsd, maxTokens } = ceilings;
+  if (maxCostUsd !== undefined && (!Number.isFinite(maxCostUsd) || maxCostUsd < 0)) {
+    throw new Error(`--max-cost takes a number of 0 or more, not ${String(maxCostUsd)}`);
+  }
+  if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens < 0)) {
+    throw new Error(`--max-tokens takes a whole number of 0 or more, not ${String(maxTokens)}`);
   }
 };
 
@@ -239,6 +255,26 @@ const intervalTestOf = (matches: readonly PlayedMatch[]): IntervalTest => {
 };
 
 /**
+ * The ceiling the totals have passed, and the record of the boundary that found
+ * it out. Tokens are asked before cost because they are the ceiling that binds on
+ * unpriced hardware (`docs/pi-harness-notes.md` §7), so they are the one a report
+ * should read.
+ */
+const ceilingFired = (
+  ceilings: Ceilings,
+  totals: SeriesTotals,
+  test: IntervalTest | null,
+): StopRecord | null => {
+  if (ceilings.maxTokens !== undefined && totals.tokens.total > ceilings.maxTokens) {
+    return { reason: "max_tokens", ceiling_tokens: ceilings.maxTokens, totals, test };
+  }
+  if (ceilings.maxCostUsd !== undefined && totals.cost_usd > ceilings.maxCostUsd) {
+    return { reason: "max_cost", ceiling_usd: ceilings.maxCostUsd, totals, test };
+  }
+  return null;
+};
+
+/**
  * Decide what happens at the end of a batch.
  *
  * A ceiling is passed only when the total is *over* it: a run that lands exactly
@@ -258,11 +294,9 @@ export const decideStop = (input: StopInput): StopDecision => {
     return { stopped: true, stop: { reason: "max_pairs", totals, test } };
   }
 
-  if (ceilings.maxTokens !== undefined && totals.tokens.total > ceilings.maxTokens) {
-    return { stopped: true, stop: { reason: "max_tokens", ceiling_tokens: ceilings.maxTokens, totals, test } };
-  }
-  if (ceilings.maxCostUsd !== undefined && totals.cost_usd > ceilings.maxCostUsd) {
-    return { stopped: true, stop: { reason: "max_cost", ceiling_usd: ceilings.maxCostUsd, totals, test } };
+  const ceiling = ceilingFired(ceilings, totals, test);
+  if (ceiling !== null) {
+    return { stopped: true, stop: ceiling };
   }
 
   if (test !== null && test.excludes_half) {
@@ -270,4 +304,21 @@ export const decideStop = (input: StopInput): StopDecision => {
   }
 
   return { stopped: false, test };
+};
+
+/**
+ * Whether the ceilings are already passed, asked *before* a batch is played.
+ *
+ * Only the ceilings are asked here. The pair limit and the interval ask about what
+ * has been played, so before a batch they can only repeat what the boundary after
+ * the last batch answered, and a series resumed onto logs it has already played
+ * still has to walk its batches to count them. A ceiling is different: it is about
+ * what has been spent, and a series resumed a week later has spent all of that
+ * already — a batch is around 1.6 hours and 23M tokens (`docs/pi-harness-notes.md`
+ * §7), so learning that only after playing one costs the most it can.
+ */
+export const ceilingsPassed = (input: StopInput): StopRecord | null => {
+  const { pairsPlayed, matches, totals } = input;
+  const test = pairsPlayed >= MIN_TEST_PAIRS ? intervalTestOf(matches) : null;
+  return ceilingFired(input.ceilings ?? {}, totals, test);
 };
