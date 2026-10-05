@@ -8,9 +8,10 @@
  * describes — the model would have `bash` and `read` beside the seven game
  * tools, and a different system prompt and set of skills than the next match
  * had. `PI_CODING_AGENT_DIR` moves Pi's whole config directory, which is the
- * one switch that takes all of that out; the two files written here are then
- * the only configuration a seat has, and `settings.json` plus the flags brief
- * §6.3 lists leave it the seven Salient tools and nothing else.
+ * one switch that takes all of that out; on a fresh match directory the two
+ * files written here are the only configuration a seat has, and the
+ * `settings.json` written here plus the flags brief §6.3 lists leave it the
+ * seven Salient tools and nothing else.
  *
  * The three directories are separate on purpose. `pi-home-<seat>/` is what Pi
  * reads and writes as its config; `cwd-<seat>/` is the empty working directory
@@ -29,14 +30,17 @@
  * `settings.json` and by the flags brief §6.3 lists, which leave MCP on.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 /** The two seats of a match, named as the runner and the log name them. */
 export type SeatId = "A" | "B";
 
 /** What a seat home is built for. */
 export interface SeatHomeOptions {
-  /** The match's directory; the three seat directories are made inside it. */
+  /**
+   * The match's directory; the three seat directories are made inside it. May
+   * be relative to this process, and is resolved to an absolute path.
+   */
   matchDir: string;
   /** Which seat this home is. */
   seat: SeatId;
@@ -107,15 +111,31 @@ const writeJson = (path: string, value: unknown): void => {
 /**
  * Create one seat's home under `matchDir`, and say what to run with it.
  *
- * Idempotent by design: a runner that restarts a match rewrites the same three
- * directories and the same two files rather than finding a collision.
+ * `matchDir` may be relative to this process's working directory; every path
+ * this returns, and `PI_CODING_AGENT_DIR` with it, is absolute.
+ *
+ * Writing the same `matchDir` again rewrites the two config files rather than
+ * colliding, which is what a runner that restarts a match wants. It does not
+ * empty the directories: a restarted match inherits whatever the previous run
+ * left in `pi-home-<seat>/` and `cwd-<seat>/`, so a match that has to start
+ * from nothing is given a fresh `matchDir`.
  */
 export const createSeatHome = (options: SeatHomeOptions): SeatHome => {
   const { matchDir, seat, serverUrl, token } = options;
 
-  const piHomeDir = join(matchDir, `pi-home-${seat}`);
-  const cwd = join(matchDir, `cwd-${seat}`);
-  const sessionDir = join(matchDir, `session-${seat}`);
+  // Resolved once, here, because the child runs with its working directory set
+  // to `cwd-<seat>/`. Pi normalises `PI_CODING_AGENT_DIR` but never resolves it
+  // against anything, so a relative one is looked for inside that empty
+  // directory — and that is not a loud failure: `pi mcp list` answers
+  // `{"servers": [], "errors": []}` and exits 0 when the config directory is
+  // simply not there, so a seat would play a whole match with no game tools and
+  // no signal that anything was wrong. The same goes for `--session-dir`, which
+  // would then write the match's transcript under the seat's own cwd.
+  const base = resolve(matchDir);
+
+  const piHomeDir = join(base, `pi-home-${seat}`);
+  const cwd = join(base, `cwd-${seat}`);
+  const sessionDir = join(base, `session-${seat}`);
   for (const dir of [piHomeDir, cwd, sessionDir]) {
     mkdirSync(dir, { recursive: true });
   }

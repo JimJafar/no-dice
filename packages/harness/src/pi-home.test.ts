@@ -16,12 +16,15 @@
  * a real Salient server on a real socket, and uses `pi mcp list` as the
  * assertion: it exits 1 when an enabled server is not connected, so a seat that
  * failed to reach its match, or reached it with the wrong token, fails the test
- * rather than reporting a server nobody connected to.
+ * rather than reporting a server nobody connected to. The one mistake that
+ * exit code would not catch — a config directory that is not found at all, when
+ * the runner named the match directory relatively — is caught by asking the seat
+ * to name the file it read its server from.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -164,9 +167,10 @@ describe("the seat home against the pinned Pi and a real match", () => {
   let matches: MatchServer;
   let running: RunningServer;
   let matchId: string;
-  let matchDir: string;
+  let tokens: { A: string; B: string };
+  /** Every directory these tests make, so they are all gone when the run ends. */
+  const homes: string[] = [];
   let seat: SeatHome;
-  let token: string;
 
   /**
    * How long a seat's `pi mcp list` gets: Pi takes a second or two to start, and
@@ -180,61 +184,74 @@ describe("the seat home against the pinned Pi and a real match", () => {
     running = await startServer({ matches, port: 0 });
     const created = matches.createMatch(135, DEFAULT_CONFIG);
     matchId = created.matchId;
-    token = created.tokens.A;
+    tokens = created.tokens;
     matches.openTurn(matchId);
 
-    matchDir = mkdtempSync(join(tmpdir(), "no-dice-seat-match-"));
-    seat = createSeatHome({ matchDir, seat: "A", serverUrl: running.url, token });
+    const matchDir = mkdtempSync(join(tmpdir(), "no-dice-seat-match-"));
+    homes.push(matchDir);
+    seat = createSeatHome({ matchDir, seat: "A", serverUrl: running.url, token: tokens.A });
   });
 
   afterAll(async () => {
     await running.close();
-    rmSync(matchDir, { recursive: true, force: true });
+    for (const dir of homes.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   /**
-   * Ask the pinned Pi what MCP servers the seat has, running it exactly the way
-   * a seat is run: from the seat's empty working directory, with the seat's
+   * Ask the pinned Pi what MCP servers `home` has, running it exactly the way a
+   * seat is run: from the seat's empty working directory, with the seat's
    * environment and nothing else added.
    *
    * Asynchronously on purpose. The match these seats reach is served from this
    * same process, so a blocking `spawnSync` would park the event loop, the
    * server would never answer the child, and the test would measure a
    * connection that could not have worked.
+   *
+   * Pi's stderr comes back with the result, because every assertion here is on
+   * the exit code and stdout: without it, a Pi-side complaint about a config
+   * file shows up as an unexplained `status: 1` or a JSON parse error.
    */
-  const mcpList = (env: Record<string, string>): Promise<{ status: number | null; stdout: string }> =>
+  const mcpList = (
+    home: SeatHome,
+    env: Record<string, string> = home.env,
+  ): Promise<{ status: number | null; stdout: string; stderr: string }> =>
     new Promise((settled, failed) => {
       const child = spawn(process.execPath, [piCli().path, "mcp", "list", "--json"], {
-        cwd: seat.cwd,
+        cwd: home.cwd,
         env: { ...process.env, ...env },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let stdout = "";
+      let stderr = "";
       child.stdout.setEncoding("utf-8");
       child.stdout.on("data", (chunk: string) => (stdout += chunk));
-      child.stderr.resume();
+      child.stderr.setEncoding("utf-8");
+      child.stderr.on("data", (chunk: string) => (stderr += chunk));
       child.on("error", failed);
-      child.on("close", (status) => settled({ status, stdout }));
+      child.on("close", (status) => settled({ status, stdout, stderr }));
     });
 
   /** The single server entry `pi mcp list --json` reported. */
-  const listedServer = (stdout: string): Record<string, unknown> => {
-    const listed = JSON.parse(stdout) as { servers: Record<string, unknown>[]; errors: unknown[] };
-    expect(listed.errors).toEqual([]);
-    expect(listed.servers).toHaveLength(1);
+  const listedServer = (run: { stdout: string; stderr: string }): Record<string, unknown> => {
+    const listed = JSON.parse(run.stdout) as {
+      servers: Record<string, unknown>[];
+      errors: unknown[];
+    };
+    expect(listed.errors, run.stderr).toEqual([]);
+    expect(listed.servers, run.stderr).toHaveLength(1);
     return listed.servers[0];
   };
 
   it(
     "connects the seat to the match and offers it exactly the seven tools",
     async () => {
-      const run = await mcpList(seat.env);
+      const run = await mcpList(seat);
 
       // `pi mcp list` exits 1 when an enabled server is not connected, so a
       // seat that could not reach its match fails here rather than reporting a
       // server nobody connected to.
-      expect(run.status).toBe(0);
-      const server = listedServer(run.stdout);
+      expect(run.status, run.stderr).toBe(0);
+      const server = listedServer(run);
       expect(server.name).toBe("salient");
       expect(server.state).toBe("connected");
       expect(server.enabled).toBe(true);
@@ -248,7 +265,7 @@ describe("the seat home against the pinned Pi and a real match", () => {
   it(
     "reads the seat's own mcp.json, so nothing from ~/.pi/agent is in play",
     async () => {
-      const server = listedServer((await mcpList(seat.env)).stdout);
+      const server = listedServer(await mcpList(seat));
 
       // `global` scope: the config directory was relocated, so the file is read
       // without the project trust a `.pi/mcp.json` in the working directory
@@ -260,13 +277,47 @@ describe("the seat home against the pinned Pi and a real match", () => {
   );
 
   it(
+    "makes every path absolute when the runner names the match directory relatively",
+    async () => {
+      // `runs/seed-1` is a perfectly natural thing for a runner to pass, and a
+      // relative `PI_CODING_AGENT_DIR` is the one mistake that would not be
+      // caught by the exit code: Pi looks for it inside the seat's empty cwd,
+      // finds no config directory, answers `{"servers": [], "errors": []}` and
+      // exits 0. So the assertion is that the seat still reaches its match.
+      const parent = mkdtempSync(join(tmpdir(), "no-dice-seat-home-"));
+      homes.push(parent);
+      const matchDir = join(parent, "runs", "seed-1");
+      const home = createSeatHome({
+        matchDir: relative(process.cwd(), matchDir),
+        seat: "B",
+        serverUrl: running.url,
+        token: tokens.B,
+      });
+
+      expect(isAbsolute(home.piHomeDir)).toBe(true);
+      expect(home.piHomeDir).toBe(join(matchDir, "pi-home-B"));
+      expect(home.cwd).toBe(join(matchDir, "cwd-B"));
+      expect(home.sessionDir).toBe(join(matchDir, "session-B"));
+      expect(home.env.PI_CODING_AGENT_DIR).toBe(home.piHomeDir);
+
+      const run = await mcpList(home);
+      expect(run.status, run.stderr).toBe(0);
+      expect(listedServer(run).source).toBe(home.mcpConfigPath);
+    },
+    SEAT_TIMEOUT_MS,
+  );
+
+  it(
     "fails the seat whose token does not reach the server",
     async () => {
       // The same home, the same server, a token this match never dealt.
-      const run = await mcpList({ ...seat.env, SALIENT_TOKEN: "a-token-this-match-did-not-deal" });
+      const run = await mcpList(seat, {
+        ...seat.env,
+        SALIENT_TOKEN: "a-token-this-match-did-not-deal",
+      });
 
-      expect(run.status).toBe(1);
-      const server = listedServer(run.stdout);
+      expect(run.status, run.stderr).toBe(1);
+      const server = listedServer(run);
       expect(server.state).not.toBe("connected");
       expect(server.tools).toEqual([]);
     },
@@ -296,6 +347,15 @@ describe("the seat home against the pinned Pi and a real match", () => {
       requestInit: { headers: { authorization: "Bearer a-token-this-match-did-not-deal" } },
     });
 
-    await expect(client.connect(transport)).rejects.toThrow();
+    // Rejected at the door, before a session opens: the server answers an
+    // unknown token with a 401 and `unknown_token`, so the failure is pinned to
+    // the token check rather than to "something went wrong".
+    const failure = await client.connect(transport).then(
+      () => null,
+      (error: unknown) => error as Error & { code?: number },
+    );
+    expect(failure, "the server took a token it never dealt").toBeInstanceOf(Error);
+    expect((failure as { code?: number }).code).toBe(401);
+    expect((failure as Error).message).toContain("unknown_token");
   });
 });
