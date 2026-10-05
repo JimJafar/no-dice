@@ -1,6 +1,6 @@
-/* The viewer's frame and the loading screen. The board's own classes — hexes,
-   arrows, symbols — come with the task that draws the board; the colours and
-   type are the mock-ups' (salient/docs/salient-mockups.md, "Build notes"). */
+/* The viewer's frame and the loading screen, and below them the board's own
+   classes — hexes, symbols, arrows. The colours and type are the mock-ups'
+   (salient/docs/salient-mockups.md, "Build notes"). */
 body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',system-ui,sans-serif;--team-a:#2c6fd1;--team-b:#e06f35}
 .frame{width:1920px;height:1080px;box-sizing:border-box;padding:36px;display:flex;flex-direction:column;gap:24px;background:#12161c;color:#eef1f5}
 .frame.dropping{outline:4px dashed var(--team-a,#2c6fd1);outline-offset:-16px}
@@ -11,3 +11,30 @@ body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',syste
 .pick{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#232a33;border-radius:6px;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em}
 .hint{font-size:15px;line-height:1.3;color:#aab3bf}
 code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
+
+/* The board: hexes, their symbols, and the marks that go over them. Copied out
+   of salient/docs/mockups/spectator-view.html, which holds the exact CSS the
+   mock-ups were drawn with. `.ac` is the mock-ups' `.bc` cut-off hatch in A's
+   colour — their frame only ever shows B cut off, so it needed a twin rather
+   than a new idea. `.hl` and `.ar`, the fight outline and the order arrow, come
+   with the task that animates a turn. */
+.board{position:relative;flex:none;align-self:center}
+.hx{position:absolute;width:60px;height:69px;box-sizing:border-box;padding-top:8px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);display:flex;align-items:center;justify-content:center;font:600 22px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif}
+.hx i{position:absolute;top:8px;left:0;right:0;text-align:center;font:500 11px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;font-style:normal;letter-spacing:.03em}
+.a{background:var(--team-a,#2c6fd1);color:#ffffff}
+.b{background:var(--team-b,#e06f35);color:#14110f}
+.n{background:#2a323d;color:#b4bcc8}
+.x{background:repeating-linear-gradient(45deg,#07090c 0 4px,#161b22 4px 6px)}
+.bc{background:repeating-linear-gradient(135deg,var(--team-b,#e06f35) 0 3px,#3a2418 3px 10px);color:#ffffff}
+.bc i{left:50%;right:auto;transform:translateX(-50%);padding:1px 3px;border-radius:2px;background:#1c1410}
+.ac{background:repeating-linear-gradient(135deg,var(--team-a,#2c6fd1) 0 3px,#16283f 3px 10px);color:#ffffff}
+.ac i{left:50%;right:auto;transform:translateX(-50%);padding:1px 3px;border-radius:2px;background:#101a26}
+.ct{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:#1c1410;font-size:19px}
+.bs{display:flex;align-items:center;justify-content:center;width:34px;height:34px;box-sizing:border-box;border:3px solid currentColor;border-radius:50%;font-size:19px}
+.nd{display:flex;align-items:center;justify-content:center;width:26px;height:26px;box-sizing:border-box;border:2.5px solid currentColor;transform:rotate(45deg)}
+.nd b{transform:rotate(-45deg);font-size:19px;font-weight:600}
+.hl{position:absolute;width:70px;height:81px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);background:#f4f6f8}
+.ar{position:absolute;width:20px;height:12px}
+.ar::before,.ar::after{content:'';position:absolute;clip-path:polygon(0 33%,55% 33%,55% 0,100% 50%,55% 100%,55% 67%,0 67%)}
+.ar::before{top:-3px;bottom:-3px;left:-3px;right:-5px;background:#12161c}
+.ar::after{top:0;bottom:0;left:0;right:0;background:#f4f6f8}

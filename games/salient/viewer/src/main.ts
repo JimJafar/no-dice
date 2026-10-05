@@ -2,11 +2,14 @@
  * The viewer's entry point: one `salient-log/1` log onto the page. This file
  * owns the frame, the three ways of handing the page a log — the picker, a drop
  * anywhere on the frame, and `?log=<url>` — and the line that says what went
- * wrong when the file is not one. Nothing else renders yet: the header, the
- * board and the panels are the tasks after this one.
+ * wrong when the file is not one. It draws the board through `render-board.ts`,
+ * at the last turn the log holds; the header, the panels and the turn stepper
+ * are the tasks after this one.
  */
 import { parseLog, pickLogSource, readLogSource } from "./load.ts";
 import type { LogSource } from "./load.ts";
+import { boardView } from "./board.ts";
+import { renderBoard } from "./render-board.ts";
 import type { MatchLog } from "@no-dice/log";
 
 /** The frame's own elements, which `index.html` owns. */
@@ -19,6 +22,7 @@ function element<T extends HTMLElement>(selector: string): T {
 const frame = element<HTMLDivElement>("#frame");
 const status = element<HTMLParagraphElement>("#status");
 const fileInput = element<HTMLInputElement>("#log-file");
+const board = element<HTMLDivElement>("#board");
 
 /** The one line the page has, and whether it is bad news. */
 function say(message: string, bad = false): void {
@@ -27,12 +31,18 @@ function say(message: string, bad = false): void {
 }
 
 /**
- * What a log that arrived shows for now: the facts that prove the page holds
- * the log it was given. The board that reads them is the next task.
+ * What a log that arrived shows: the board as the last turn the log holds left
+ * it, and the line that names the log — the facts that prove the page holds the
+ * log it was given.
  */
 function showLog(log: MatchLog): void {
   const winner = log.result.winner ?? "nobody";
   say(`${log.format} · seed ${log.seed} · ${log.turns.length} turns · ${log.result.type} win for ${winner} on turn ${log.result.turn}`);
+  // The last turn the log holds, which for a knockout is the knockout turn and
+  // not `config.turns`. A log with no turns played shows its start position.
+  const lastTurn = log.turns.at(-1)?.n ?? 0;
+  board.hidden = false;
+  renderBoard(board, boardView(log, lastTurn));
 }
 
 async function load(source: LogSource): Promise<void> {
