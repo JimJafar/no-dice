@@ -10,12 +10,14 @@
  * to the engine — a seat that never submitted simply passes — and `turnRecord`
  * gives back what the log needs for the turn.
  *
- * Nothing here is an MCP tool: the runner reaches a session in-process. The tool
- * bodies and the limit errors come in the tasks that follow; the state they all
- * read, and the counting they all refuse against, is built here.
+ * Nothing here is an MCP tool: the runner reaches a session in-process. The
+ * read-only tools — `get_rules` and `get_state`, answered by `view` — are wired
+ * up here; the tools that change something, and the limit errors, come in the
+ * tasks that follow. The state they all read, and the counting they all refuse
+ * against, is built here.
  */
-import { generateMap, resolveTurn as engineResolveTurn } from "@no-dice/salient-engine";
-import type { Config, MatchResult, MatchState, Order, Seat } from "@no-dice/salient-engine";
+import { generateMap, resolveTurn as engineResolveTurn, visibleHexes } from "@no-dice/salient-engine";
+import type { Config, HexKey, MatchResult, MatchState, Order, Seat } from "@no-dice/salient-engine";
 import { orderSchema } from "@no-dice/runner/log";
 import type {
   HexLabel,
@@ -28,6 +30,7 @@ import type {
 } from "@no-dice/runner/log";
 
 import { eventsToLog, labelToKey, ordersToEngine, wastedToLog } from "./labels";
+import { rulesView, stateView, type StateView } from "./view";
 
 /** The seven tools a player can call, named as the log names them. */
 export const TOOL_NAMES = [
@@ -74,6 +77,17 @@ export interface LastTurnReport {
   events: LogEvent[];
   orders: Record<Seat, LogOrder[]>;
   wasted: Record<Seat, WastedLogOrder[]>;
+}
+
+/**
+ * Last turn, as `get_state` reports it: what happened, and what each seat could
+ * see when the turn that produced it began. The rules tell a player about the
+ * fights on hexes it could see, so the visibility the turn started with has to
+ * outlive it — the board the seat could not see has since moved on.
+ */
+export interface SettledTurn {
+  report: LastTurnReport;
+  visible: Record<Seat, Set<HexKey>>;
 }
 
 /** Both seats' records for one turn, in the log's per-player shape. */
@@ -130,6 +144,8 @@ export class MatchSession {
   /** The tools wired up so far; the rest answer `unknown_tool` until they land. */
   private readonly handlers: Partial<Record<ToolName, (seat: Seat, args: unknown) => HandlerResult>> =
     {
+      get_rules: (seat) => ({ ok: true, result: rulesView(this.board, seat, this.config) }),
+      get_state: (seat) => ({ ok: true, result: this.viewFor(seat) }),
       submit_orders: (seat, args) => this.submitOrders(seat, args),
     };
 
@@ -139,7 +155,7 @@ export class MatchSession {
   private accepting = false;
   /** Each resolved turn's records, kept so the log can be written turn by turn. */
   private readonly settled = new Map<number, TurnPlayerRecords>();
-  private previous: LastTurnReport | null = null;
+  private previous: SettledTurn | null = null;
 
   constructor(matchId: string, seed: number, config: Config) {
     this.matchId = matchId;
@@ -156,7 +172,7 @@ export class MatchSession {
 
   /** What each seat did last turn, or `null` before the first turn resolves. */
   get lastTurn(): LastTurnReport | null {
-    return this.previous;
+    return this.previous === null ? null : this.previous.report;
   }
 
   /**
@@ -220,6 +236,12 @@ export class MatchSession {
   resolveTurn(): { events: LogEvent[]; result: LogResult | null } {
     const radius = this.config.radius;
     const turn = this.board.turn;
+    // What each seat can see is taken before the engine moves anything, because
+    // it is the turn as the seat played it that `get_state` reports on.
+    const visible: Record<Seat, Set<HexKey>> = {
+      A: visibleHexes(this.board, "A"),
+      B: visibleHexes(this.board, "B"),
+    };
     const orders: Record<Seat, Order[]> = {
       A: ordersToEngine(this.live.seats.A.submission?.orders ?? [], radius),
       B: ordersToEngine(this.live.seats.B.submission?.orders ?? [], radius),
@@ -239,12 +261,15 @@ export class MatchSession {
     };
     this.settled.set(turn, this.recordsFor(wasted));
     this.previous = {
-      events,
-      orders: {
-        A: this.live.seats.A.submission?.orders.slice() ?? [],
-        B: this.live.seats.B.submission?.orders.slice() ?? [],
+      report: {
+        events,
+        orders: {
+          A: this.live.seats.A.submission?.orders.slice() ?? [],
+          B: this.live.seats.B.submission?.orders.slice() ?? [],
+        },
+        wasted,
       },
-      wasted,
+      visible,
     };
     this.accepting = false;
     return { events, result: toLogResult(outcome.state.result) };
@@ -316,6 +341,17 @@ export class MatchSession {
     }
     this.live.seats[seat].submission = { orders: parsed, intent, prediction };
     return { ok: true, result: { accepted: true } };
+  }
+
+  /** What `seat` is allowed to be told about the turn that is open. */
+  private viewFor(seat: Seat): StateView {
+    return stateView({
+      state: this.board,
+      seat,
+      config: this.config,
+      used: this.live.seats[seat],
+      previous: this.previous,
+    });
   }
 
   /** Both seats' records for the turn that is open, with the engine's verdict on them. */
