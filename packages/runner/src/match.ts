@@ -17,16 +17,25 @@
  * `MatchVoided`, and the run ends with no log on disk for a resume to mistake
  * for a match.
  *
- * Only bots can be seated until milestone 03 lands the Pi harness. A bot is
- * seeded from the match seed and its seat, so the same match run twice plays the
- * same game at both ends, and `created` comes from an injected clock for the same
- * reason: two runs of one seed have to be comparable byte for byte.
+ * A seat is played either by one of the baseline bots or by a model through the
+ * Pi harness, and the loop does not care which: both are a `Player` asked for a
+ * turn and read back through the same tools. A bot is seeded from the match seed
+ * and its seat, so the same match run twice plays the same game at both ends,
+ * and `created` comes from an injected clock for the same reason: two runs of one
+ * seed have to be comparable byte for byte.
  */
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { BotPlayer, MatchVoided } from "@no-dice/harness";
-import type { Player, PlayerContext, TurnOutcome } from "@no-dice/harness";
+import { BotPlayer, MatchVoided, PiPlayer, piCli } from "@no-dice/harness";
+import type {
+  PassReason,
+  PiThinkingLevel,
+  Player,
+  PlayerContext,
+  TurnOutcome,
+} from "@no-dice/harness";
 import { greedyBot, randomBot } from "@no-dice/salient-bots";
 import type { Bot, BotOrder } from "@no-dice/salient-bots";
 import { boardCells, DEFAULT_CONFIG, hexKey, score } from "@no-dice/salient-engine";
@@ -68,6 +77,21 @@ const ABORT_GRACE_MS = 10_000;
 /** The URL recorded for a seat that was handed its transport instead of an endpoint. */
 const LINKED_URL = "in-memory";
 
+/**
+ * How long a seat that is still running after its submission lands gets before
+ * the runner aborts it: brief §6.3's "the server has an accepted submission but
+ * the agent is still running: wait 10 seconds, then send `abort()`".
+ */
+const AFTER_SUBMISSION_MS = 10_000;
+
+/** How often the runner asks the server whether a seat is in with its turn. */
+const SUBMISSION_POLL_MS = 50;
+
+/** The prompt brief §6.3 plays both seats with, kept with the game that owns it. */
+const PLAYER_SYSTEM_PROMPT = fileURLToPath(
+  new URL("../../../games/salient/prompts/player-system.md", import.meta.url),
+);
+
 /** The baseline bots a seat may be given, named as the log names them. */
 export type BotName = "random" | "greedy";
 
@@ -77,8 +101,44 @@ export interface BotSeat {
   bot: BotName;
 }
 
-/** Who plays a seat. Milestone 03 adds a Pi seat beside this one. */
-export type SeatSpec = BotSeat;
+/**
+ * A seat played by a model: brief §6.3's seat, one Pi session for the whole
+ * match, prompted once a turn and given only the game's seven tools.
+ */
+export interface PiSeat {
+  kind: "pi";
+  /** The model under test, as Pi's `--model` takes it: `<provider>/<id>`. */
+  model: string;
+  /** The reasoning level, as `--thinking` names it. The log's header records it. */
+  thinking: PiThinkingLevel;
+  /**
+   * The seat's `models.json`, which is how it reaches the model under test. This
+   * is what lets a test seat a model on a stub endpoint on loopback and play a
+   * whole match with no credential anywhere on the machine.
+   */
+  modelsJson?: unknown;
+  /**
+   * Extra variables for the seat's Pi process, merged over the ones its isolated
+   * home is built with: a provider's key for a real run, `PI_OFFLINE` for a stub
+   * endpoint. They are also the environment its credential is checked in.
+   */
+  env?: Record<string, string>;
+  /**
+   * The player system prompt: a path to a file, or the prompt itself. Defaults to
+   * the game's own prompt, which is the one brief §6.3 says both seats are played
+   * with.
+   */
+  systemPrompt?: string;
+  /**
+   * The output tokens one turn may cost before the seat is aborted and the turn
+   * passes with `token_budget`. Brief §6.3 leaves the number to the experiment, so
+   * by default a turn is bounded by its time alone.
+   */
+  outputTokenBudget?: number | null;
+}
+
+/** Who plays a seat: a baseline bot, or a model through the Pi harness. */
+export type SeatSpec = BotSeat | PiSeat;
 
 /** How a seat reaches the match, given the token it is playing with. */
 export type SeatTransport = (matches: MatchServer, seat: Seat, token: string) => Transport;
@@ -112,6 +172,18 @@ export interface RunMatchOptions {
    * instead — the same tools and the same limits, with no socket between them.
    */
   transport?: SeatTransport;
+  /**
+   * The directory a Pi seat's config home, working directory and session
+   * transcripts are made in. Defaults to a directory with the log's name and its
+   * extension taken off: `matches/135.json` gets `matches/135/`.
+   */
+  matchDir?: string;
+  /**
+   * How long a seat that has submitted but is still running gets before the runner
+   * aborts it. Brief §6.3 says ten seconds; it is a knob so a test can watch the
+   * rule work inside its own timeout.
+   */
+  afterSubmissionMs?: number;
 }
 
 /** What `runMatch` hands back: the log, and the file it was written to. */
@@ -206,26 +278,49 @@ const frameOf = (state: MatchState, config: Config): MatchFrame => {
   };
 };
 
-/** The seat as the log's header records it. */
-const headerOf = (spec: SeatSpec): PlayerHeader => ({ kind: "bot", bot: spec.bot });
+/** Where a seat is seated: which seat it is, and what the match gives it. */
+interface SeatPlacement {
+  seat: Seat;
+  /** The match seed, which a bot is seeded from along with its seat. */
+  seed: number;
+  /** Turns in the match, which a Pi seat names in its per-turn prompt. */
+  turns: number;
+  /** The directory a Pi seat's home, working directory and transcripts go in. */
+  matchDir: string;
+  /** How the seat reaches the server, for a runner that started no endpoint. */
+  connect?: (ctx: PlayerContext) => Transport;
+}
 
 /**
  * The seat's player. A bot is seeded from the match seed and its seat, and is
  * handed the seat's token at `start`, so it reaches the match over the same
- * endpoint and by the same tools a model will use.
+ * endpoint and by the same tools a model uses. A Pi seat is brief §6.3's seat:
+ * one session for the whole match, in a home of its own under the match's
+ * directory, played with the game's prompt and the model the run is measuring.
  */
-const playerFor = (
-  spec: SeatSpec,
-  seat: Seat,
-  seed: number,
-  connect?: (ctx: PlayerContext) => Transport,
-): Player => {
-  const decide: Bot = spec.bot === "random" ? randomBot(botSeed(seed, seat)) : greedyBot();
+const playerFor = (spec: SeatSpec, at: SeatPlacement): Player => {
+  if (spec.kind === "pi") {
+    return new PiPlayer({
+      seat: at.seat,
+      matchDir: at.matchDir,
+      model: spec.model,
+      thinking: spec.thinking,
+      systemPrompt: spec.systemPrompt ?? PLAYER_SYSTEM_PROMPT,
+      turns: at.turns,
+      ...(spec.modelsJson === undefined ? {} : { modelsJson: spec.modelsJson }),
+      ...(spec.env === undefined ? {} : { env: spec.env }),
+      ...(spec.outputTokenBudget === undefined
+        ? {}
+        : { outputTokenBudget: spec.outputTokenBudget }),
+    });
+  }
+  const decide: Bot =
+    spec.bot === "random" ? randomBot(botSeed(at.seed, at.seat)) : greedyBot();
   return new BotPlayer<RulesView, StateView, BotOrder>({
     tools: { rules: "get_rules", state: "get_state", submit: "submit_orders" },
     decide: (rules, state) => decide(rules, state),
     verdict: salientVerdict,
-    ...(connect === undefined ? {} : { transport: connect }),
+    ...(at.connect === undefined ? {} : { transport: at.connect }),
   });
 };
 
@@ -254,9 +349,16 @@ const within = async <T>(promise: Promise<T>, ms: number): Promise<T | null> => 
 };
 
 /**
- * One seat's turn, under brief §6.3's five minutes. A seat that settles hands
- * back what it did; one still playing when the clock runs out is aborted and
- * hands back what it had done by then, and the runner logs its turn as a pass.
+ * One seat's turn. A seat that settles hands back what it did; one still playing
+ * when brief §6.3's five minutes run out is aborted and hands back what it had
+ * done by then, and the runner logs its turn as a pass.
+ *
+ * The other rule the runner holds over a seat is the one only it can see: when
+ * the server has the seat's submission but the seat is still running, brief §6.3
+ * gives it ten seconds and then aborts it. A seat that submitted through the
+ * tools has said everything it has to say about the turn, and what it does after
+ * that is a model talking to itself. The server says nothing when a submission
+ * lands, so the runner asks it, and stops asking the moment the turn is over.
  *
  * Aborting is the seat's own affair, and is asked for by the caller so it can
  * put a new token under a seat whose connection it replaces: `Player.abort`
@@ -269,16 +371,25 @@ const within = async <T>(promise: Promise<T>, ms: number): Promise<T | null> => 
 const playSeat = async (
   player: Player,
   turn: number,
-  timeoutMs: number,
   abort: () => Promise<void>,
+  limits: {
+    /** How long the turn may take before the seat is taken to have passed. */
+    timeoutMs: number;
+    /** How long a seat that has submitted but is running gets before its abort. */
+    afterSubmissionMs: number;
+    /** Whether the server holds this seat's submission for the turn. */
+    hasSubmission: () => boolean;
+  },
 ): Promise<SeatTurn> => {
   const started = performance.now();
   const played = player.playTurn(turn);
   // The turn's failure is picked up by the races below, or by the caller's; this
   // only keeps Node from calling an unhandled rejection fatal in between.
   played.catch(() => undefined);
-  let outcome = await within(played, timeoutMs);
+  const stopWatching = watchSubmission(limits.hasSubmission, limits.afterSubmissionMs, abort);
+  let outcome = await within(played, limits.timeoutMs);
   const timedOut = outcome === null;
+  stopWatching();
   if (timedOut) {
     await abort();
     outcome = await within(played, ABORT_GRACE_MS);
@@ -291,25 +402,81 @@ const playSeat = async (
 };
 
 /**
- * The server's record of a seat's turn, with what only the runner knows added:
- * why the seat passed when it never answered, and what the turn cost it. A bot
- * runs no provider, so its usage, cost and context stay at nought and nothing of
- * its conversation is ever compacted; milestone 03 fills those from Pi's session
- * stats.
+ * Abort the seat once `graceMs` has gone by since the server took its
+ * submission, and say nothing if the turn ended first.
+ *
+ * The asking is a poll because the server gives no notice: `MatchSession.status`
+ * is a read of an in-memory record, and it stops as soon as the turn does. An
+ * abort that fails is not reported from here — the turn is still bounded by its
+ * own timeout, and the abort that answers a timeout is the one that reports.
  */
-const withHarness = (record: TurnPlayerRecord, played: SeatTurn): TurnPlayerRecord => ({
-  ...record,
-  // The server can only say a seat never submitted. Brief §6.3's table names the
-  // reason, and the seat is the one that can tell most of them; a turn that ran
-  // out of its time is the one the runner caused, and it says so here.
-  passed:
-    record.passed === null ? null : played.timedOut ? "timeout" : played.outcome?.passed ?? "no_submission",
-  usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-  cost_usd: 0,
-  context_tokens: 0,
-  compacted: false,
-  wall_ms: played.wallMs,
-});
+const watchSubmission = (
+  hasSubmission: () => boolean,
+  graceMs: number,
+  abort: () => Promise<void>,
+): (() => void) => {
+  let stopped = false;
+  /** The wait the watcher is sitting in, so `stop` can take it away. */
+  let sleep: (() => void) | null = null;
+  const wait = (ms: number): Promise<void> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      sleep = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  void (async () => {
+    while (!stopped && !hasSubmission()) await wait(SUBMISSION_POLL_MS);
+    if (stopped) return;
+    await wait(graceMs);
+    if (stopped) return;
+    await abort().catch(() => undefined);
+  })();
+  return () => {
+    stopped = true;
+    sleep?.();
+    sleep = null;
+  };
+};
+
+/**
+ * Why a seat played no orders this turn, or `null` when it played some.
+ *
+ * The server can only say a seat never submitted. Brief §6.3's table names
+ * reasons the server cannot see, and the seat reports the ones it can: a provider
+ * that refused after Pi's own retries, a turn over its output budget, a turn that
+ * settled with nothing in it. A turn that ran out of its time is the one the
+ * runner caused, and it says `timeout` whatever the seat says, because the seat
+ * was stopped in the middle of playing.
+ */
+const passReasonOf = (record: TurnPlayerRecord, played: SeatTurn): PassReason | null => {
+  if (record.passed === null) return null;
+  if (played.timedOut) return "timeout";
+  return played.outcome?.passed ?? "no_submission";
+};
+
+/**
+ * The server's record of a seat's turn, with what only the runner knows added:
+ * why the seat passed, and what the turn cost it. A bot runs no provider, so its
+ * usage, cost and context stay at nought and nothing of its conversation is ever
+ * compacted; a Pi seat's come from Pi's own session stats, read over the turn.
+ */
+const withHarness = (record: TurnPlayerRecord, played: SeatTurn): TurnPlayerRecord => {
+  const provider = played.outcome?.provider ?? null;
+  return {
+    ...record,
+    passed: passReasonOf(record, played),
+    usage: provider?.usage ?? { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+    cost_usd: provider?.costUsd ?? 0,
+    // Pi reports no size for a context a compaction has just reshaped, and the
+    // frozen format has no way to say unknown; the `compacted` flag beside this
+    // is what tells a reader to expect a nought here.
+    context_tokens: provider?.contextTokens ?? 0,
+    compacted: provider?.compacted ?? false,
+    wall_ms: played.wallMs,
+  };
+};
 
 /**
  * Write the log in one step: the bytes go to `<out>.tmp` and are renamed into
@@ -354,6 +521,19 @@ interface Seated {
 }
 
 /**
+ * The directory a match's own files go in: the log, and beside it a directory of
+ * the same name holding each Pi seat's home, working directory and session
+ * transcripts. A rerun on the same `out` overwrites both.
+ */
+const matchDirOf = (out: string): string => out.replace(/\.json$/i, "");
+
+/** The seats a run plays through the Pi harness. */
+const piSeats = (options: RunMatchOptions): PiSeat[] =>
+  (["A", "B"] as const)
+    .map((seat) => options.seats[seat])
+    .flatMap((spec) => (spec.kind === "pi" ? [spec] : []));
+
+/**
  * Play one match and write it. The loop is brief §6.4's: open the turn, ask both
  * seats together, abort any seat still running once the turn has had its time,
  * record and resolve it, and stop at a knockout. The log is checked against
@@ -364,6 +544,11 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
   const config = options.config ?? DEFAULT_CONFIG;
   const clock = options.clock ?? ((): Date => new Date());
   const turnTimeoutMs = options.turnTimeoutMs ?? TURN_TIMEOUT_MS;
+  const afterSubmissionMs = options.afterSubmissionMs ?? AFTER_SUBMISSION_MS;
+  const matchDir = options.matchDir ?? matchDirOf(options.out);
+  // The seats this run plays through the Pi harness: what decides whether the log
+  // names a Pi build at all, and which budget its turns were played under.
+  const pi = piSeats(options);
 
   const matches = new MatchServer();
   const { matchId, tokens } = matches.createMatch(options.seed, config);
@@ -378,12 +563,24 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
 
   const seated: Record<Seat, Seated> = {
     A: {
-      player: playerFor(options.seats.A, "A", options.seed, connectFor(options, matches, "A")),
+      player: playerFor(options.seats.A, {
+        seat: "A",
+        seed: options.seed,
+        turns: config.turns,
+        matchDir,
+        connect: connectFor(options, matches, "A"),
+      }),
       token: tokens.A,
       replacesConnection: options.seats.A.kind === "bot",
     },
     B: {
-      player: playerFor(options.seats.B, "B", options.seed, connectFor(options, matches, "B")),
+      player: playerFor(options.seats.B, {
+        seat: "B",
+        seed: options.seed,
+        turns: config.turns,
+        matchDir,
+        connect: connectFor(options, matches, "B"),
+      }),
       token: tokens.B,
       replacesConnection: options.seats.B.kind === "bot",
     },
@@ -402,6 +599,45 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
     await at.player.abort({ serverUrl, token: at.token });
   };
 
+  /**
+   * One seat's turn, with the two rules only the runner can hold over it: the
+   * turn's time limit, and the ten seconds a seat that has submitted but is still
+   * running gets before it is aborted through its own `Player.abort`.
+   */
+  const playSeatOf = (seat: Seat, turn: number): Promise<SeatTurn> =>
+    playSeat(seated[seat].player, turn, () => abortSeat(seat), {
+      timeoutMs: turnTimeoutMs,
+      afterSubmissionMs,
+      hasSubmission: () => matches.status(matchId).submitted[seat],
+    });
+
+  /**
+   * The context window each seat's model was given, from Pi's own
+   * `contextUsage`. The log's header records it for a Pi seat, and the session
+   * stats that carry it arrive with the turns, so it is kept as they come in.
+   */
+  const windows: Record<Seat, number | null> = { A: null, B: null };
+
+  /** The seat as the log's header records it. */
+  const headerFor = (seat: Seat): PlayerHeader => {
+    const spec = options.seats[seat];
+    if (spec.kind === "bot") return { kind: "bot", bot: spec.bot };
+    const contextWindow = windows[seat];
+    if (contextWindow === null) {
+      // The format has no way to leave the window out, and guessing one would
+      // put a number in a log that no seat ever ran with.
+      throw new Error(
+        `match ${matchId} cannot be logged: seat ${seat} played ${spec.model} without Pi ever reporting a context window`,
+      );
+    }
+    return {
+      kind: "pi",
+      model: spec.model,
+      thinking: spec.thinking,
+      context_window: contextWindow,
+    };
+  };
+
   const turns: TurnRecord[] = [];
   let result: LogResult | null = null;
   try {
@@ -412,10 +648,13 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
 
     for (let turn = 1; turn <= config.turns && result === null; turn++) {
       matches.openTurn(matchId);
-      const [playedA, playedB] = await Promise.all([
-        playSeat(seated.A.player, turn, turnTimeoutMs, () => abortSeat("A")),
-        playSeat(seated.B.player, turn, turnTimeoutMs, () => abortSeat("B")),
-      ]);
+      const [playedA, playedB] = await Promise.all([playSeatOf("A", turn), playSeatOf("B", turn)]);
+      for (const [seat, played] of [
+        ["A", playedA],
+        ["B", playedB],
+      ] as const) {
+        windows[seat] ??= played.outcome?.provider?.contextWindow ?? null;
+      }
       // Both seats have answered, or the turn has had its time; a seat still
       // playing was aborted by `playSeat` on the way here, which is brief §6.4's
       // "abort any player still running", and it stays in the match.
@@ -462,17 +701,22 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
     seed: options.seed,
     config: matchConstants(config),
     harness: {
-      // Neither seat ran through Pi, so there is no version to record.
-      pi_version: null,
+      // The Pi build the seats ran on, which is the one this repo pins and
+      // `PiPlayer` spawns. A match of bots alone has no Pi in it.
+      pi_version: pi.length === 0 ? null : piCli().version,
       context: "continuous",
       compaction: true,
       tool_call_cap: TOOL_CALL_LIMIT,
       simulate_cap: SIMULATE_LIMIT,
       resubmissions: RESUBMISSIONS,
       turn_timeout_s: Math.round(turnTimeoutMs / 1000),
-      output_token_budget: null,
+      // The budget the seats were played with. Both seats of a measured match are
+      // given the same one; the header has one field for it either way.
+      output_token_budget: pi
+        .map((spec) => spec.outputTokenBudget ?? null)
+        .find((budget) => budget !== null) ?? null,
     },
-    players: { A: headerOf(options.seats.A), B: headerOf(options.seats.B) },
+    players: { A: headerFor("A"), B: headerFor("B") },
     map: frame.map,
     bases: frame.bases,
     start: frame.start,

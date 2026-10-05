@@ -8,7 +8,10 @@
  * of that turn read back into tool calls, and the session stats turned into
  * what the turn cost. Nothing here knows the game: the tools are whatever the
  * seat's `mcp.json` connects it to, and the only name spelled out is the
- * submission tool, in order to say whether the seat submitted.
+ * submission tool, in order to say whether the seat submitted. Before the child
+ * is spawned, the model's credential is checked with `pi auth check`: a run that
+ * cannot pay for its model stops in one line, rather than playing 25 turns of
+ * provider errors and writing a log that says so 25 times.
  *
  * `RpcClient`, exported from the pinned package's root, is what runs the child.
  * Hand-rolling the JSONL is the wrong shortcut: `docs/rpc.md` warns that Node's
@@ -41,6 +44,7 @@ import { RpcClient } from "@earendil-works/pi-coding-agent";
 import type { SessionStats } from "@earendil-works/pi-coding-agent";
 
 import { piCli } from "./pi-cli.ts";
+import { checkPiAuth } from "./pi-auth.ts";
 import { createSeatHome, MCP_SERVER_NAME, type SeatHome, type SeatId } from "./pi-home.ts";
 import {
   MatchVoided,
@@ -232,6 +236,9 @@ const providerTurn = (
     // trace it leaves in the totals, and catches a compaction whose events the
     // turn never reported because the seat was aborted over it.
     compacted: compacted || (before !== null && contextTokens !== null && contextTokens < before),
+    // The window itself, not the usage against it: the log's header records it
+    // for a Pi seat, and Pi's `contextUsage` is the only place it is kept.
+    contextWindow: stats.contextUsage?.contextWindow ?? null,
   };
 };
 
@@ -311,6 +318,19 @@ export class PiPlayer implements Player {
     }
     this.home = home;
     this.token = ctx.token;
+
+    // brief §6.3 resolves a credential before a turn is spent finding out there is
+    // none, and it asks Pi rather than reading a key file: the seat's home is empty
+    // by design, so a login stored in `~/.pi/agent` is not there to find. The check
+    // is given the environment the child is about to get, which is what makes a
+    // provider named in the seat's own `models.json` resolve.
+    const auth = await checkPiAuth({
+      model: this.options.model,
+      env: { ...home.env, ...(this.options.env ?? {}) },
+    });
+    if (!auth.ok) {
+      throw new Error(`seat ${this.options.seat}: ${auth.message}`);
+    }
 
     const client = new RpcClient({
       cliPath: piCli().path,

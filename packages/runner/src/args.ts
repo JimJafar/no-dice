@@ -41,7 +41,7 @@ export interface BotSeatArg {
   bot: BotName;
 }
 
-/** A seat played by a model through Pi. Refused by the CLI until milestone 03. */
+/** A seat played by a model through Pi, named `<provider>/<id>` on the command line. */
 export interface ModelSeatArg {
   kind: "model";
   provider: string;

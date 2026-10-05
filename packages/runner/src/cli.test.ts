@@ -15,8 +15,8 @@
  *   value, a seed that is not a whole number, a game v0 does not have, a seat
  *   that names no bot) reported as one line naming the problem, with a non-zero
  *   exit and no log left behind;
- * - a seat given a model refused with the reason — the Pi harness of milestone
- *   03 — rather than crashing on it.
+ * - a seat given a model played through the Pi harness, and a provider with no
+ *   credential reported as one line before a turn is played.
  *
  * Seed 135 is the map the other suites use.
  */
@@ -273,18 +273,35 @@ describe("a command line that does not ask for a match it can play", () => {
 });
 
 describe("a seat given a model", () => {
-  it("says the Pi harness lands in milestone 03, in both seats", async () => {
-    for (const flag of ["--a", "--b"]) {
-      const out = join(dir, `model-${flag}.json`);
-      const argv = MATCH.map((each) => (each === (flag === "--a" ? "bot:greedy" : "bot:random") ? "anthropic/claude" : each));
+  it("plays through the Pi harness, and reports a provider with no credential in one line", async () => {
+    // A seat's Pi home is empty, so an exported key is the only credential this
+    // run could find. Take it away, or the run would be a real one against
+    // Anthropic.
+    const saved = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].map(
+      (name) => [name, process.env[name]] as const,
+    );
+    for (const [name] of saved) delete process.env[name];
+    try {
+      for (const flag of ["--a", "--b"]) {
+        const out = join(dir, `model-${flag}.json`);
+        const argv = MATCH.map((each) => (each === (flag === "--a" ? "bot:greedy" : "bot:random") ? "anthropic/claude" : each));
 
-      const result = await run([...argv, "--out", out]);
+        const result = await run([...argv, "--out", out]);
 
-      expect(result.code).not.toBe(0);
-      expect(result.err[0]).toContain(`error: ${flag} anthropic/claude`);
-      expect(result.err[0]).toContain("milestone 03");
-      // Nothing was played, so nothing was written.
-      expect(existsSync(out)).toBe(false);
+        expect(result.code).not.toBe(0);
+        // One line, naming the seat and the provider, and saying what would fix
+        // it — not a stack, and not 25 turns of provider errors.
+        expect(result.err).toHaveLength(1);
+        expect(result.err[0]).toContain(
+          `seat ${flag === "--a" ? "A" : "B"}: provider "anthropic" has no credential for model anthropic/claude`,
+        );
+        // Nothing was played, so nothing was written.
+        expect(existsSync(out)).toBe(false);
+      }
+    } finally {
+      for (const [name, value] of saved) {
+        if (value !== undefined) process.env[name] = value;
+      }
     }
-  });
+  }, 60_000);
 });

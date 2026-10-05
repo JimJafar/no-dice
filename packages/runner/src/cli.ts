@@ -25,6 +25,8 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
+import type { PiThinkingLevel } from "@no-dice/harness";
+
 import { defaultOutName, parseArgs } from "./args.ts";
 import type { SeatArg } from "./args.ts";
 import { runMatch } from "./match.ts";
@@ -50,15 +52,22 @@ const resultLine = (result: LogResult): string =>
   `A ${String(result.score.A)} - B ${String(result.score.B)}`;
 
 /**
- * A seat the runner can play. Nothing drives a model until milestone 03 lands
- * the Pi harness, and a seat given a model says so and stops: a missing feature
- * has to read as itself, not as a crash.
+ * The reasoning level a model seat is played at. It is a measured variable, and
+ * no flag chooses it yet, so every model seat of a run plays at Pi's own default
+ * startup level — and the log's header records which level that was.
  */
-const seatSpec = (flag: string, seat: SeatArg): SeatSpec | string =>
+const DEFAULT_THINKING: PiThinkingLevel = "medium";
+
+/**
+ * A seat the runner can play: a baseline bot, or a model through the Pi harness.
+ * A model seat needs a credential for its provider, and the run says so in one
+ * line before a turn is played if it has none; the seat itself is built by the
+ * runner, which is where a seat's home and its model's `models.json` are known.
+ */
+const seatSpec = (seat: SeatArg): SeatSpec =>
   seat.kind === "bot"
     ? { kind: "bot", bot: seat.bot }
-    : `${flag} ${seat.provider}/${seat.model} needs the Pi harness, which lands in milestone 03; ` +
-      "only bot:random and bot:greedy can play a seat for now";
+    : { kind: "pi", model: `${seat.provider}/${seat.model}`, thinking: DEFAULT_THINKING };
 
 /**
  * Run one `no-dice` command line and report on it. Zero for a match that was
@@ -77,17 +86,7 @@ export async function runCli(argv: readonly string[], io: CliIo = {}): Promise<n
   }
 
   const { command } = parsed;
-  const seatA = seatSpec("--a", command.a);
-  if (typeof seatA === "string") {
-    stderr(`error: ${seatA}`);
-    return 1;
-  }
-  const seatB = seatSpec("--b", command.b);
-  if (typeof seatB === "string") {
-    stderr(`error: ${seatB}`);
-    return 1;
-  }
-  const seats: Record<"A" | "B", SeatSpec> = { A: seatA, B: seatB };
+  const seats: Record<"A" | "B", SeatSpec> = { A: seatSpec(command.a), B: seatSpec(command.b) };
 
   const out = command.out === null ? resolve(cwd, defaultOutName(command)) : resolve(cwd, command.out);
 

@@ -112,6 +112,12 @@ export interface ProviderTurn {
   contextTokens: number | null;
   /** Whether the seat's conversation was compacted during the turn. */
   compacted: boolean;
+  /**
+   * The window Pi compacts against, from its own `contextUsage.contextWindow`: a
+   * property of the model entry the seat was given, which the operator decided
+   * rather than the seat's run. The log's header records it for a Pi seat.
+   */
+  contextWindow: number | null;
 }
 
 /** What one seat did in one turn, as the seat itself saw it. */
