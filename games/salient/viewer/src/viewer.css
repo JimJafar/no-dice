@@ -21,6 +21,35 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 .toggle button{padding:9px 16px;border:0;border-radius:6px;background:#232a33;color:#c9d1dc;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;cursor:pointer}
 .toggle button[aria-pressed="true"]{background:#eef1f5;color:#12161c}
 
+/* The header: each seat's name and score, the turn counter, the score bar and the
+   two lines under it. Copied out of salient/docs/mockups/spectator-view.html,
+   which styles this row inline — the one style the mock-up sets per frame, the
+   flex of each bar segment, is set by render-header.ts instead, because it is a
+   fact about the frame. `.seat-a` and `.seat-b` rather than `.a` and `.b`, which
+   the hexes below already use for their owner colours. */
+.header{display:flex;align-items:center;gap:32px;height:104px;flex:none}
+/* `hidden` until a log arrives, which an author `display` would otherwise win. */
+.header[hidden]{display:none}
+.seat{flex:1;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.seat-id{display:flex;flex-direction:column;gap:8px}
+.seat-b .seat-id{align-items:flex-end}
+.seat-label{display:flex;align-items:center;gap:10px;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+.swatch{flex:none;width:14px;height:14px}
+.seat-a .swatch{background:var(--team-a,#2c6fd1)}
+.seat-b .swatch{background:var(--team-b,#e06f35)}
+.seat-name{font:600 42px/1.1 'Barlow Semi Condensed','Arial Narrow',sans-serif}
+.score{font:700 96px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif}
+.centre{width:760px;flex:none;display:flex;flex-direction:column;align-items:center;gap:10px}
+.counter{font:600 18px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.16em;color:#aab3bf}
+.bar{position:relative;width:100%;height:20px;display:flex;gap:2px}
+.seg-a{background:var(--team-a,#2c6fd1);border-radius:4px 0 0 4px}
+.seg-mid{background:#2a323d}
+.seg-b{background:var(--team-b,#e06f35);border-radius:0 4px 4px 0}
+/* Half of the total, marked at half of a bar whose whole width is the total. */
+.tick{position:absolute;left:50%;top:-6px;width:2px;height:32px;margin-left:-1px;background:#eef1f5}
+.summary{font-size:17px;line-height:1.2;color:#eef1f5}
+.series{font-size:15px;line-height:1.2;color:#aab3bf}
+
 /* The board: hexes, their symbols, and the marks that go over them. Copied out
    of salient/docs/mockups/spectator-view.html, which holds the exact CSS the
    mock-ups were drawn with, plus `.f` from salient/docs/mockups/fog-of-war-view.html
