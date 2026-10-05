@@ -31,9 +31,9 @@ log header records (`players.<seat>.context_window`), what `--max-cost` means (0
 hardware, which is why `--max-tokens` exists) and what a rerun has to match to be the same
 match. Point `scripts/measure-match.mjs` at the same registry instead of its own copy.
 
-Add whichever providers Jim names for the series (their exact IDs, base URLs, context windows
-and rates) to the same file; the entry for Marvin is already known and is the one the tests can
-exercise offline.
+The registry's first entry is Marvin, which is the pairing Jim settled for the first series, and
+its values are already known and checked from this box. When Jim names the second model, its
+provider goes in the same file; nothing else about the run changes.
 
 ## Acceptance
 - [ ] A `--a <provider>/<id>` seat whose provider is in the registry is given that provider's

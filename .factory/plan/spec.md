@@ -114,7 +114,9 @@ any general-purpose game framework.
 ## Open dependencies on Jim (brief §11)
 
 The model and provider for milestone 03's measured match are settled: Marvin's `subagent`, no
-key. Still open from brief §11: the exact model IDs and providers for the milestone 06 series,
-a cost ceiling for that series, the per-turn output-token budget (milestone 03 measures real
-turns first, and on Marvin the money cost is zero, so the useful number is tokens per turn), and
-the compaction decision. None of it blocks 01–05.
+key. Milestone 06's first series is settled too, on the same provider: **`marvin/subagent`
+against Greedy, `--max-pairs 5 --max-tokens 60000000 --concurrency 1`, keyless** — about 46M
+tokens and 3-4 hours end to end, so the pair limit ends it before the token ceiling does. Still
+open from brief §11: the second model for a second pairing, the per-turn output-token budget
+(on Marvin the money cost is zero, so the useful number is tokens per turn), the compaction
+decision, and the rules decisions milestone 06's review puts to him. None of it blocks 01–05.

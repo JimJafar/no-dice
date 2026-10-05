@@ -9,9 +9,9 @@ Write `docs/rules-review.md`: one `###` section per open question in
 `salient/docs/salient-rules-v0.md` ("Open questions") — all eight, including Cost growth, which
 milestone 03 already answered — each with the numbers from the real series and then a verdict.
 
-The evidence is `reports/series/<pairing>.md` (win rate, interval, seat split, margin,
+The evidence is `reports/series/marvin-subagent-vs-greedy.md` (win rate, interval, seat split, margin,
 knockouts, per-model rows, the turns 1-8 / 9-17 / 18-25 split, missing matches) and
-`series/<name>/evidence.md` from `no-dice evidence` (lead changes, hex flips per turn with the
+`series/marvin-subagent-vs-greedy/evidence.md` from `no-dice evidence` (lead changes, hex flips per turn with the
 mean over 18-25, Node ping-pong, neutral captures, re-scouts, compaction turns). Quote the
 model's number beside the number the rules quote for the bots, so the comparison is the point of
 the section rather than an aside.
@@ -41,6 +41,13 @@ matches would have to be replayed — or `Left open: …` with the evidence that
 touching the rules document; tick a box in `salient/docs/salient-rules-v0.md` only for a
 decision he made, and move it to "Decided" with the date and the reason. A decision that changes
 the engine is not implemented here: propose it as the next epic.
+
+Keep the sample size honest: 5 pairs is 10 matches, so the win-rate interval is wide and most of
+these questions will end `Left open:` with the numbers that will settle them when the series is
+longer or a second model has been played. That is a real outcome, not a failure — what is not
+allowed is a section with no numbers in it. The ones a 10-match series *can* close are Cost
+growth (measured in §7), Compaction (whether any match of the series compacted at all),
+Own-orientation boards (out of scope for v0) and the Guessing check as a first reading.
 
 ## Acceptance
 - [ ] `docs/rules-review.md` has a section for every open question in the rules document, each
