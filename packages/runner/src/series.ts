@@ -127,6 +127,15 @@ export interface RunSeriesOptions {
   concurrency?: number;
   /** How a match is played. Defaults to the real `runMatch`. */
   playMatch?: PlayMatch;
+  /**
+   * Called once for every pair, as its record is taken — which is what lets a
+   * 48-hour run be watched instead of waited for. It is handed the pair as the
+   * record will hold it, so the line an operator reads comes from the same
+   * figures `series.json` does. Nothing in the run depends on it, and it is
+   * called from the pool, so at `--concurrency` above 1 the pairs arrive in the
+   * order they finished rather than the order the plan named.
+   */
+  onPair?: (pair: SeriesPairRecord) => void;
 }
 
 /** What a run reports: the record it left, and what this run did to get it. */
@@ -558,7 +567,9 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
     // the rules are asked at a boundary that is the same one however the batch was
     // scheduled.
     await mapPool(batch, concurrency, async (pair) => {
-      bySeed.set(pair.seed, await pairRecordOf(pair));
+      const recorded = await pairRecordOf(pair);
+      bySeed.set(pair.seed, recorded);
+      options.onPair?.(recorded);
     });
     // Brief §6.5's rules are asked at a batch boundary, never inside a pair, so a
     // series always stops with every pair it started complete on disk.

@@ -1,5 +1,5 @@
 /**
- * The `no-dice match` command line, run for real.
+ * The `no-dice` command line, run for real: `match`, `series` and `stats`.
  *
  * What these tests pin down is what a person at a terminal gets:
  *
@@ -18,11 +18,17 @@
  * - a seat given a model played through the Pi harness, and a provider with no
  *   credential reported as one line before a turn is played.
  *
+ * The series tests run real bot matches, which is what the acceptance brief
+ * asks for and what proves the CLI drives the real `runMatch` rather than a
+ * seam: `--max-pairs 2` is four matches, and a bot match is about a second
+ * (`docs/pi-harness-notes.md` §7). The long series stays with the runner's own
+ * tests, which script `playMatch` instead.
+ *
  * Seed 135 is the map the other suites use.
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +40,7 @@ import type { MatchLog } from "@no-dice/log";
 import runnerManifest from "../package.json" with { type: "json" };
 import { runCli } from "./cli.ts";
 import type { CliIo } from "./cli.ts";
+import type { SeriesRecord } from "./series.ts";
 import { withoutAnthropicCredentials } from "./test-credentials.ts";
 
 /** Where the logs land, in a directory that is gone when the suite is done. */
@@ -257,9 +264,9 @@ describe("a command line that does not ask for a match it can play", () => {
   });
 
   it("names a command v0 does not have, and a command line with no command", async () => {
-    const series = await run(["series", "--game", "salient"]);
-    expect(series.code).not.toBe(0);
-    expect(series.err[0]).toContain('unknown command "series"');
+    const replay = await run(["replay", "--game", "salient"]);
+    expect(replay.code).not.toBe(0);
+    expect(replay.err[0]).toContain('unknown command "replay"');
 
     const nothing = await run([]);
     expect(nothing.code).not.toBe(0);
@@ -301,4 +308,267 @@ describe("a seat given a model", () => {
       restore();
     }
   }, 60_000);
+});
+
+/**
+ * `no-dice series`, run for real: the CLI drives `runMatch`, not a seam, so the
+ * logs it reports are matches the engine actually played. `--max-pairs 2` is
+ * four bot matches and about two seconds, which is small enough to run here and
+ * large enough to prove the pair, the seat swap and the resume rule reach the
+ * terminal.
+ */
+const SERIES = [
+  "series",
+  "--game",
+  "salient",
+  "--a",
+  "bot:greedy",
+  "--b",
+  "bot:random",
+  "--max-pairs",
+  "2",
+];
+
+/** `series.json` as written, typed as the record the runner defines. */
+const readSeriesRecord = async (seriesDir: string): Promise<SeriesRecord> =>
+  JSON.parse(await readFile(join(seriesDir, "series.json"), "utf8")) as SeriesRecord;
+
+/** Every match log in a series directory, by name, as the bytes on disk. */
+const readLogs = async (seriesDir: string): Promise<Record<string, string>> => {
+  const names = await readdir(join(seriesDir, "matches"));
+  const logs: Record<string, string> = {};
+  for (const name of names) logs[name] = await readFile(join(seriesDir, "matches", name), "utf8");
+  return logs;
+};
+
+describe("no-dice series between two bots", () => {
+  it("plays both seat orders of every pair, prints each pair, and writes the record and the report", async () => {
+    const seriesDir = join(dir, "series", "greedy-vs-random");
+
+    const result = await run([...SERIES, "--dir", seriesDir]);
+
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+
+    // Brief §6.5's layout: one log per match, under the series directory, two
+    // of each seat order.
+    const logs = await readLogs(seriesDir);
+    const names = Object.keys(logs).sort();
+    expect(names).toHaveLength(4);
+    expect(names.filter((name) => /^\d+-greedy-random\.json$/.test(name))).toHaveLength(2);
+    expect(names.filter((name) => /^\d+-random-greedy\.json$/.test(name))).toHaveLength(2);
+    // Each one is a match the engine played, with the seats the swap asked for.
+    for (const text of Object.values(logs)) {
+      const log = matchLogSchema.parse(JSON.parse(text) as unknown);
+      expect([log.players.A, log.players.B].map((player) => (player.kind === "bot" ? player.bot : player.model)).sort())
+        .toEqual(["greedy", "random"]);
+    }
+
+    // The record says the series ran its length.
+    const record = await readSeriesRecord(seriesDir);
+    expect(record.pairs).toHaveLength(2);
+    // Every pair is one seed played twice, model X in each seat once.
+    for (const pair of record.pairs) {
+      expect(pair.matches.map((match) => match.seat)).toEqual(["A", "B"]);
+    }
+    expect(record.state.pairs_played).toBe(2);
+    expect(record.state.matches_played).toBe(4);
+    expect(record.state.stop_reason).toBe("max_pairs");
+    expect(record.pairing).toEqual({
+      a: { kind: "bot", bot: "greedy" },
+      b: { kind: "bot", bot: "random" },
+    });
+
+    // One line per pair as it went: seed, both seat orders, both results, and
+    // the win rate and 95% interval so far — then the stop reason, the final
+    // figures, and the two paths.
+    expect(result.out[0]).toBe(`series: ${seriesDir}`);
+    expect(result.out[1]).toMatch(
+      /^seed \d+: bot:greedy in A, bot:random in B — .+ \| bot:random in A, bot:greedy in B — .+ \| bot:greedy win rate \d+\.\d+% \(95% .+ – .+\) over 2 matches$/,
+    );
+    expect(result.out[2]).toMatch(/^seed \d+: .+ over 4 matches$/);
+    expect(result.out[3]).toContain("stopped on max_pairs — its full length");
+    expect(result.out[4]).toMatch(/^bot:greedy win rate \d+\.\d+% \(95% .+ – .+\) over 4 matches/);
+    expect(result.out[5]).toBe(`series.json: ${join(seriesDir, "series.json")}`);
+    expect(result.out[6]).toBe(`report.md: ${join(seriesDir, "report.md")}`);
+    expect(result.out).toHaveLength(7);
+
+    // The report the paths name is on disk, and it is the report `stats` prints.
+    const markdown = await readFile(join(seriesDir, "report.md"), "utf8");
+    expect(markdown).toContain("# Series report: bot:greedy vs bot:random");
+    expect(markdown).toContain("**4 counted**, **0 missing**");
+  }, 120_000);
+
+  it("plays nothing already on disk when it is run again, and still exits 0", async () => {
+    const seriesDir = join(dir, "series", "resumed");
+    const first = await run([...SERIES, "--dir", seriesDir]);
+    expect(first.code).toBe(0);
+    const before = await readLogs(seriesDir);
+
+    const again = await run([...SERIES, "--dir", seriesDir]);
+
+    expect(again.code).toBe(0);
+    expect(again.err).toEqual([]);
+    expect(again.out.join("\n")).toContain("this run played 0, skipped 4, failed 0");
+    // Byte for byte the same logs: a replay would have written a new `created`
+    // and, for a match that had been voided, a different result.
+    expect(await readLogs(seriesDir)).toEqual(before);
+    expect((await readSeriesRecord(seriesDir)).state.matches_played).toBe(4);
+  }, 120_000);
+
+  it("defaults its directory to series/<a-slug>-vs-<b-slug> under the current directory", async () => {
+    const cwd = join(dir, "series-cwd");
+
+    const result = await run(
+      ["series", "--game", "salient", "--a", "bot:greedy", "--b", "bot:random", "--max-pairs", "1"],
+      cwd,
+    );
+
+    expect(result.code).toBe(0);
+    const expected = join(cwd, "series", "greedy-vs-random");
+    expect(result.out[0]).toBe(`series: ${expected}`);
+    expect(existsSync(join(expected, "series.json"))).toBe(true);
+    expect(existsSync(join(expected, "report.md"))).toBe(true);
+  }, 120_000);
+
+  it("puts a --name under series/", async () => {
+    const cwd = join(dir, "series-named");
+
+    const result = await run(
+      [
+        "series",
+        "--game",
+        "salient",
+        "--a",
+        "bot:greedy",
+        "--b",
+        "bot:random",
+        "--max-pairs",
+        "1",
+        "--name",
+        "quick",
+      ],
+      cwd,
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.out[0]).toBe(`series: ${join(cwd, "series", "quick")}`);
+    expect(existsSync(join(cwd, "series", "quick", "series.json"))).toBe(true);
+  }, 120_000);
+});
+
+describe("a series command line that does not ask for a series it can run", () => {
+  it("names an unknown flag", async () => {
+    const result = await run([...SERIES, "--colour", "blue"]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain('unknown flag "--colour"');
+  });
+
+  it("names a --max-pairs that is not a whole number of pairs", async () => {
+    for (const bad of ["2.5", "abc", "0", "-1"]) {
+      const result = await run([...SERIES.slice(0, -1), bad]);
+
+      expect(result.code).not.toBe(0);
+      expect(result.err[0]).toContain("--max-pairs takes a whole number");
+      expect(result.err[0]).toContain(`"${bad}"`);
+    }
+  });
+
+  it("names a missing --b", async () => {
+    const result = await run(["series", "--game", "salient", "--a", "bot:greedy", "--max-pairs", "2"]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("--b is required");
+  });
+
+  it("names a --concurrency and a ceiling that are not numbers the run can honour", async () => {
+    for (const argv of [
+      [...SERIES, "--concurrency", "0"],
+      [...SERIES, "--concurrency", "1.5"],
+      [...SERIES, "--max-cost", "-5"],
+      [...SERIES, "--max-tokens", "-1"],
+      [...SERIES, "--seed-base", "2147483648"],
+      [...SERIES, "--name", "a/b"],
+      [...SERIES, "--name", "a", "--dir", "b"],
+    ]) {
+      const result = await run(argv);
+      expect(result.code).not.toBe(0);
+      expect(result.err[0]).toMatch(/^error: --/);
+    }
+  });
+
+  it("names a flag whose value is missing", async () => {
+    const result = await run([...SERIES, "--concurrency"]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("--concurrency needs a value");
+  });
+});
+
+describe("a series seat given a model with no credential", () => {
+  it("reports it in one line before a turn is played, and writes no series", async () => {
+    // As `match` reports it, and asked before the first match rather than after
+    // it: a series is up to 150 matches, and every one of them would fail this
+    // way and be recorded as a failed match instead of a run that never started.
+    const restore = withoutAnthropicCredentials();
+    try {
+      const seriesDir = join(dir, "series", "no-credential");
+
+      const result = await run([
+        "series",
+        "--game",
+        "salient",
+        "--a",
+        "anthropic/claude",
+        "--b",
+        "bot:random",
+        "--max-pairs",
+        "1",
+        "--dir",
+        seriesDir,
+      ]);
+
+      expect(result.code).not.toBe(0);
+      expect(result.err).toHaveLength(1);
+      expect(result.err[0]).toContain(
+        'seat A: provider "anthropic" has no credential for model anthropic/claude',
+      );
+      expect(existsSync(seriesDir)).toBe(false);
+    } finally {
+      restore();
+    }
+  }, 120_000);
+});
+
+describe("no-dice stats", () => {
+  it("prints the report for a series directory", async () => {
+    const seriesDir = join(dir, "series", "reported");
+    const played = await run([...SERIES, "--dir", seriesDir]);
+    expect(played.code).toBe(0);
+
+    const result = await run(["stats", "--series", seriesDir]);
+
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+    expect(result.out[0]).toBe(`report: ${join(seriesDir, "report.md")}`);
+    const printed = result.out.join("\n");
+    expect(printed).toContain("# Series report: bot:greedy vs bot:random");
+    expect(printed).toContain("**4 counted**, **0 missing**");
+    expect(printed).toContain("## Seat effect");
+  }, 120_000);
+
+  it("names a directory that holds no series", async () => {
+    const result = await run(["stats", "--series", join(dir, "series", "nothing")]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("is not there, so there is no series to report");
+  });
+
+  it("names a missing --series", async () => {
+    const result = await run(["stats"]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("--series is required");
+  });
 });
