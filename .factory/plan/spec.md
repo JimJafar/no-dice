@@ -94,6 +94,13 @@ Salient-specific code stays inside `games/salient`; no general game framework in
   second `tsc` pass in the `typecheck` script rather than a change to the base config. Vite
   8.3.2 is already in `pnpm-lock.yaml` through vitest; `happy-dom` is not, and the viewer's DOM
   tests need it.
+- A model seat only reaches a provider Pi knows natively. `seatSpec` in `packages/runner/src/match.ts`
+  never sets `modelsJson`, so `no-dice match` and `no-dice series` cannot seat a model on a
+  self-hosted provider at all — the one provider this box has played on, Marvin, is named only in
+  a table inside `scripts/measure-match.mjs`. Milestone 06's first task puts that entry (base URL,
+  key environment variable, `contextWindow`, `maxTokens`, token rates) in one committed registry
+  the CLI reads, because those numbers decide what the log header records and what `--max-cost`
+  means.
 - The server reports absolute hex labels to both seats. A bot that ranks moves in board
   coordinates is seat-biased: identical bots in the prototype split 25% to 69% by seat from
   move ordering alone (rules, "Harness and fairness").
