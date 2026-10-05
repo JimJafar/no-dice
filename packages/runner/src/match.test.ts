@@ -18,12 +18,14 @@
  * Seed 135 is the map the other suites use.
  */
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { boardCells, DEFAULT_CONFIG, generateMap, hexKey, resolveTurn, score } from "@no-dice/salient-engine";
@@ -34,7 +36,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { cellsFor, matchLogSchema } from "./log";
 import type { BoardAfter, LogOrder, MatchLog, Seat } from "./log";
-import { runMatch } from "./match";
+import { runMatch, salientVerdict } from "./match";
 import type { SeatSpec } from "./match";
 
 /** The timestamp every run here is given, so two runs can be compared. */
@@ -147,6 +149,25 @@ describe("a Greedy-versus-Random match over Streamable HTTP", () => {
     expect(onDisk.result.margin).toBe(Math.abs(onDisk.result.score.A - onDisk.result.score.B));
   }, 60_000);
 
+  it("leaves no half log when the log cannot be put in its place", async () => {
+    // The name the log wants is held by a directory, so the rename into place
+    // fails. Brief §6.5 reads a log that exists as a match that has been played,
+    // so the half file has to go with the attempt that failed.
+    const out = join(dir, "held-by-a-directory.json");
+    await mkdir(out, { recursive: true });
+
+    await expect(
+      runMatch({
+        out,
+        seed: 135,
+        config: { ...DEFAULT_CONFIG, turns: 2 },
+        seats: SEATS,
+        clock,
+      }),
+    ).rejects.toThrow();
+    expect(existsSync(`${out}.tmp`)).toBe(false);
+  }, 60_000);
+
   it("seeds each bot from the match seed and its own seat", async () => {
     const out = join(dir, "random-versus-random.json");
 
@@ -227,7 +248,89 @@ describe("a Greedy-versus-Random match over Streamable HTTP", () => {
   }, 60_000);
 });
 
+describe("a match that ends before its turns run out", () => {
+  it("stops at a knockout, and logs the match the engine reached", async () => {
+    const out = join(dir, "knockout.json");
+
+    const { log } = await runMatch({
+      out,
+      seed: 135,
+      // Forty turns is more than this match needs: seat A walks onto the enemy
+      // Base and ends it early.
+      config: { ...DEFAULT_CONFIG, turns: 40 },
+      seats: SEATS,
+      clock,
+    });
+
+    expect(log.result.type).toBe("knockout");
+    expect(log.result.winner).toBe("A");
+    expect(log.result.turn).toBe(34);
+    // The loop stopped at the knockout rather than playing out the forty turns the
+    // config allowed, and the turn it stopped on is the last one in the log.
+    expect(log.turns.length).toBe(34);
+    expect(log.turns.at(-1)?.n).toBe(34);
+    // The log replays to that end: the engine, given the logged orders, is out of
+    // turns at the same turn and with the same score.
+    replay(log);
+  }, 120_000);
+});
+
 describe("a seat that does not play its turn", () => {
+  /**
+   * A wire that delivers the first `submit_orders` request `delayMs` late, which
+   * is what a seat that cannot make up its mind does to the match: its submission
+   * is on its way when the turn runs out, and the match sees it only after that
+   * turn was closed and the next one opened — where it would be taken as the next
+   * turn's submission. The answer it then earns has nowhere to go, because the
+   * seat was taken out of the turn, and the wire does not report that going,
+   * which is what a match server whose seat vanished mid-call sees.
+   */
+  class LateWire implements Transport {
+    onclose?: () => void;
+    onerror?: (error: Error) => void;
+    onmessage?: (message: JSONRPCMessage) => void;
+
+    /** Whether the first submission has been held back yet. */
+    private held = false;
+
+    constructor(
+      private readonly inner: Transport,
+      private readonly delayMs: number,
+    ) {}
+
+    async start(): Promise<void> {
+      this.inner.onmessage = (message) => {
+        if (this.held || !askedToSubmit(message)) {
+          this.onmessage?.(message);
+          return;
+        }
+        this.held = true;
+        setTimeout(() => this.onmessage?.(message), this.delayMs);
+      };
+      // Deliberately not passed on: the seat went away, and the match server has
+      // not noticed, which is the case that lets an abandoned call land late.
+      this.inner.onclose = () => undefined;
+    }
+
+    async send(message: JSONRPCMessage): Promise<void> {
+      try {
+        await this.inner.send(message);
+      } catch {
+        // The answer belongs to a seat that is no longer connected.
+      }
+    }
+
+    close(): Promise<void> {
+      return this.inner.close();
+    }
+  }
+
+  /** Whether a message on the wire is a call to `submit_orders`. */
+  const askedToSubmit = (message: JSONRPCMessage): boolean => {
+    const asked = message as { method?: unknown; params?: { name?: unknown } };
+    return asked.method === "tools/call" && asked.params?.name === "submit_orders";
+  };
+
   /** A tool call that is never answered, which is how a seat runs out of turn. */
   const neverAnswered = (): Promise<never> => new Promise<never>(() => undefined);
 
@@ -354,6 +457,97 @@ describe("a seat that does not play its turn", () => {
       expect(turn.players.B.wall_ms).toBeGreaterThanOrEqual(1_000);
     }
   }, 60_000);
+
+  it("keeps a seat that overran its turn out of the turn that follows it", async () => {
+    const out = join(dir, "overran-turn.json");
+    /** The MCP servers this run stands on the other end of, kept until it is over. */
+    const servers: McpServer[] = [];
+    /** How many times seat B has been connected, which decides how late it is. */
+    let connections = 0;
+
+    const { log } = await runMatch({
+      out,
+      seed: 135,
+      config: { ...DEFAULT_CONFIG, turns: 2 },
+      seats: SEATS,
+      clock,
+      turnTimeoutMs: 1_000,
+      transport: (matches: MatchServer, seat: Seat, token: string) => {
+        const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+        const mcp = playerToolServer(matches, token);
+        servers.push(mcp);
+        // Seat B is slow both times it is connected. Its first submission is held
+        // 1200 ms, so it reaches the match after that turn ran out at 1000 ms and
+        // the next one opened; its second is held 1500 ms, so it is still in
+        // flight when the turn it belongs to runs out. The abandoned submission is
+        // therefore on its way while the turn that follows is open.
+        const delay = seat === "B" ? (connections++ === 0 ? 1_200 : 1_500) : 0;
+        void mcp
+          .connect(delay === 0 ? serverSide : new LateWire(serverSide, delay))
+          .catch(() => undefined);
+        return clientSide;
+      },
+    });
+    await Promise.all(servers.map((server) => server.close()));
+
+    const [first, second] = log.turns;
+    // Seat B lost turn 1 to the clock, and its submission never reached the match.
+    expect(first.players.B.passed).toBe("timeout");
+    expect(first.players.B.orders).toEqual([]);
+    // And it lost turn 2 the same way. The submission the abandoned turn had left
+    // running did not become turn 2's while it was open: turn 2 holds only the
+    // calls turn 2 made, and no orders at all. Had the leftover been taken as
+    // turn 2's submission, this seat would show orders it never decided on, and
+    // its own attempt would have been answered `already_submitted`.
+    expect(second.players.B.passed).toBe("timeout");
+    expect(second.players.B.orders).toEqual([]);
+    expect(second.players.B.tool_calls.map((call) => call.tool)).toEqual([
+      "get_rules",
+      "get_state",
+    ]);
+    // The seat that kept up played both turns, and the match still reached one.
+    for (const turn of [first, second]) {
+      expect(turn.players.A.passed).toBeNull();
+      expect(turn.players.A.orders.length).toBeGreaterThan(0);
+    }
+    expect(log.result).not.toBeNull();
+  }, 60_000);
+});
+
+describe("a submission the server refused", () => {
+  const order = (to: string, troops: number): { from: string; to: string; troops: number } => ({
+    from: "B6",
+    to,
+    troops,
+  });
+
+  it("drops the refused orders and keeps the rest, one occurrence at a time", () => {
+    const sent = [order("C6", 2), order("C6", 2), order("D6", 1)];
+    const refused = { order: order("C6", 2), reason: "not enough troops in source hex" };
+
+    // The server refused one of the two identical orders, so one of them stands.
+    expect(salientVerdict({ accepted: false, wasted: [refused] }, sent).retry).toEqual([
+      order("C6", 2),
+      order("D6", 1),
+    ]);
+    // Refused twice is dropped twice.
+    expect(salientVerdict({ accepted: false, wasted: [refused, refused] }, sent).retry).toEqual([
+      order("D6", 1),
+    ]);
+  });
+
+  it("reads an accepted submission as standing and an answer with no verdict as nothing submitted", () => {
+    expect(salientVerdict({ accepted: true }, [order("C6", 2)])).toEqual({
+      accepted: true,
+      rejected: null,
+      retry: [],
+    });
+    expect(salientVerdict({ error: "turn_not_open" }, [order("C6", 2)])).toEqual({
+      accepted: false,
+      rejected: null,
+      retry: [],
+    });
+  });
 });
 
 /** Owner as the log writes it, back as the seat the engine plays. */

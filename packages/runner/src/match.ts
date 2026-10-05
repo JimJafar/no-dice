@@ -6,17 +6,18 @@
  * token — the token is the whole of a seat's identity, so nothing here ever has
  * to tell a tool who is calling. A turn then opens on the server, both seats are
  * asked for it together, and it is resolved once neither of them has anything
- * left to do or the turn has run out of time. The log is written last, and
- * written atomically: brief §6.5 treats an existing log as a match that has
- * already been played, so a half-written file must never be the one a resume
- * finds.
+ * left to do or the turn has run out of time; a seat that was still playing when
+ * it ran out is taken out of the match and back in before that turn is recorded.
+ * The log is written last, and written atomically: brief §6.5 treats an existing
+ * log as a match that has already been played, so a half-written file must never
+ * be the one a resume finds.
  *
  * Only bots can be seated until milestone 03 lands the Pi harness. A bot is
  * seeded from the match seed and its seat, so the same match run twice plays the
  * same game at both ends, and `created` comes from an injected clock for the same
  * reason: two runs of one seed have to be comparable byte for byte.
  */
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { BotPlayer } from "@no-dice/harness";
@@ -71,7 +72,7 @@ export interface BotSeat {
 /** Who plays a seat. Milestone 03 adds a Pi seat beside this one. */
 export type SeatSpec = BotSeat;
 
-/** How a seat reaches the match, given the token it was dealt. */
+/** How a seat reaches the match, given the token it is playing with. */
 export type SeatTransport = (matches: MatchServer, seat: Seat, token: string) => Transport;
 
 /** What `runMatch` takes. */
@@ -80,7 +81,15 @@ export interface RunMatchOptions {
   out: string;
   /** The seed: the map it generates, and what the bots are seeded from. */
   seed: number;
-  /** The rules' constants. Brief §6.1's defaults unless another match is asked for. */
+  /**
+   * The rules' constants. Brief §6.1's defaults unless another match is asked
+   * for. Only the constants the log's header can carry outlive the run: the
+   * frozen header records turns, action points, troops, production, garrison,
+   * home bonus and points, and nothing else. A config that also moves `radius`,
+   * `supply` or `blockedPairs` therefore writes a log whose map is that board
+   * while the log says nothing about how it was dealt, and the viewer and the
+   * stats package would replay it as a different game.
+   */
   config?: Config;
   /** Who plays each seat. */
   seats: Record<Seat, SeatSpec>;
@@ -121,16 +130,26 @@ const botSeed = (seed: number, seat: Seat): number => {
  * refused. The one resubmission carries the same orders with the refused ones
  * taken out, which is the deal brief §6.2 gives any seat.
  */
-const salientVerdict = (result: unknown, sent: BotOrder[]) => {
+export const salientVerdict = (result: unknown, sent: BotOrder[]) => {
   const answer = (result ?? {}) as { accepted?: boolean; wasted?: { order: BotOrder; reason: string }[] };
   if (answer.accepted === true) return { accepted: true, rejected: null, retry: [] };
   if (answer.wasted === undefined) return { accepted: false, rejected: null, retry: [] };
-  const edge = (order: BotOrder): string => `${order.from}>${order.to}:${String(order.troops)}`;
-  const refused = new Set(answer.wasted.map((each) => edge(each.order)));
+  const sameOrder = (a: BotOrder, b: BotOrder): boolean =>
+    a.from === b.from && a.to === b.to && a.troops === b.troops;
+  // The refused orders come out one occurrence at a time rather than by value: a
+  // submission can carry the same order twice and have only one of them refused,
+  // and the other still stands on the resubmission.
+  const refused = answer.wasted.map((each) => each.order);
+  const retry = sent.filter((order) => {
+    const at = refused.findIndex((each) => sameOrder(each, order));
+    if (at === -1) return true;
+    refused.splice(at, 1);
+    return false;
+  });
   return {
     accepted: false,
     rejected: { orders: sent, wasted: answer.wasted },
-    retry: sent.filter((order) => !refused.has(edge(order))),
+    retry,
   };
 };
 
@@ -216,9 +235,11 @@ interface SeatTurn {
  * back what it did; one still playing when the clock runs out hands back nothing,
  * and the runner logs its turn as a pass.
  *
- * Brief §6.3 aborts a session that overruns. The `Player` interface has no abort
- * yet — milestone 03 gives `PiPlayer` one — so an unfinished turn is left to
- * finish on its own and its answer is dropped rather than left unhandled.
+ * Brief §6.3 aborts a session that overruns. Racing the clock does not do that:
+ * `Player` has no abort yet — milestone 03 gives `PiPlayer` one — so the turn the
+ * seat was playing is left running and only its answer is dropped here. What
+ * keeps it out of the match is the caller, which takes the seat out and back in
+ * before that turn is recorded and resolved; see `abortSeat`.
  */
 const playSeat = async (player: Player, turn: number, timeoutMs: number): Promise<SeatTurn> => {
   const started = performance.now();
@@ -258,20 +279,42 @@ const withHarness = (record: TurnPlayerRecord, played: SeatTurn): TurnPlayerReco
 
 /**
  * Write the log in one step: the bytes go to `<out>.tmp` and are renamed into
- * place, so the only file another run can ever find is a finished log.
+ * place, so the only file another run can ever find is a finished log. They are
+ * synced before the name appears, because brief §6.5 treats a log that exists as
+ * a match that has been played, and if the rename itself fails the half file is
+ * taken away rather than left for a resume to mistake for one.
  */
 const writeAtomically = async (path: string, log: MatchLog): Promise<void> => {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(log, null, 2)}\n`, "utf8");
-  await rename(tmp, path);
+  const handle = await open(tmp, "w");
+  try {
+    await handle.writeFile(`${JSON.stringify(log, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    await rename(tmp, path);
+  } catch (error) {
+    await unlink(tmp).catch(() => undefined);
+    throw error;
+  }
 };
+
+/** A seat as the loop holds it: who plays it, and the token it plays with. */
+interface Seated {
+  player: Player;
+  /** The token it was last started on. A seat that ran out of a turn gets a new one. */
+  token: string;
+}
 
 /**
  * Play one match and write it. The loop is brief §6.4's: open the turn, ask both
- * seats together, resolve once they have both answered or the turn has run out,
- * and stop at a knockout. The log is checked against `salient-log/1` before it is
- * written, so a log that does not replay is never left on disk to be found later.
+ * seats together, abort any seat still running once the turn has had its time,
+ * record and resolve it, and stop at a knockout. The log is checked against
+ * `salient-log/1` before it is written, so a log that does not replay is never
+ * left on disk to be found later.
  */
 export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> {
   const config = options.config ?? DEFAULT_CONFIG;
@@ -289,28 +332,60 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
     options.transport === undefined ? await startServer({ matches, port: 0 }) : null;
   const serverUrl = running === null ? LINKED_URL : running.url;
 
-  const seats: Record<Seat, Player> = {
-    A: playerFor(options.seats.A, "A", options.seed, connectFor(options, matches, "A", tokens.A)),
-    B: playerFor(options.seats.B, "B", options.seed, connectFor(options, matches, "B", tokens.B)),
+  const seated: Record<Seat, Seated> = {
+    A: {
+      player: playerFor(options.seats.A, "A", options.seed, connectFor(options, matches, "A")),
+      token: tokens.A,
+    },
+    B: {
+      player: playerFor(options.seats.B, "B", options.seed, connectFor(options, matches, "B")),
+      token: tokens.B,
+    },
+  };
+
+  /**
+   * Brief §6.4's "abort any player still running". The seat's token is replaced
+   * first, so a call the abandoned turn had already sent is refused by the match
+   * instead of being counted — against the turn being closed if it arrives before
+   * that turn is resolved, against the next one if it arrives after. A seat that
+   * overran its turn would otherwise hand that turn's orders in as the next
+   * turn's. The player is then stopped and started again on the new token, which
+   * kills its in-flight calls and leaves it able to be asked for the next turn.
+   * `Player` has no abort yet — milestone 03 gives `PiPlayer` one — so this is
+   * what the runner can do alone, and the price is that a seat which ran out of
+   * its turn starts the next one with nothing of the turn carried over.
+   */
+  const abortSeat = async (seat: Seat): Promise<void> => {
+    const at = seated[seat];
+    at.token = matches.rotateToken(matchId, seat);
+    await at.player.stop();
+    await at.player.start({ serverUrl, token: at.token });
   };
 
   const turns: TurnRecord[] = [];
   let result: LogResult | null = null;
   try {
     await Promise.all([
-      seats.A.start({ serverUrl, token: tokens.A }),
-      seats.B.start({ serverUrl, token: tokens.B }),
+      seated.A.player.start({ serverUrl, token: seated.A.token }),
+      seated.B.player.start({ serverUrl, token: seated.B.token }),
     ]);
 
     for (let turn = 1; turn <= config.turns && result === null; turn++) {
       matches.openTurn(matchId);
       const [playedA, playedB] = await Promise.all([
-        playSeat(seats.A, turn, turnTimeoutMs),
-        playSeat(seats.B, turn, turnTimeoutMs),
+        playSeat(seated.A.player, turn, turnTimeoutMs),
+        playSeat(seated.B.player, turn, turnTimeoutMs),
       ]);
-      // Both seats have answered, or the turn is over: the engine gets what each
-      // of them handed in, and the record of the turn is read back afterwards so
-      // it carries the orders the engine dropped and why.
+      // Both seats have answered, or the turn has had its time. A seat still
+      // playing is taken out of the match here, before the turn is recorded and
+      // resolved, which is where brief §6.4 aborts a player still running: left
+      // as it is, the calls of the turn it just lost are spent against the turn
+      // after it, and a submission that never arrived in time is taken as that
+      // turn's.
+      if (playedA.timedOut) await abortSeat("A");
+      if (playedB.timedOut) await abortSeat("B");
+      // The engine gets what each seat handed in, and the record of the turn is
+      // read back afterwards so it carries the orders the engine dropped and why.
       const resolved = matches.resolveTurn(matchId);
       const record = matches.turnRecord(matchId, turn);
       result = resolved.result;
@@ -327,7 +402,7 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
   } finally {
     // Brief §6.4 stops both players before the log is written, so nothing a seat
     // does on its way out can land in a turn that has already been recorded.
-    await Promise.all([seats.A.stop(), seats.B.stop()]);
+    await Promise.all([seated.A.player.stop(), seated.B.player.stop()]);
     if (running !== null) await running.close();
   }
 
@@ -365,13 +440,16 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
   return { path: options.out, log };
 }
 
-/** How one seat reaches the server: the endpoint by default, a linked pair if given. */
+/**
+ * How one seat reaches the server: the endpoint by default, a linked pair if
+ * given. The token comes from the context the seat was started with, which is the
+ * current one — a seat that ran out of a turn is started again on a new token.
+ */
 function connectFor(
   options: RunMatchOptions,
   matches: MatchServer,
   seat: Seat,
-  token: string,
 ): ((ctx: PlayerContext) => Transport) | undefined {
   const transport = options.transport;
-  return transport === undefined ? undefined : () => transport(matches, seat, token);
+  return transport === undefined ? undefined : (ctx) => transport(matches, seat, ctx.token);
 }

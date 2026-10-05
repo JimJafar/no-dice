@@ -51,6 +51,25 @@ export class MatchServer {
     return this.tokens.get(token) ?? null;
   }
 
+  /**
+   * Take `seat`'s token away and deal it a new one, which is what the runner
+   * does to a seat whose turn ran out while it was still calling. The old token
+   * reaches nothing from here on — `callAs` refuses it before anything is
+   * counted — so a call the abandoned turn had already sent cannot be spent
+   * against the turn that follows it. The runner hands the new token back to the
+   * seat when it starts that seat again; a seat that keeps the old one is out of
+   * the match.
+   */
+  rotateToken(matchId: string, seat: Seat): string {
+    this.match(matchId);
+    for (const [token, owner] of this.tokens) {
+      if (owner.matchId === matchId && owner.seat === seat) this.tokens.delete(token);
+    }
+    const token = newToken();
+    this.tokens.set(token, { matchId, seat });
+    return token;
+  }
+
   /** The match `matchId` holds, for the runner and the HTTP layer to work with. */
   match(matchId: string): MatchSession {
     const session = this.matches.get(matchId);

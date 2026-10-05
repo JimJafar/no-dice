@@ -588,4 +588,30 @@ describe("seat tokens", () => {
     expect(refused.result).toEqual({ error: "unknown_token" });
     expect(server.match(first.matchId).counters("A").toolCalls).toBe(2);
   });
+
+  it("takes a seat's token away and deals it a new one", () => {
+    const { server, matchId, tokens } = openedMatch();
+
+    // The runner rotates a seat's token when that seat's turn ran out while it
+    // was still calling, so a call the abandoned turn had already sent cannot be
+    // spent against the turn that follows it.
+    const replacement = server.rotateToken(matchId, "A");
+
+    expect(replacement).not.toBe(tokens.A);
+    expect(server.resolveToken(tokens.A)).toBeNull();
+    expect(server.resolveToken(replacement)).toEqual({ matchId, seat: "A" });
+
+    // The old token reaches nothing, and nothing it asks for is counted. Seat B
+    // is untouched: a rotation is one seat's, not the match's.
+    expect(server.callAs(tokens.A, "get_state", {}).error).toBe("unknown_token");
+    expect(server.match(matchId).counters("A").toolCalls).toBe(0);
+    expect(server.callAs(tokens.B, "get_state", {}).ok).toBe(true);
+    expect(server.match(matchId).counters("B").toolCalls).toBe(1);
+
+    // The new token plays seat A of this match, and this match only.
+    expect(server.callAs(replacement, "write_notes", { notes: "asked again" }).ok).toBe(true);
+    expect(server.match(matchId).counters("A").toolCalls).toBe(1);
+    expect(server.turnRecord(matchId, 1).A.notes_after).toBe("asked again");
+    expect(server.turnRecord(matchId, 1).B.notes_after).toBe("");
+  });
 });
