@@ -65,6 +65,21 @@ export class MatchServer {
     return session.call(seat, tool, args);
   }
 
+  /**
+   * One player-facing tool call for whoever `token` belongs to. The seat is not
+   * an argument the caller chooses: it comes from the token, which is good for
+   * exactly one seat of exactly one match, so a token can only ever act for that
+   * seat and can only ever reach the match it was dealt for. A token this server
+   * never issued is refused before anything is counted.
+   */
+  callAs(token: string, tool: string, args: unknown): ToolOutcome {
+    const owner = this.tokens.get(token);
+    if (owner === undefined) {
+      return { ok: false, result: { error: "unknown_token" }, error: "unknown_token", ms: 0 };
+    }
+    return this.call(owner.matchId, owner.seat, tool, args);
+  }
+
   /** Reset the per-turn counters and start accepting calls for the turn just begun. */
   openTurn(matchId: string): void {
     this.match(matchId).openTurn();

@@ -26,7 +26,12 @@ export {
   type TurnPlayerRecords,
 } from "./session";
 export { MatchServer, type CreatedMatch, type TokenOwner } from "./server";
-export { SIMULATE_LIMIT, TOOL_CALL_LIMIT } from "./limits";
+export {
+  NOTES_CHAR_LIMIT,
+  SIMULATE_LIMIT,
+  SUBMISSION_NOTE_CHARS,
+  TOOL_CALL_LIMIT,
+} from "./limits";
 export {
   eventsToLog,
   keyToLabel,

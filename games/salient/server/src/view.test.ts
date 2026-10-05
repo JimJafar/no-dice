@@ -309,14 +309,23 @@ describe("get_state", () => {
 
   it("reports last turn in the seat's own words, and only on hexes it could see", () => {
     const { server, matchId } = openedMatch();
-    server.call(matchId, "A", "submit_orders", {
+    // Seat A's second order is illegal, so the first attempt is refused and
+    // commits nothing; the seat hands the same orders in again, and that second
+    // submission is final whatever it carries. The wasted order it hears about
+    // next turn is one it was told about and played anyway.
+    const attempt = {
       orders: [
         { from: "B6", to: "C6", troops: 2 },
         { from: "B6", to: "D6", troops: 2 },
       ],
       intent: "edge forward",
       prediction: "B holds",
+    };
+    expect(server.call(matchId, "A", "submit_orders", attempt).result).toEqual({
+      accepted: false,
+      wasted: [{ order: { from: "B6", to: "D6", troops: 2 }, reason: "hexes are not adjacent" }],
     });
+    server.call(matchId, "A", "submit_orders", attempt);
     server.call(matchId, "B", "submit_orders", {
       orders: [{ from: "J6", to: "I6", troops: 2 }],
       intent: "edge forward",

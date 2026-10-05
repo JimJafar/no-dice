@@ -10,14 +10,19 @@
  * to the engine — a seat that never submitted simply passes — and `turnRecord`
  * gives back what the log needs for the turn.
  *
- * Nothing here is an MCP tool: the runner reaches a session in-process. The
- * tools that only read — `get_rules` and `get_state`, answered by `view` — and
- * the two that spend something without committing it — `scout` and `simulate` —
- * are wired up here; the tools that change something, and the limit errors, come
- * in the tasks that follow. The state they all read, and the counting they all
- * refuse against, is built here.
+ * Nothing here is an MCP tool: the runner reaches a session in-process. All
+ * seven player tools are wired up here, and every limit brief §6.2 sets is
+ * enforced here — in `refusal`, which turns a call away before it reaches a
+ * tool, and in the tools that spend something. A refused call changes nothing:
+ * the gate runs before any handler, and a handler that answers an error returns
+ * before it writes.
  */
-import { generateMap, resolveTurn as engineResolveTurn, visibleHexes } from "@no-dice/salient-engine";
+import {
+  generateMap,
+  resolveTurn as engineResolveTurn,
+  validateOrders,
+  visibleHexes,
+} from "@no-dice/salient-engine";
 import type { Config, HexKey, MatchResult, MatchState, Order, Seat } from "@no-dice/salient-engine";
 import { orderSchema } from "@no-dice/runner/log";
 import type {
@@ -25,12 +30,14 @@ import type {
   LogEvent,
   LogOrder,
   LogResult,
+  RejectedSubmission,
   ToolCallRecord,
   TurnPlayerRecord,
   WastedLogOrder,
 } from "@no-dice/runner/log";
 
 import { eventsToLog, labelToKey, ordersToEngine, wastedToLog } from "./labels";
+import { NOTES_CHAR_LIMIT, SIMULATE_LIMIT, SUBMISSION_NOTE_CHARS, TOOL_CALL_LIMIT } from "./limits";
 import { simulateTurn } from "./simulate";
 import { rulesView, scoutView, stateView, type StateView } from "./view";
 
@@ -106,6 +113,12 @@ interface SeatTurn {
   scouted: HexLabel[];
   transcript: ToolCallRecord[];
   submission: Submission | null;
+  /**
+   * The seat's first submission, when it was refused: what it carried and why it
+   * was refused. Held for the log, and as the mark that says the seat's next
+   * submission is the last one it gets.
+   */
+  rejected: RejectedSubmission | null;
 }
 
 const emptySeatTurn = (): SeatTurn => ({
@@ -115,10 +128,36 @@ const emptySeatTurn = (): SeatTurn => ({
   scouted: [],
   transcript: [],
   submission: null,
+  rejected: null,
 });
 
 /** A call refused before it reached a tool: nothing was spent, nothing was seen. */
 const refused = (error: string): ToolOutcome => ({ ok: false, result: { error }, error, ms: 0 });
+
+/** One of `submit_orders`' two notes: required, and 1 to 280 characters. */
+const isSubmissionNote = (value: unknown): value is string =>
+  typeof value === "string" && value.length >= 1 && value.length <= SUBMISSION_NOTE_CHARS;
+
+/**
+ * What `submit_orders` carried, in the log's shape, or `null` when it is not a
+ * submission at all: a field missing, an order the log could not hold, or a note
+ * outside the length brief §6.2 asks for. A call that fails here is an error and
+ * not a submission, so it does not use up the seat's one rejected attempt.
+ */
+const parseSubmission = (args: unknown): Submission | null => {
+  const called = args as { orders?: unknown; intent?: unknown; prediction?: unknown } | null;
+  const { orders, intent, prediction } = called ?? {};
+  if (!Array.isArray(orders) || !isSubmissionNote(intent) || !isSubmissionNote(prediction)) {
+    return null;
+  }
+  const parsed: LogOrder[] = [];
+  for (const order of orders) {
+    const checked = orderSchema.safeParse(order);
+    if (!checked.success) return null;
+    parsed.push(checked.data);
+  }
+  return { orders: parsed, intent, prediction };
+};
 
 /** The hex a `scout` call asked for, as whatever the caller passed. */
 const scoutHex = (args: unknown): string => {
@@ -151,6 +190,8 @@ export class MatchSession {
       scout: (seat, args) => this.scout(seat, args),
       simulate: (seat, args) => this.simulate(seat, args),
       submit_orders: (seat, args) => this.submitOrders(seat, args),
+      read_notes: (seat) => ({ ok: true, result: { notes: this.notes[seat] } }),
+      write_notes: (seat, args) => this.writeNotes(seat, args),
     };
 
   private board: MatchState;
@@ -213,14 +254,21 @@ export class MatchSession {
   /**
    * One player-facing tool call. The seat is not something the player chooses:
    * the caller resolves it from the seat's token and passes it here, so a call
-   * can only ever be for that seat.
+   * can only ever be for that seat. A call a limit refuses is still counted and
+   * still logged: brief §6.2 counts every call but `submit_orders`, including
+   * the ones that answer an error.
    */
   call(seat: Seat, tool: string, args: unknown): ToolOutcome {
     if (!this.accepting) return refused("turn_not_open");
     const started = performance.now();
     const handler = KNOWN_TOOLS.has(tool) ? this.handlers[tool as ToolName] : undefined;
+    const blocked = this.refusal(seat, tool);
     const handled: HandlerResult =
-      handler === undefined ? { ok: false, error: "unknown_tool" } : handler(seat, args);
+      blocked !== null
+        ? { ok: false, error: blocked }
+        : handler === undefined
+          ? { ok: false, error: "unknown_tool" }
+          : handler(seat, args);
     const ms = Math.max(0, Math.round(performance.now() - started));
     this.count(seat, tool, args, handled, ms);
     return {
@@ -326,25 +374,84 @@ export class MatchSession {
   }
 
   /**
-   * `submit_orders`: store what the seat wants played this turn. The shape is
-   * checked here, against the log's own order schema, so nothing the log cannot
-   * hold is ever stored. Whether the orders are legal, the one rejected attempt,
-   * and the refusal to accept anything after a submission are the limits task's.
+   * Why a call is turned away before it reaches a tool: the seat has committed,
+   * or the turn's calls, simulations or action points are spent. Every limit
+   * brief §6.2 sets is checked here, in one place, so no tool has to remember to
+   * check for itself and a call that is refused cannot spend anything. The seat's
+   * submission outranks the rest: once it is in, the seat plays its turn out.
+   *
+   * The action points are the ones the seat shares with its orders, which is why
+   * a scout is refused here while an order over budget is left to the engine to
+   * waste: the scout would have bought information the seat has no point left to
+   * pay for, and the order is played and wasted at resolution, point and all.
+   */
+  private refusal(seat: Seat, tool: string): string | null {
+    const live = this.live.seats[seat];
+    if (live.submission !== null) return "already_submitted";
+    if (tool !== "submit_orders" && live.toolCalls >= TOOL_CALL_LIMIT) return "tool_call_limit";
+    if (tool === "simulate" && live.simulations >= SIMULATE_LIMIT) return "simulate_limit";
+    if (tool === "scout" && live.apSpentOnScouts >= this.config.actionPoints) {
+      return "action_point_limit";
+    }
+    return null;
+  }
+
+  /**
+   * `write_notes`: replace what the seat has written to itself. Notes outlive the
+   * turn — they are the one thing a seat carries between turns — so they are held
+   * outside the per-turn state. Text longer than brief §6.2 allows is refused and
+   * what is stored stays exactly as it was.
+   */
+  private writeNotes(seat: Seat, args: unknown): HandlerResult {
+    const notes = (args as { notes?: unknown } | null)?.notes;
+    if (typeof notes !== "string") return { ok: false, error: "invalid_notes" };
+    if (notes.length > NOTES_CHAR_LIMIT) return { ok: false, error: "notes_too_long" };
+    this.notes[seat] = notes;
+    return { ok: true, result: { stored: true } };
+  }
+
+  /**
+   * `submit_orders`: what the seat wants played this turn.
+   *
+   * A call that is not shaped as brief §6.2 describes — an order the log cannot
+   * hold, or a missing note or one outside 1 to 280 characters — is an error and
+   * is not a submission, so it does not use up the seat's one rejected attempt.
+   *
+   * A first attempt is checked against the board with the action points the seat
+   * has left after its scouts. Every order that gets checked spends one of them,
+   * valid or not, which is what makes checking before storing anything worth
+   * doing: the seat is told each invalid order and the engine's reason for it,
+   * and nothing is committed, so it can try again having learned that.
+   *
+   * The second attempt stands whatever it carries. Its orders are stored as the
+   * seat wrote them and the engine's `resolveTurn` wastes the invalid ones under
+   * that same budget, so a wasted order still costs the point it would have cost
+   * — which is why the seat is not simply asked again until it gets it right.
    */
   private submitOrders(seat: Seat, args: unknown): HandlerResult {
-    const submitted = args as { orders?: unknown; intent?: unknown; prediction?: unknown } | null;
-    const { orders, intent, prediction } = submitted ?? {};
-    if (!Array.isArray(orders) || typeof intent !== "string" || typeof prediction !== "string") {
-      return { ok: false, error: "invalid_submission" };
+    const live = this.live.seats[seat];
+    const submission = parseSubmission(args);
+    if (submission === null) return { ok: false, error: "invalid_submission" };
+
+    const checked = validateOrders(
+      this.board,
+      seat,
+      ordersToEngine(submission.orders, this.config.radius),
+      this.config.actionPoints - live.apSpentOnScouts,
+    );
+    if (checked.wasted.length === 0) {
+      live.submission = submission;
+      return { ok: true, result: { accepted: true } };
     }
-    const parsed: LogOrder[] = [];
-    for (const order of orders) {
-      const result = orderSchema.safeParse(order);
-      if (!result.success) return { ok: false, error: "invalid_submission" };
-      parsed.push(result.data);
+    const wasted = wastedToLog(checked.wasted, this.config.radius);
+    if (live.rejected === null) {
+      // The seat's one rejected attempt: nothing is stored, and it may submit
+      // once more. `status` still says it has no submission in.
+      live.rejected = { orders: submission.orders, wasted };
+      return { ok: true, result: { accepted: false, wasted } };
     }
-    this.live.seats[seat].submission = { orders: parsed, intent, prediction };
-    return { ok: true, result: { accepted: true } };
+    live.submission = submission;
+    return { ok: true, result: { accepted: true, wasted } };
   }
 
   /**
@@ -398,9 +505,8 @@ export class MatchSession {
       return {
         tool_calls: live.transcript.slice(),
         scouts: live.scouted.slice(),
-        // The first attempt of a seat that was refused and allowed to try again;
-        // stored by the limits task, which is what produces a rejected attempt.
-        rejected_submission: null,
+        // The first attempt of a seat that was refused and allowed to try again.
+        rejected_submission: live.rejected,
         orders: submission?.orders.slice() ?? [],
         wasted: wasted[seat],
         intent: submission?.intent ?? "",

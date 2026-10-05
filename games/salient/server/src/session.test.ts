@@ -1,9 +1,9 @@
 /**
  * The match the server holds: the tokens that reach it, the counters a turn
- * opens with, and the record the log is written from. The limits themselves
- * belong to the next task, so a tool that is not wired up yet is refused as an
- * unknown tool — but it is still counted, which is what the limits will count
- * against.
+ * opens with, and the record the log is written from. The limits brief §6.2 sets
+ * are tested in `limits.test.ts`; what is tested here is the bookkeeping they
+ * refuse against — every call counted, including one that answers an error, and
+ * every call kept for the log.
  */
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import { turnEventSchema, turnPlayerSchema } from "@no-dice/runner/log";
@@ -72,17 +72,17 @@ describe("call", () => {
   it("counts every call a seat makes, including the ones that answer an error", () => {
     const { server, matchId } = openedMatch();
 
-    // `read_notes` is one of the real tools still to be wired up, so it answers
-    // the same way an unrecognised name does.
-    expect(server.call(matchId, "A", "read_notes", {}).error).toBe("unknown_tool");
-    server.call(matchId, "A", "not_a_salient_tool", {});
+    // A name that is not one of the seven tools, and a call whose argument names
+    // no hex: both answer an error, and both still count.
+    expect(server.call(matchId, "A", "not_a_salient_tool", {}).error).toBe("unknown_tool");
+    server.call(matchId, "A", "scout", { hex: "somewhere" });
     server.call(matchId, "A", "submit_orders", { orders: [], intent: "hold", prediction: "nothing moves" });
 
     // `submit_orders` is the one call the 12 do not count; the other two failed
     // and still count.
     expect(server.match(matchId).counters("A").toolCalls).toBe(2);
     const transcript = server.turnRecord(matchId, 1).A.tool_calls;
-    expect(transcript.map((call) => call.tool)).toEqual(["read_notes", "not_a_salient_tool", "submit_orders"]);
+    expect(transcript.map((call) => call.tool)).toEqual(["not_a_salient_tool", "scout", "submit_orders"]);
     expect(transcript.map((call) => call.error)).toEqual([true, true, false]);
   });
 
@@ -144,7 +144,7 @@ describe("status and openTurn", () => {
       scouted: [],
     });
     expect(server.turnRecord(matchId, 2).A.tool_calls).toEqual([]);
-    expect(server.call(matchId, "A", "read_notes", {}).error).toBe("unknown_tool");
+    expect(server.call(matchId, "A", "read_notes", {}).ok).toBe(true);
   });
 
   it("keeps the turn before it readable once the next one opens", () => {
@@ -188,7 +188,11 @@ describe("resolveTurn", () => {
   it("wastes an order the engine refuses, naming it by label", () => {
     const { server, matchId } = openedMatch();
     const order = { from: "B6", to: "D6", troops: 2 };
-    server.call(matchId, "A", "submit_orders", { orders: [order], intent: "two steps", prediction: "arrive" });
+    const attempt = { orders: [order], intent: "two steps", prediction: "arrive" };
+    // The first attempt is refused and commits nothing, so an order only reaches
+    // the engine through a seat that handed it in a second time.
+    server.call(matchId, "A", "submit_orders", attempt);
+    server.call(matchId, "A", "submit_orders", attempt);
 
     expect(server.resolveTurn(matchId).events).toEqual([]);
 
