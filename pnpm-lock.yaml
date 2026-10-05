@@ -20,6 +20,15 @@ importers:
 
   games/salient/engine: {}
 
+  games/salient/server:
+    dependencies:
+      '@no-dice/runner':
+        specifier: workspace:*
+        version: link:../../../packages/runner
+      '@no-dice/salient-engine':
+        specifier: workspace:*
+        version: link:../engine
+
   packages/runner:
     dependencies:
       zod:

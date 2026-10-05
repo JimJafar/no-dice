@@ -1,0 +1,87 @@
+/**
+ * The admin surface brief §6.2 gives the runner: plain in-process functions, not
+ * MCP tools. It holds every match in play, and it is what maps a seat's token to
+ * the one match and the one seat that token may act for.
+ *
+ * One `MatchServer` can host several matches at once, which is how a match
+ * runner keeps its own matches apart without starting a process each.
+ */
+import { randomBytes, randomUUID } from "node:crypto";
+
+import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
+import type { Config, Seat } from "@no-dice/salient-engine";
+import type { LogEvent, LogResult } from "@no-dice/runner/log";
+
+import { MatchSession, type ToolOutcome, type TurnPlayerRecords } from "./session";
+
+/**
+ * A seat's token: random and opaque, so nothing about the match can be guessed
+ * from it, and held only by the runner until it hands it to that seat.
+ */
+const newToken = (): string => randomBytes(18).toString("base64url");
+
+/** What `createMatch` hands the runner: the match, and one token per seat. */
+export interface CreatedMatch {
+  matchId: string;
+  tokens: Record<Seat, string>;
+}
+
+/** What a token is good for: exactly one seat of exactly one match. */
+export interface TokenOwner {
+  matchId: string;
+  seat: Seat;
+}
+
+export class MatchServer {
+  private readonly matches = new Map<string, MatchSession>();
+  private readonly tokens = new Map<string, TokenOwner>();
+
+  /** Deal a new match from `seed`, and give each seat its own token. */
+  createMatch(seed: number, config: Config = DEFAULT_CONFIG): CreatedMatch {
+    const matchId = randomUUID();
+    this.matches.set(matchId, new MatchSession(matchId, seed, config));
+    const tokens: Record<Seat, string> = { A: newToken(), B: newToken() };
+    this.tokens.set(tokens.A, { matchId, seat: "A" });
+    this.tokens.set(tokens.B, { matchId, seat: "B" });
+    return { matchId, tokens };
+  }
+
+  /** The match and seat `token` belongs to, or `null` when it belongs to neither. */
+  resolveToken(token: string): TokenOwner | null {
+    return this.tokens.get(token) ?? null;
+  }
+
+  /** The match `matchId` holds, for the runner and the HTTP layer to work with. */
+  match(matchId: string): MatchSession {
+    const session = this.matches.get(matchId);
+    if (session === undefined) throw new Error(`no match ${matchId} is being played here`);
+    return session;
+  }
+
+  /** One player-facing tool call, for the seat the caller resolved from a token. */
+  call(matchId: string, seat: Seat, tool: string, args: unknown): ToolOutcome {
+    const session = this.matches.get(matchId);
+    if (session === undefined) return { ok: false, result: { error: "unknown_match" }, error: "unknown_match", ms: 0 };
+    return session.call(seat, tool, args);
+  }
+
+  /** Reset the per-turn counters and start accepting calls for the turn just begun. */
+  openTurn(matchId: string): void {
+    this.match(matchId).openTurn();
+  }
+
+  /** Which seats have a submission in for this turn. */
+  status(matchId: string): { submitted: Record<Seat, boolean> } {
+    return this.match(matchId).status();
+  }
+
+  /** Resolve the open turn; a seat that never submitted passes. */
+  resolveTurn(matchId: string): { events: LogEvent[]; result: LogResult | null } {
+    return this.match(matchId).resolveTurn();
+  }
+
+  /** Everything the server saw of one seat's `turn`, in the log's per-player shape. */
+  turnRecord(matchId: string, turn: number): TurnPlayerRecords {
+    return this.match(matchId).turnRecord(turn);
+  }
+}
