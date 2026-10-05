@@ -21,7 +21,7 @@
  */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { PassReason, Seat, WasteReason } from "@no-dice/log";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -182,11 +182,25 @@ const logOf = (input: {
   };
 };
 
+/**
+ * How the runner names a match in `series.json`: `<seed>-<seat A>-<seat B>.json`
+ * under `matches/`, in a path that carries the series directory because `--dir`
+ * defaults to the relative `series/<a>-vs-<b>` (`matchOf` in
+ * `packages/runner/src/series-plan.ts`, `seatSlug` in `./args`). The log itself
+ * sits at that name under the series directory's `matches/`, which is what the
+ * report has to work out when it is handed the directory from elsewhere.
+ */
+const recordPathOf = (seed: number, xSeat: Seat): string =>
+  `series/marvin-subagent-vs-greedy/matches/${String(
+    seed,
+  )}-${xSeat === "A" ? "marvin-subagent-greedy" : "greedy-marvin-subagent"}.json`;
+
 /** The fixture's matches: what each is, and where its log goes. */
 interface FixtureMatch {
   seed: number;
   /** The seat model X played, as the series record records it. */
   seat: Seat;
+  /** The path the record names, in the runner's shape: see `recordPathOf`. */
   path: string;
   /** What the record says the match was, whether or not a log of it survives. */
   result: Outcome;
@@ -201,7 +215,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 101,
     seat: "A",
-    path: "matches/101-A.json",
+    path: recordPathOf(101, "A"),
     result: { type: "time", winner: "A", turn: 25, margin: 12 },
     log: logOf({
       seed: 101,
@@ -219,7 +233,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 101,
     seat: "B",
-    path: "matches/101-B.json",
+    path: recordPathOf(101, "B"),
     result: { type: "time", winner: "A", turn: 25, margin: 5 },
     log: logOf({
       seed: 101,
@@ -232,7 +246,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 102,
     seat: "A",
-    path: "matches/102-A.json",
+    path: recordPathOf(102, "A"),
     result: { type: "knockout", winner: "A", turn: 7, margin: 40 },
     log: logOf({
       seed: 102,
@@ -245,7 +259,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 102,
     seat: "B",
-    path: "matches/102-B.json",
+    path: recordPathOf(102, "B"),
     result: { type: "time", winner: null, turn: 25, margin: 0 },
     log: logOf({
       seed: 102,
@@ -258,7 +272,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 103,
     seat: "A",
-    path: "matches/103-A.json",
+    path: recordPathOf(103, "A"),
     result: { type: "time", winner: null, turn: 0, margin: 0 },
     log: null,
     // How the runner records a voided match: the reason code in brackets.
@@ -267,7 +281,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 103,
     seat: "B",
-    path: "matches/103-B.json",
+    path: recordPathOf(103, "B"),
     result: { type: "time", winner: "B", turn: 4, margin: 30 },
     // A played record whose log carries a match-level pass: the partial log of a
     // voided match, which is not a result.
@@ -282,7 +296,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 104,
     seat: "A",
-    path: "matches/104-A.json",
+    path: recordPathOf(104, "A"),
     result: { type: "time", winner: "A", turn: 25, margin: 8 },
     // The record says played; the disk has nothing. Named, and left out.
     log: null,
@@ -290,7 +304,7 @@ const FIXTURE: FixtureMatch[] = [
   {
     seed: 104,
     seat: "B",
-    path: "matches/104-B.json",
+    path: recordPathOf(104, "B"),
     result: { type: "knockout", winner: "B", turn: 15, margin: 93 },
     log: logOf({
       seed: 104,
@@ -342,6 +356,10 @@ const recordOf = (): Record<string, unknown> => ({
     stop_reason: "wilson_interval",
     stopped_early: true,
   },
+  // A field no part of the report names, standing for whatever the runner learns
+  // next: a report that refused it would stop reporting every series the runner
+  // upgraded.
+  resume_state: { batch: 2 },
   stop: {
     reason: "wilson_interval",
     totals: { cost_usd: 1.5, tokens: { input: 700, output: 70, cache_read: 0, cache_write: 0, total: 770 } },
@@ -359,7 +377,11 @@ const writeSeries = async (dir: string): Promise<void> => {
   await mkdir(join(dir, "matches"), { recursive: true });
   for (const match of FIXTURE) {
     if (match.log === null) continue;
-    await writeFile(join(dir, match.path), `${JSON.stringify(match.log, null, 2)}\n`, "utf8");
+    await writeFile(
+      join(dir, "matches", basename(match.path)),
+      `${JSON.stringify(match.log, null, 2)}\n`,
+      "utf8",
+    );
   }
   await writeFile(join(dir, "series.json"), `${JSON.stringify(recordOf(), null, 2)}\n`, "utf8");
 };
@@ -416,10 +438,34 @@ describe("a series directory", () => {
   });
 
   it("reports a record that carries more than the report reads", () => {
-    // `seed_base`, `pairs_played` and `totals` are in the fixture and nowhere in
-    // the report: a series record is the runner's, and a report that refused a
-    // field it does not use would break every time the runner learned something.
+    // `seed_base`, `state.pairs_played`, `stop.totals` and `resume_state` are in
+    // the fixture and nowhere in the report: a series record is the runner's, and
+    // a report that refused a field it does not use would break every time the
+    // runner learned something. The fields it does read came through.
+    expect(report.maxPairs).toBe(4);
+    expect(report.seeds).toEqual([101, 102, 103, 104]);
+    expect(report.pairs).toBe(4);
+    expect(report.matches).toBe(8);
+    expect(report.counted).toBe(5);
     expect(report.stop.reason).toBe("wilson_interval");
+  });
+
+  it("finds the logs a record names by the series directory it was given", async () => {
+    // The runner writes `out` as its `--dir` joined with `matches/`, and `--dir`
+    // defaults to the relative `series/<a>-vs-<b>`, so the fixture's record names
+    // `series/marvin-subagent-vs-greedy/matches/<seed>-<seats>.json` while the
+    // logs sit under the series directory itself. Read from a working directory
+    // that is not the one the run started in, the recorded path resolves to
+    // nothing, and a report that only re-joined it under the series directory
+    // would double the prefix and print "0 counted, 8 missing" for a series that
+    // played them all.
+    const record = JSON.parse(await readFile(join(dir, "series.json"), "utf8")) as {
+      pairs: { matches: { path: string }[] }[];
+    };
+    const named = record.pairs.flatMap((pair) => pair.matches.map((match) => match.path));
+    expect(named[0]).toBe("series/marvin-subagent-vs-greedy/matches/101-marvin-subagent-greedy.json");
+    expect(report.counted).toBe(5);
+    expect(report.missing.byKind.missing_log).toBe(1);
   });
 
   it("refuses a directory that is not a series", async () => {
@@ -524,7 +570,7 @@ describe("the matches that do not count", () => {
 
   it("names each missing match, with the path the record gave it", () => {
     const failed = report.missing.matches.find((match) => match.kind === "failed")!;
-    expect(failed.path).toBe(join(dir, "matches/103-A.json"));
+    expect(failed.path).toBe(join(dir, "matches/103-marvin-subagent-greedy.json"));
     expect(failed.reason).toBe("tool_surface");
     const voided = report.missing.matches.find((match) => match.kind === "voided")!;
     expect(voided.reason).toBe("tool_surface");
@@ -667,11 +713,11 @@ describe("the per-model rows", () => {
 });
 
 describe("a series that is broken, or has nothing in it", () => {
-  /** A one-pair series directory built around one log, at `matches/101-A.json`. */
+  /** A one-pair series directory whose single log is `log`, in the runner's layout. */
   const seriesWith = async (log: unknown): Promise<string> => {
     const where = await mkdtemp(join(tmpdir(), "no-dice-series-edge-"));
     await mkdir(join(where, "matches"), { recursive: true });
-    await writeFile(join(where, "matches/101-A.json"), JSON.stringify(log), "utf8");
+    await writeFile(join(where, "matches/101-marvin-subagent-greedy.json"), JSON.stringify(log), "utf8");
     await writeFile(
       join(where, "series.json"),
       JSON.stringify({
@@ -684,7 +730,7 @@ describe("a series that is broken, or has nothing in it", () => {
             matches: [
               {
                 seat: "A",
-                path: "matches/101-A.json",
+                path: recordPathOf(101, "A"),
                 status: "played",
                 result: { type: "time", winner: "A", margin: 4 },
               },

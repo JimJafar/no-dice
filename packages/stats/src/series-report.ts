@@ -45,15 +45,15 @@
  * its stopping test, so that edge would be a cycle.
  */
 import { readFile, writeFile } from "node:fs/promises";
-import { join, isAbsolute, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
 import { matchLogSchema, passReasonSchema, seatSchema, wasteReasonSchema } from "@no-dice/log";
 import type { MatchLog, PassReason, PlayerHeader, Seat } from "@no-dice/log";
 
-import { DEPTH_BANDS, metricsOfLog } from "./match-metrics.ts";
-import type { BandMetrics, BandName, TurnMetrics } from "./match-metrics.ts";
+import { DEPTH_BANDS, metricsOfLog, zeroCounts } from "./match-metrics.ts";
+import type { BandMetrics, BandName, SeatMetrics, TurnMetrics } from "./match-metrics.ts";
 import { KNOCKOUT_MARGIN, bootstrapMargin, marginOf } from "./margin.ts";
 import type { BootstrapMargin } from "./margin.ts";
 import { outcomeOf, wilsonInterval, winRateOf, zOf } from "./wilson.ts";
@@ -348,12 +348,25 @@ const voidReasonOf = (log: MatchLog): PassReason | null => {
   return null;
 };
 
-/** One match of the record: its seed, the seat X played, and its log. */
+/**
+ * One match that counts, holding only what the report goes on to read.
+ *
+ * The parsed log is not kept. Brief §6.5's default series is 150 matches, and
+ * `docs/pi-harness-notes.md` §7 records a real match log at about a megabyte, so
+ * holding every parsed log for the length of a report is hundreds of megabytes of
+ * boards and events that nothing below reads again. Every figure is taken from
+ * the result and from `match-metrics`'s counts, which are read as the log is read.
+ */
 interface CountedMatch {
   seed: number;
   /** The seat model X played. */
   seat: Seat;
-  log: MatchLog;
+  /** The log's own result: how it ended, who won, and by how much. */
+  result: MatchLog["result"];
+  /** How each seat's header names its player. */
+  players: Record<Seat, string>;
+  /** `match-metrics`'s counts for each seat of the match. */
+  metrics: Record<Seat, SeatMetrics>;
 }
 
 /** Every match the record names, in the order it names them. */
@@ -363,14 +376,25 @@ const recordsOf = (record: SeriesRecord): { seed: number; match: MatchRecord }[]
 /**
  * Where a record's log can be, in the order to try.
  *
- * The runner writes the path it was handed: absolute for a run started with an
- * absolute `--dir`, and relative to the working directory otherwise. A relative
- * one is the series directory's own, so a record read from a different working
- * directory still reports — but the path as written is tried first, because that
- * is the file the record is naming.
+ * The runner writes the path it was handed for `--dir`, joined with `matches/`
+ * and the match's seat-map name (`matchOf` in `packages/runner/src/series-plan.ts`),
+ * and `series-cli` defaults `--dir` to the relative `series/<a>-vs-<b>`. So a
+ * record's path is relative to the directory the run was started in, and it
+ * already carries the series directory's own prefix:
+ * `series/x-vs-greedy/matches/101-marvin-subagent-greedy.json`. Re-joining that
+ * whole path under the series directory doubles the prefix and finds nothing, so
+ * the log is looked for by its place under `matches/` as well — which is what
+ * lets a series directory be reported from anywhere, including after it has been
+ * moved. The path as written is tried first, because that is the file the record
+ * is naming, and the whole path relative to the series directory is tried too,
+ * for a record whose paths are written relative to the directory itself.
  */
-const logPathsOf = (dir: string, path: string): string[] =>
-  isAbsolute(path) ? [resolve(path)] : [resolve(path), resolve(dir, path)];
+const logPathsOf = (dir: string, path: string): string[] => {
+  const candidates = [resolve(path), resolve(dir, path)];
+  const underMatches = /(?:^|[/\\])matches[/\\](.+)$/.exec(path);
+  if (underMatches !== null) candidates.push(join(dir, "matches", underMatches[1]));
+  return [...new Set(candidates)];
+};
 
 /** Why a file the record names did not parse as a log, in one line. */
 const parseFailureOf = (error: unknown): string => {
@@ -422,17 +446,17 @@ async function readMatches(
       leftOut("voided", voided);
       continue;
     }
-    counted.push({ seed, seat: match.seat, log });
+    const metrics = metricsOfLog(log);
+    counted.push({
+      seed,
+      seat: match.seat,
+      result: log.result,
+      players: { A: playerLabel(log.players.A), B: playerLabel(log.players.B) },
+      metrics: { A: metrics.seats.A, B: metrics.seats.B },
+    });
   }
   return { counted, missing };
 }
-
-/** Every value of an enum-like list, at nought. */
-const zeroCounts = <K extends string>(keys: readonly K[]): Record<K, number> => {
-  const counts = {} as Record<K, number>;
-  for (const key of keys) counts[key] = 0;
-  return counts;
-};
 
 /** The missing matches, counted by kind and by reason. */
 const missingOf = (matches: readonly MissingMatch[]): MissingMatches => {
@@ -472,13 +496,13 @@ const resultOf = (outcomes: readonly Outcome[]): ResultRow => {
 /** The knockouts, and the turns they happened on. */
 const knockoutsOf = (counted: readonly CountedMatch[]): Knockouts => {
   const matches = counted
-    .filter(({ log }) => log.result.type === "knockout")
-    .map(({ seed, seat, log }) => ({
+    .filter(({ result }) => result.type === "knockout")
+    .map(({ seed, seat, result }) => ({
       seed,
       seat,
-      winner: log.result.winner,
-      turn: log.result.turn,
-      margin: log.result.margin,
+      winner: result.winner,
+      turn: result.turn,
+      margin: result.margin,
     }));
   return { count: matches.length, turns: matches.map((each) => each.turn), matches };
 };
@@ -632,22 +656,21 @@ export async function seriesReport(
   const records = recordsOf(record);
   const { counted, missing } = await readMatches(dir, records);
 
-  const outcomes = counted.map((match) => outcomeOf(match.log.result, match.seat));
-  const margins = counted.map((match) => marginOf(match.log.result));
+  const outcomes = counted.map((match) => outcomeOf(match.result, match.seat));
+  const margins = counted.map((match) => marginOf(match.result));
 
   // Model X is the pairing's first seat, and the one the swap moves. Which model
   // actually sat in each seat of each match is the log header's to say.
   const byModel = new Map<string, SeatScope[]>();
-  for (const { seed, log } of counted) {
-    const metrics = metricsOfLog(log);
+  for (const { seed, players, metrics } of counted) {
     for (const each of ["A", "B"] as const) {
-      const label = playerLabel(log.players[each]);
+      const label = players[each];
       const scopes = byModel.get(label) ?? [];
       scopes.push({
         seed,
         seat: each,
-        metrics: metrics.seats[each].metrics,
-        bands: metrics.seats[each].bands,
+        metrics: metrics[each].metrics,
+        bands: metrics[each].bands,
       });
       byModel.set(label, scopes);
     }
@@ -703,10 +726,10 @@ export async function seriesReport(
     knockouts: knockoutsOf(counted),
     seatSplit: {
       A: resultOf(
-        counted.filter((match) => match.seat === "A").map((match) => outcomeOf(match.log.result, "A")),
+        counted.filter((match) => match.seat === "A").map((match) => outcomeOf(match.result, "A")),
       ),
       B: resultOf(
-        counted.filter((match) => match.seat === "B").map((match) => outcomeOf(match.log.result, "B")),
+        counted.filter((match) => match.seat === "B").map((match) => outcomeOf(match.result, "B")),
       ),
     },
     models: labels.map((label) => modelRowOf(label, byModel.get(label)!)),

@@ -181,7 +181,7 @@ interface Played {
 }
 
 /** Every reason of an enum, at nought, so a report prints the reasons that did not happen. */
-const zeroCounts = <K extends string>(keys: readonly K[]): Record<K, number> => {
+export const zeroCounts = <K extends string>(keys: readonly K[]): Record<K, number> => {
   const counts = {} as Record<K, number>;
   for (const key of keys) counts[key] = 0;
   return counts;
