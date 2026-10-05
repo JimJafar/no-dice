@@ -3,15 +3,18 @@
  * owns the frame, the three ways of handing the page a log — the picker, a drop
  * anywhere on the frame, and `?log=<url>` — and the line that says what went
  * wrong when the file is not one. It draws the board through `render-board.ts`,
- * at the last turn the log holds, and holds the view mode the toggle asks for:
- * the spectator frame by default, a seat's fog on request. The panels and the
- * turn stepper are the tasks after this one.
+ * at the last turn the log holds, the lead chart through `render-chart.ts`, and
+ * holds the view mode the toggle asks for: the spectator frame by default, a
+ * seat's fog on request. The panels and the turn stepper are the tasks after
+ * this one.
  */
 import { parseLog, pickLogSource, readLogSource } from "./load.ts";
 import type { LogSource } from "./load.ts";
 import { boardView } from "./board.ts";
 import { headerView } from "./header.ts";
 import { renderHeader } from "./render-header.ts";
+import { chartView } from "./chart.ts";
+import { renderChart } from "./render-chart.ts";
 import { fogView } from "./fog.ts";
 import { renderBoard } from "./render-board.ts";
 import { DEFAULT_MODE, mountViewToggle } from "./view-mode.ts";
@@ -30,6 +33,7 @@ const status = element<HTMLParagraphElement>("#status");
 const fileInput = element<HTMLInputElement>("#log-file");
 const header = element<HTMLDivElement>("#header");
 const board = element<HTMLDivElement>("#board");
+const chart = element<HTMLDivElement>("#chart");
 const toggleBar = element<HTMLDivElement>("#view-toggle");
 
 /**
@@ -47,10 +51,11 @@ function say(message: string, bad = false): void {
 }
 
 /**
- * The frame the page shows: the header and the board at the last turn the log
- * holds, seen through the mode the toggle is on. Fog is a lens over that one
- * board — the same hexes in the same places — so the only thing it changes is
- * what the frame knows about each of them, never what the match scored.
+ * The frame the page shows: the header, the board and the lead chart at the
+ * last turn the log holds, seen through the mode the toggle is on. Fog is a lens
+ * over that one board — the same hexes in the same places — so the only thing it
+ * changes is what the frame knows about each of them, never what the match
+ * scored or how far ahead either seat was.
  */
 function redraw(): void {
   if (log === null) return;
@@ -60,9 +65,11 @@ function redraw(): void {
   const fog = mode === "spectator" ? null : fogView(log, turn, mode);
   header.hidden = false;
   board.hidden = false;
+  chart.hidden = false;
   toggleBar.hidden = false;
   renderHeader(header, headerView(log, turn));
   renderBoard(board, boardView(log, turn), fog);
+  renderChart(chart, chartView(log, turn));
   toggle.select(mode);
 }
 

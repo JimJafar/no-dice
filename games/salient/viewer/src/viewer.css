@@ -78,3 +78,31 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 .ar::before,.ar::after{content:'';position:absolute;clip-path:polygon(0 33%,55% 33%,55% 0,100% 50%,55% 100%,55% 67%,0 67%)}
 .ar::before{top:-3px;bottom:-3px;left:-3px;right:-5px;background:#12161c}
 .ar::after{top:0;bottom:0;left:0;right:0;background:#f4f6f8}
+
+/* The lead-by-turn chart: the key down the left, and the axis beside it — one
+   slot per turn of the match, A's bars above the zero line and B's below, the
+   frame's own turn marked with its margin over it. Copied out of
+   salient/docs/mockups/spectator-view.html; the two styles the mock-up sets per
+   frame — the axis's width and each bar's height — are set by render-chart.ts
+   instead, because they are facts about the log. `.lead` rather than `.bar`,
+   which the score bar above already uses. */
+.chart{display:flex;align-items:center;gap:32px;flex:none}
+/* `hidden` until a log arrives, which an author `display` would otherwise win. */
+.chart[hidden]{display:none}
+.chart-key{width:170px;flex:none;display:flex;flex-direction:column;gap:12px}
+.chart-title{font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+.chart-legend{display:flex;align-items:center;gap:8px;font-size:15px;line-height:1.2;color:#c9d1dc}
+/* The mock-up's legend swatches: 12 px, a step under the header's. */
+.chart-legend .swatch{width:12px;height:12px}
+.leg-a .swatch{background:var(--team-a,#2c6fd1)}
+.leg-b .swatch{background:var(--team-b,#e06f35)}
+.chart-axis{position:relative;height:112px;display:flex}
+/* The zero line every bar is drawn against. */
+.chart-axis .zero{position:absolute;left:0;right:0;top:56px;height:1px;background:#3a4450}
+.slot{position:relative;flex:none;width:44px;height:112px}
+.slot.marked{background:#1f2630}
+.lead{position:absolute;left:10px;width:24px}
+/* A's bar stands on the line and grows up; B's hangs under it and grows down. */
+.lead-a{bottom:56px;background:var(--team-a,#2c6fd1);border-radius:4px 4px 0 0}
+.lead-b{top:57px;background:var(--team-b,#e06f35);border-radius:0 0 4px 4px}
+.mark{position:absolute;left:0;right:0;top:0;text-align:center;font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;color:#eef1f5}
