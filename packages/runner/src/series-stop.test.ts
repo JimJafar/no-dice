@@ -25,9 +25,12 @@
  * - **The order they are asked in**, which is a pure decision and tested as one:
  *   the pair limit, then the ceilings, then the interval.
  *
- * And one thing about the record between runs: a rerun that dies inside its first
- * batch leaves the decision an earlier run made, rather than a record claiming the
- * series ran its full length.
+ * And two things about the record between runs. The rules are re-asked under the
+ * rerun's own flags before anything is played, so a rerun that dies inside its
+ * first batch leaves the decision that actually applies — not an earlier run's
+ * ceiling that this run raised, and not a claim that a series which stopped early
+ * ran its full length. And a series that already played its `--max-pairs` stays a
+ * full-length series when it is rerun with a ceiling those matches pass.
  */
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -438,24 +441,122 @@ describe("the cost and token ceilings", () => {
     expect(record.state.stopped_early).toBe(true);
   });
 
-  it("asks only the ceilings before a batch", () => {
-    const input = {
+  it("asks only the ceilings before a batch, and never over the pair limit", () => {
+    const under = {
       pairsPlayed: 12,
       matches: played(12, 12),
       totals: totalsOf(24),
-      maxPairs: 12,
+      maxPairs: 20,
       ceilings: { maxTokens: 100 },
     } satisfies StopInput;
 
     // The pair limit and the interval are questions about what has been played,
-    // and before a batch they can only repeat the answer the last boundary gave.
-    // So a run resumed at its limit is not stopped by this ask — it walks its
-    // batches and counts the logs it finds — while a ceiling already passed is.
-    expect(ceilingsPassed(input)?.reason).toBe("max_tokens");
-    const atBoundary = decideStop(input);
+    // and before a batch they can only repeat the answer the last boundary gave,
+    // so this ask names a ceiling that is already passed and nothing else.
+    expect(ceilingsPassed(under)?.reason).toBe("max_tokens");
+    expect(ceilingsPassed({ ...under, ceilings: {} })).toBeNull();
+
+    // The pair limit still outranks the ceilings before a batch, as it does at a
+    // boundary: a series that has played its `--max-pairs` ran the length it was
+    // asked for, and a rerun given a ceiling those matches happen to pass must
+    // not relabel a complete sample as an early stop.
+    const atLimit = { ...under, maxPairs: 12 } satisfies StopInput;
+    expect(ceilingsPassed(atLimit)).toBeNull();
+    const atBoundary = decideStop(atLimit);
     if (!atBoundary.stopped) throw new Error("a series at its pair limit must stop at the boundary");
     expect(atBoundary.stop.reason).toBe("max_pairs");
-    expect(ceilingsPassed({ ...input, ceilings: {} })).toBeNull();
+  });
+
+  it("keeps a series that ran its full length there, whatever ceiling it is rerun with", async () => {
+    const seriesDir = await seriesAt("complete-then-ceiling");
+    const first: PlayCall[] = [];
+    await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 5,
+      seedBase: 555,
+      playMatch: xWins(first),
+    });
+    const finished = await readRecord(seriesDir);
+    expect(finished.state).toEqual({
+      pairs_played: 5,
+      matches_played: 10,
+      matches_failed: 0,
+      stop_reason: "max_pairs",
+      stopped_early: false,
+    });
+
+    // The same series again, with a ceiling its 960 tokens have already passed.
+    // It played what it asked for, so it is still a full-length series.
+    const again: PlayCall[] = [];
+    await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 5,
+      maxTokens: 100,
+      seedBase: 555,
+      playMatch: xWins(again),
+    });
+
+    expect(again).toEqual([]);
+    const record = await readRecord(seriesDir);
+    stoppedFor(record, "max_pairs");
+    expect(record.state).toEqual(finished.state);
+  });
+
+  it("does not carry an earlier run's ceiling into a rerun that raised it", async () => {
+    const seriesDir = await seriesAt("raised-ceiling");
+    const first: PlayCall[] = [];
+    await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 12,
+      // Passed by the first batch, which stops the series at 5 pairs.
+      maxTokens: 100,
+      seedBase: 808,
+      playMatch: xWins(first),
+    });
+    const stoppedByCeiling = await readRecord(seriesDir);
+    expect(stoppedFor(stoppedByCeiling, "max_tokens").ceiling_tokens).toBe(100);
+
+    // One pair left half played, so the rerun is inside its first batch — before
+    // it has reached a boundary of its own — while it writes what it knows.
+    const half = stoppedByCeiling.pairs[0];
+    if (half.matches[1].status !== "played") throw new Error("expected a played pair to cut in half");
+    await rm(half.matches[1].path);
+
+    // What the record said each time the rerun was about to play a match.
+    const whilePlaying: SeriesRecord[] = [];
+    const again: PlayCall[] = [];
+    const rerun: PlayMatch = async (options) => {
+      whilePlaying.push(await readRecord(seriesDir));
+      return xWins(again)(options);
+    };
+    await runSeries({
+      dir: seriesDir,
+      a: X,
+      b: OPPONENT,
+      maxPairs: 12,
+      // A ceiling this series has not passed, so the old one no longer decides it.
+      maxTokens: 5000,
+      seedBase: 808,
+      playMatch: rerun,
+    });
+
+    // The rerun's first match is played with no stop on record at all: the 100
+    // tokens the earlier run stopped on are not carried over as if they still
+    // bound this one, which is what an interrupted rerun would have left behind.
+    expect(whilePlaying).toHaveLength(11);
+    expect(whilePlaying[0].stop).toBeUndefined();
+    expect(whilePlaying[0].state.stopped_early).toBe(false);
+
+    // And the series plays on to the answer it reaches: 10 pairs of straight wins.
+    const record = await readRecord(seriesDir);
+    stoppedFor(record, "wilson_interval");
+    expect(record.state.stopped_early).toBe(true);
   });
 
   it("refuses a --max-tokens that is not a whole number, before playing anything", async () => {

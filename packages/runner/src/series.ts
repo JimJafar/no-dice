@@ -423,11 +423,13 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
 
   // Written once before anything is played, so a series killed in its first match
   // still has a record, and again after every batch of 5 pairs. That first write
-  // carries the decision an earlier run recorded rather than clearing it: a match
-  // takes 19 minutes, so a rerun interrupted inside its first batch would
-  // otherwise leave a series that had stopped early at 10 pairs claiming it ran
-  // its full length. This run overwrites it at the first boundary it reaches.
-  let record = await writeRecord(previous.success ? previous.data.stop ?? null : null);
+  // asks the rules about the series as it stands on disk, under this run's flags,
+  // rather than copying what an earlier run decided: a match takes 19 minutes, so
+  // a rerun interrupted inside its first batch has to leave a record that says
+  // what the series actually did — an early stop that still binds under these
+  // flags, or no stop at all, not an earlier run's ceiling that this run raised.
+  const standing = decideStop(stopInput());
+  let record = await writeRecord(standing.stopped ? standing.stop : null);
 
   for (const batch of batchesOf(plan.pairs, BATCH_PAIRS)) {
     // The ceilings are asked before the batch as well as after it, so a series

@@ -307,7 +307,8 @@ export const decideStop = (input: StopInput): StopDecision => {
 };
 
 /**
- * Whether the ceilings are already passed, asked *before* a batch is played.
+ * Whether the ceilings are already passed, asked *before* a batch is played, and
+ * null when they are not or when the series is already at its pair limit.
  *
  * Only the ceilings are asked here. The pair limit and the interval ask about what
  * has been played, so before a batch they can only repeat what the boundary after
@@ -316,9 +317,16 @@ export const decideStop = (input: StopInput): StopDecision => {
  * what has been spent, and a series resumed a week later has spent all of that
  * already — a batch is around 1.6 hours and 23M tokens (`docs/pi-harness-notes.md`
  * §7), so learning that only after playing one costs the most it can.
+ *
+ * The pair limit still outranks the ceilings, exactly as it does at a boundary.
+ * A series that has already played its `--max-pairs` ran the length it was asked
+ * for, so a rerun given a ceiling those matches happen to pass must not relabel a
+ * complete sample as an early stop: that returns null, the loop walks its batches
+ * and counts the logs it finds, and `decideStop` writes `max_pairs`.
  */
 export const ceilingsPassed = (input: StopInput): StopRecord | null => {
-  const { pairsPlayed, matches, totals } = input;
+  const { pairsPlayed, maxPairs, matches, totals } = input;
+  if (pairsPlayed >= maxPairs) return null;
   const test = pairsPlayed >= MIN_TEST_PAIRS ? intervalTestOf(matches) : null;
   return ceilingFired(input.ceilings ?? {}, totals, test);
 };
