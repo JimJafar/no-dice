@@ -59,8 +59,12 @@ export function hexCentre(q: number, r: number): { x: number; y: number } {
   return { x: COLUMN_STEP * (q + r / 2), y: ROW_STEP * r };
 }
 
-/** The board a frame shows: `start.cells` at turn 0, `turns[n].after.cells` at turn `n`. */
-function cellsAt(log: MatchLog, turn: number): Cells {
+/**
+ * The board a frame shows: `start.cells` at turn 0, `turns[n].after.cells` at
+ * turn `n`. Fog is computed over the same board the frame draws, so this is the
+ * one place that decides which board a turn means.
+ */
+export function cellsAt(log: MatchLog, turn: number): Cells {
   if (turn === 0) return log.start.cells;
   const record = log.turns.find((t) => t.n === turn);
   if (record === undefined) throw new Error(`the log holds no turn ${turn}`);
