@@ -15,7 +15,9 @@ This was verified on this machine with Pi 1.0.2: with that file in `PI_CODING_AG
 `PI_OFFLINE=1`, `pi --model stub/stub-1 --print "hi"` answers from the local stub. A tool
 call is a delta carrying `tool_calls: [{ index: 0, id, type: "function", function: { name,
 arguments } }]` with `finish_reason: "tool_calls"`; report `usage` with
-`prompt_tokens_details.cached_tokens` so cache reads are visible to the harness.
+`prompt_tokens_details.cached_tokens` so cache reads are visible to the harness. The same
+`models.json` shape is how a seat reaches Jim's real provider in task `pi-measure-match`, so get
+it right here.
 
 The stub takes a script — a list of replies chosen per request — and records every request
 body it received, so a test can assert what the model was actually offered (the tool names in

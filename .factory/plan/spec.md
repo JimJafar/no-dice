@@ -46,7 +46,8 @@ Salient-specific code stays inside `games/salient`; no general game framework in
   is a gate: it pins the numbers the new engine must reproduce.
 - The installed `pi` is **0.87.1, which has no MCP support**. `@earendil-works/pi-coding-agent`
   `1.0.2` is on the npm registry and was checked in this workspace, so milestone 03 pins it as
-  a workspace devDependency and spawns `node <pkg>/dist/cli.js`, never `pi` from `PATH`. What
+  a dependency of `packages/harness` and spawns `node <pkg>/dist/cli.js`, never `pi` from
+  `PATH`. What
   1.0.2 confirmed: `pi mcp list --json` reads `mcp.json` from a relocated
   `PI_CODING_AGENT_DIR` and substitutes `${SALIENT_TOKEN}` from the child's environment; with
   `exposure: "direct"`, `--no-builtin-tools` and brief §6.3's `settings.json`, the tool list in
@@ -54,6 +55,11 @@ Salient-specific code stays inside `games/salient`; no general game framework in
   the package root and keeps stdin open (closing it shuts Pi down); and a `models.json`
   provider can point at a local OpenAI-compatible endpoint, so the harness is testable with no
   API key. Pi 1.0.2 emits `compaction_start` and `compaction_end` in the RPC event stream.
+- The model milestone 03 measures against is Jim's **Marvin** server,
+  `https://marvin.akita-betelgeuse.ts.net:8033/v1`, model `subagent`, **no API key** — an
+  OpenAI-compatible llama-swap endpoint reachable from this box, listed as loaded, and verified
+  to answer a tool call with `finish_reason: "tool_calls"`. It reports no context length, so the
+  `contextWindow` in the seat's `models.json` is a decision rather than a lookup.
 - Golden logs use an older, simpler shape (`orders` as `[from, to, troops]`, terrain under
   `t`); the shipped log format is `salient-log/1` in brief §7.
 - The engine is built and keys hexes `"q,r"` (`generateMap`, `resolveTurn`, `validateOrders`,
@@ -74,8 +80,8 @@ any general-purpose game framework.
 
 ## Open dependencies on Jim (brief §11)
 
-Exact model IDs and providers, provider API keys as environment variables, a cost ceiling
-for the first series, the per-turn output-token budget (after milestone 03 measures real
-turns), and the compaction decision. Inside milestone 03 they block only its last task, the
-one real model run; every other task there plays a scripted stub model and needs no
-credential. They block milestone 06, and not 01, 02, 04 or 05.
+The model and provider for milestone 03's measured match are settled: Marvin's `subagent`, no
+key. Still open from brief §11: the exact model IDs and providers for the milestone 06 series,
+a cost ceiling for that series, the per-turn output-token budget (milestone 03 measures real
+turns first, and on Marvin the money cost is zero, so the useful number is tokens per turn), and
+the compaction decision. None of it blocks 01–05.

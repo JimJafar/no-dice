@@ -11,4 +11,6 @@ and context growth per match is measured and reported. This is the riskiest mile
 installed `pi` is 0.87.1 with no MCP support, so the first task installs and pins a 1.0.x
 and re-checks the flags. Everything in it except the last task plays a scripted stub model
 over a local endpoint, so the lock-down, the RPC loop and the pass/void rules are proven in
-the gate with no credentials; only the measured real match needs Jim's model IDs and API keys.
+the gate with no credentials; only the last task talks to a real model, and that is Jim's
+Marvin server (`https://marvin.akita-betelgeuse.ts.net:8033/v1`, model `subagent`, no API key),
+which needs no secret, only a `models.json` entry.
