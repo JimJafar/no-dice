@@ -34,6 +34,22 @@
  * run, the 99% interval if the interval test had been reached at that boundary
  * (and it is what decided the run when the result came out clear), the cost and
  * token totals there, and whether the series stopped short of `--max-pairs`.
+ *
+ * `--concurrency <n>` is brief §6.5's "run several matches at once, limited by
+ * provider rate limits", and it bounds **pairs**, not matches: the pool keeps at
+ * most `n` pairs in flight, and the two matches of a pair are played together,
+ * since they are the same seed with the seats swapped and share nothing but the
+ * seed. So `n` pairs is up to `2n` matches and `4n` Pi seats, which is why the
+ * default is 1 — every seat is a child process with a home and an MCP connection
+ * of its own, and no provider's rate limit has been measured yet
+ * (`docs/pi-harness-notes.md` §7 measured one match at 19 minutes and 4.59M
+ * tokens, which makes a 150-match series about 48 hours end to end at 1). The
+ * pool is emptied at every batch boundary, so a pair is never split across one
+ * and the stopping rules are asked at exactly the same points however the batch
+ * was scheduled. The record is written once a batch has all of its matches in, so
+ * a stop in the middle of one still leaves a complete record, and the pairs it
+ * lists are in the plan's order rather than the order the pool happened to
+ * finish them in.
  */
 import { readFile } from "node:fs/promises";
 
@@ -47,7 +63,7 @@ import type { SeatArg } from "./args.ts";
 import { runMatch, seatSpec } from "./match.ts";
 import type { MatchOutcome, RunMatchOptions, SeatSpec } from "./match.ts";
 import { planSeries, seriesRecordPath, writeSeriesRecord } from "./series-plan.ts";
-import type { PlannedMatch } from "./series-plan.ts";
+import type { PlannedMatch, PlannedPair } from "./series-plan.ts";
 import {
   BATCH_PAIRS,
   ceilingsPassed,
@@ -67,6 +83,26 @@ import type { Ceilings, SeriesTokens, StopInput, StopRecord } from "./series-sto
  */
 export type PlayMatch = (options: RunMatchOptions) => Promise<MatchOutcome>;
 
+/**
+ * How many pairs a series plays at once when nothing says otherwise. One, because
+ * each Pi seat is a child process with its own home and its own MCP connection
+ * and the provider's rate limits are unknown until milestone 06 runs a real
+ * series: the flag exists so the operator can raise it, not so the default can
+ * overload Marvin.
+ */
+export const DEFAULT_CONCURRENCY = 1;
+
+/**
+ * Check `--concurrency` the way `planSeries` checks `--max-pairs`. Anything below
+ * 1 would play nothing, and a fraction would quietly mean a pool of a size no
+ * one asked for.
+ */
+export const checkConcurrency = (concurrency: number): void => {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(`--concurrency takes a whole number of 1 or more, not ${String(concurrency)}`);
+  }
+};
+
 /** What `runSeries` takes: the pairing, the limits, and how a match is played. */
 export interface RunSeriesOptions {
   /** The series directory: `series/<name>`, or wherever `--dir` pointed it. */
@@ -83,6 +119,12 @@ export interface RunSeriesOptions {
   maxTokens?: number;
   /** What the seed list is drawn from, `--seed-base`. */
   seedBase?: number;
+  /**
+   * Brief §6.5's concurrency: how many **pairs** are in flight at once, default
+   * 1. A pair's two matches always run together, so this is `2n` matches and up
+   * to `4n` Pi seats at `n`.
+   */
+  concurrency?: number;
   /** How a match is played. Defaults to the real `runMatch`. */
   playMatch?: PlayMatch;
 }
@@ -298,6 +340,45 @@ const batchesOf = <T>(items: readonly T[], size: number): T[][] => {
 };
 
 /**
+ * Run `items` through at most `limit` workers at a time, and hand back their
+ * results in the order the items came in.
+ *
+ * This is the whole of `--concurrency`, and the unit it schedules is a pair: a
+ * pair is never split across a batch boundary, and the pool is empty by the time
+ * a batch is over, which is where the stopping rules are asked. A worker stops
+ * taking work as soon as one has thrown, but every worker is still awaited before
+ * the error is rethrown — a match left running unawaited would keep a seat
+ * writing a log after the run had reported a failure, and the record would say
+ * nothing about it. (A match that fails is not what throws here: `recordOf`
+ * catches that. What can throw past it is a log that cannot be read back.)
+ */
+const mapPool = async <T, R>(
+  items: readonly T[],
+  limit: number,
+  work: (item: T) => Promise<R>,
+): Promise<R[]> => {
+  const results: R[] = new Array(items.length);
+  /** The first worker's failure, kept in a box so the workers can leave one. */
+  const failed: { error: unknown }[] = [];
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (failed.length > 0) return;
+      const at = next++;
+      if (at >= items.length) return;
+      try {
+        results[at] = await work(items[at]);
+      } catch (error) {
+        if (failed.length === 0) failed.push({ error });
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()));
+  if (failed.length > 0) throw failed[0].error;
+  return results;
+};
+
+/**
  * Play a series: plan it, play what the plan says is missing, and record every
  * pair after every batch of 5.
  *
@@ -309,11 +390,13 @@ const batchesOf = <T>(items: readonly T[], size: number): T[][] => {
  */
 export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
   const playMatch = options.playMatch ?? runMatch;
+  const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
   const ceilings: Ceilings = {
     ...(options.maxCostUsd === undefined ? {} : { maxCostUsd: options.maxCostUsd }),
     ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
   };
   checkCeilings(ceilings);
+  checkConcurrency(concurrency);
   const plan = await planSeries({
     dir: options.dir,
     a: options.a,
@@ -362,6 +445,34 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
     }
   };
 
+  /**
+   * One pair: its two matches together, and its record entry once both are in.
+   *
+   * The two matches of a pair are the same seed with the seats swapped, so they
+   * share nothing but the seed and are played together — which is what makes a
+   * pair, and not a match, the unit `--concurrency` bounds. A match that throws
+   * is caught by `recordOf`, so one failing match never takes its partner, or its
+   * batch, down with it.
+   */
+  const pairRecordOf = async (pair: PlannedPair): Promise<SeriesPairRecord> => ({
+    seed: pair.seed,
+    matches: await Promise.all([recordOf(pair.matches[0]), recordOf(pair.matches[1])]),
+  });
+
+  /**
+   * The pairs as the record holds them: in the order the plan named, whatever
+   * order the pool finished them in. A `series.json` that read differently
+   * depending on how a batch happened to be scheduled would make a resumed series
+   * look like a different one.
+   */
+  const plannedAt = new Map(plan.pairs.map((pair, at) => [pair.seed, at]));
+  const pairsOf = (): SeriesPairRecord[] =>
+    [...bySeed.values()].sort(
+      (left, right) =>
+        (plannedAt.get(left.seed) ?? Number.MAX_SAFE_INTEGER) -
+        (plannedAt.get(right.seed) ?? Number.MAX_SAFE_INTEGER),
+    );
+
   const recordPath = seriesRecordPath(plan.dir);
 
   /**
@@ -370,7 +481,7 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
    * a series resumed a week later has spent all of that already.
    */
   const stopInput = (): StopInput => {
-    const pairs = [...bySeed.values()];
+    const pairs = pairsOf();
     const playedMatches = pairs
       .flatMap((pair) => pair.matches)
       .filter(
@@ -403,7 +514,7 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
    * null while it has not reached one that stopped.
    */
   const writeRecord = async (stop: StopRecord | null): Promise<SeriesRecord> => {
-    const pairs = [...bySeed.values()];
+    const pairs = pairsOf();
     const written = {
       ...existing,
       pairing: { a: options.a, b: options.b },
@@ -442,12 +553,13 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
       record = await writeRecord(spent);
       break;
     }
-    for (const pair of batch) {
-      bySeed.set(pair.seed, {
-        seed: pair.seed,
-        matches: [await recordOf(pair.matches[0]), await recordOf(pair.matches[1])],
-      });
-    }
+    // The batch goes through the pool, and the pool is empty again by the time it
+    // is awaited: the record is written once every match of the batch is in, and
+    // the rules are asked at a boundary that is the same one however the batch was
+    // scheduled.
+    await mapPool(batch, concurrency, async (pair) => {
+      bySeed.set(pair.seed, await pairRecordOf(pair));
+    });
     // Brief §6.5's rules are asked at a batch boundary, never inside a pair, so a
     // series always stops with every pair it started complete on disk.
     const decision = decideStop(stopInput());
