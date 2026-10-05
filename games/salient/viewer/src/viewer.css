@@ -21,6 +21,20 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 .toggle button{padding:9px 16px;border:0;border-radius:6px;background:#232a33;color:#c9d1dc;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;cursor:pointer}
 .toggle button[aria-pressed="true"]{background:#eef1f5;color:#12161c}
 
+/* The replay controls: a step back, a step forward, autoplay, and the slider
+   that goes straight to a turn. The mock-ups draw no controls — a mock-up is one
+   frozen frame — so these are the palette's own, in the view toggle's shape. The
+   slider is the log's own length: `render-turns.ts` sets its maximum to the last
+   turn the log holds, which for a knockout is short of `config.turns`. */
+.turns{display:flex;align-items:center;gap:12px;align-self:center}
+/* `hidden` until a log arrives, which an author `display` would otherwise win. */
+.turns[hidden]{display:none}
+.turns button{padding:9px 16px;border:0;border-radius:6px;background:#232a33;color:#c9d1dc;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;cursor:pointer}
+.turns button[aria-pressed="true"]{background:#eef1f5;color:#12161c}
+/* A step off either end of the log has nowhere to land, so it is not offered. */
+.turns button:disabled{background:#1a2028;color:#5c6673;cursor:default}
+.turns .scrub{width:560px;accent-color:var(--team-a,#2c6fd1)}
+
 /* The header: each seat's name and score, the turn counter, the score bar and the
    two lines under it. Copied out of salient/docs/mockups/spectator-view.html,
    which styles this row inline — the one style the mock-up sets per frame, the
@@ -106,7 +120,8 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
    — the background of a hex the seat cannot see. `.ac` is the mock-ups' `.bc`
    cut-off hatch in A's colour — their frame only ever shows B cut off, so it
    needed a twin rather than a new idea. `.hl` and `.ar`, the fight outline and
-   the order arrow, come with the task that animates a turn. */
+   the order arrow, are drawn by `render-board.ts` over the hexes of the turn
+   being animated: the outline behind them, the arrows in front. */
 .board{position:relative;flex:none;align-self:center}
 .hx{position:absolute;width:60px;height:69px;box-sizing:border-box;padding-top:8px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);display:flex;align-items:center;justify-content:center;font:600 22px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif}
 .hx i{position:absolute;top:8px;left:0;right:0;text-align:center;font:500 11px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;font-style:normal;letter-spacing:.03em}

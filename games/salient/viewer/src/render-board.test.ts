@@ -9,16 +9,20 @@
  * spectator-view.html`), including the positions its markup gives each hex at
  * turn 11, which is the frame this viewer has to reproduce. The fog frames are
  * the other mock-up's (`salient/docs/mockups/fog-of-war-view.html`), and the
- * rule behind them is `fog.test.ts`.
+ * rule behind them is `fog.test.ts`. The order arrows and the fight outline are
+ * the mock-up's too, and what they mean at a given step of a turn is
+ * `turns.test.ts`.
  */
 import { describe, expect, it } from "vitest";
 
 import { matchLogSchema } from "@no-dice/log";
 import type { Seat } from "@no-dice/log";
 
-import { boardView } from "./board.ts";
+import { boardView, HEX_HEIGHT, HEX_WIDTH } from "./board.ts";
 import { fogView } from "./fog.ts";
 import { renderBoard } from "./render-board.ts";
+import { ARROW_HEIGHT, ARROW_WIDTH, frameView } from "./turns.ts";
+import type { FramePhase } from "./turns.ts";
 import golden01 from "../fixtures/golden-01-time-win.json";
 
 const log = matchLogSchema.parse(golden01);
@@ -300,5 +304,140 @@ describe("renderBoard under fog", () => {
         }
       }
     }
+  });
+});
+
+describe("the turn's orders and fights over the board", () => {
+  /** The board at one step of one turn, with whatever that step puts over it. */
+  function turnFrame(turn: number, phase: FramePhase = "settled"): HTMLElement {
+    const board = document.createElement("div");
+    renderBoard(board, boardView(log, turn), null, frameView(log, turn, phase));
+    return board;
+  }
+
+  /** The drawn arrows, in the order the frame drew them. */
+  function arrows(board: HTMLElement): HTMLElement[] {
+    return [...board.querySelectorAll<HTMLElement>(".ar")];
+  }
+
+  /** The centre of a drawn element, from the box the board placed it in. */
+  function centre(el: HTMLElement, width: number, height: number): { x: number; y: number } {
+    return { x: parseFloat(el.style.left) + width / 2, y: parseFloat(el.style.top) + height / 2 };
+  }
+
+  it("draws the twelve orders of turn 11 as arrows, A's then B's, in the log's order", () => {
+    const made = arrows(turnFrame(11));
+    const turn = log.turns.find((t) => t.n === 11)!;
+    const submitted = (["A", "B"] as const).flatMap((seat) =>
+      turn.players[seat].orders.map((order) => `${seat} ${order.from}->${order.to} ${order.troops}`),
+    );
+
+    expect(made).toHaveLength(12);
+    expect(
+      made.map((arrow) => `${arrow.dataset.seat} ${arrow.dataset.from}->${arrow.dataset.to} ${arrow.dataset.troops}`),
+    ).toEqual(submitted);
+    // The mock-up's own tooltip: the seat, how many, and where they went.
+    expect(made[0]!.title).toBe("A: 5 from F5 to F6");
+  });
+
+  it("stands every arrow on the edge between the hexes it names, pointing along it", () => {
+    const board = turnFrame(11);
+    const drawn = hexes(board);
+    // The rotation the mock-up's markup gives each of turn 11's twelve arrows.
+    const mockup: Record<string, number> = {
+      "F5->F6": 60,
+      "F5->G4": -60,
+      "D6->D7": 60,
+      "C6->D6": 0,
+      "C7->D7": 0,
+      "B6->C6": 0,
+      "H6->H5": -120,
+      "K1->K2": 60,
+      "I6->H6": 180,
+      "I5->H5": 180,
+      "J6->I6": 180,
+      "J4->J3": -120,
+    };
+
+    for (const arrow of arrows(board)) {
+      const edge = `${arrow.dataset.from}->${arrow.dataset.to}`;
+      const from = centre(drawn.get(arrow.dataset.from!)!, HEX_WIDTH, HEX_HEIGHT);
+      const to = centre(drawn.get(arrow.dataset.to!)!, HEX_WIDTH, HEX_HEIGHT);
+      const at = centre(arrow, ARROW_WIDTH, ARROW_HEIGHT);
+      // The board places everything in whole pixels, so an arrow can sit half a
+      // pixel off the exact midpoint of two rounded hex positions.
+      expect(Math.abs(at.x - (from.x + to.x) / 2), `${edge} across`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(at.y - (from.y + to.y) / 2), `${edge} down`).toBeLessThanOrEqual(0.5);
+      expect(arrow.style.transform, edge).toBe(`rotate(${mockup[edge]}deg)`);
+    }
+  });
+
+  it("puts an arrow along a row where the mock-up's markup puts it", () => {
+    // `left:182px;top:309px;transform:rotate(0deg)` for A's order from C6 to D6.
+    const across = arrows(turnFrame(11)).find((arrow) => arrow.dataset.from === "C6")!;
+    expect(parseFloat(across.style.left)).toBeCloseTo(182, 0);
+    expect(parseFloat(across.style.top)).toBeCloseTo(309, 0);
+    expect(across.style.transform).toBe("rotate(0deg)");
+  });
+
+  it("outlines the hex the fight was on, behind the hex, where the mock-up puts it", () => {
+    const board = turnFrame(11);
+    const outlines = [...board.querySelectorAll<HTMLElement>(".hl")];
+
+    // Turn 11's only fight is the battle at F6; its captures fought nobody.
+    expect(outlines.map((outline) => outline.dataset.hex)).toEqual(["F6"]);
+    // The mock-up's `.hl` for F6: `left:318px;top:274px`.
+    expect(parseFloat(outlines[0]!.style.left)).toBeCloseTo(318, 0);
+    expect(parseFloat(outlines[0]!.style.top)).toBeCloseTo(274, 0);
+
+    // Behind the hex, as the mock-up's markup has it, and the arrows in front.
+    const order = [...board.children];
+    expect(order.indexOf(outlines[0]!)).toBeLessThan(order.indexOf(hexes(board).get("F6")!));
+    expect(order.indexOf(outlines[0]!)).toBeLessThan(order.indexOf(arrows(board)[0]!));
+  });
+
+  it("shows the arrows before the outline, and the settled board last", () => {
+    // The step before the orders: the previous turn's board, nothing over it.
+    expect([...turnFrame(11, "before").querySelectorAll(".ar, .hl")]).toEqual([]);
+
+    // The orders, and no fight yet.
+    const ordered = turnFrame(11, "orders");
+    expect(arrows(ordered)).toHaveLength(12);
+    expect(ordered.querySelectorAll(".hl")).toHaveLength(0);
+
+    // The fight, with the orders still up.
+    const fought = turnFrame(11, "fight");
+    expect(arrows(fought)).toHaveLength(12);
+    expect([...fought.querySelectorAll<HTMLElement>(".hl")].map((el) => el.dataset.hex)).toEqual(["F6"]);
+
+    // And the settled frame is the mock-up's: the logged board, the twelve
+    // arrows, and F6 outlined.
+    const settled = turnFrame(11, "settled");
+    expect(arrows(settled)).toHaveLength(12);
+    expect(settled.querySelectorAll(".hl")).toHaveLength(1);
+    expect(hexes(settled).get("F6")!.classList.contains("a"), "A holds F6").toBe(true);
+  });
+
+  it("draws nothing over the start position, and nothing without a turn frame", () => {
+    expect([...turnFrame(0).querySelectorAll(".ar, .hl")]).toEqual([]);
+    // A board drawn without an overlay is the plain board of the frame before.
+    expect([...frame(11).querySelectorAll(".ar, .hl")]).toEqual([]);
+  });
+
+  it("replaces the arrows and outlines of the frame before, rather than adding to them", () => {
+    const board = turnFrame(11);
+    renderBoard(board, boardView(log, 12), null, frameView(log, 12));
+    expect(arrows(board)).toHaveLength(
+      log.turns.find((t) => t.n === 12)!.players.A.orders.length +
+        log.turns.find((t) => t.n === 12)!.players.B.orders.length,
+    );
+    expect(board.querySelectorAll(".hl")).toHaveLength(
+      new Set(
+        log.turns.find((t) => t.n === 12)!.events.flatMap((event) =>
+          event.type === "battle" ? [event.at] : event.type === "clash" ? [...event.between] : [],
+        ),
+      ).size,
+    );
+    expect(board.querySelectorAll(".hx")).toHaveLength(91);
   });
 });

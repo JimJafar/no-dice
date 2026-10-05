@@ -26,9 +26,28 @@
  *
  * The frame is replaced whole on every render: a stepped or scrubbed frame
  * shows exactly the board the log gives, with nothing left over from the last.
+ *
+ * A frame mid-replay also carries a `TurnFrame` from `turns.ts`: that turn's
+ * orders as arrows and the hexes its fights were on as outlines. They are drawn
+ * in the mock-up's order — outline first, so it sits behind the hex, then the
+ * hexes, then the arrows on top of everything — and they are the frame's only
+ * moving parts: which of them a step of the turn shows is `turns.ts`'s decision,
+ * and this file just draws what it is handed.
  */
 import { HEX_HEIGHT, HEX_WIDTH, type BoardView, type HexView } from "./board.ts";
+import {
+  ARROW_HEIGHT,
+  ARROW_WIDTH,
+  OUTLINE_HEIGHT,
+  OUTLINE_WIDTH,
+  type ArrowView,
+  type OutlineView,
+  type TurnFrame,
+} from "./turns.ts";
 import type { FogView } from "./fog.ts";
+
+/** The box the board draws into, which every element inside it is placed from. */
+type Box = { width: number; height: number };
 
 /** What a hidden Base or Node stands in for its number: the mock-ups' `?`. */
 const UNKNOWN = "?";
@@ -117,18 +136,66 @@ function hexElement(hex: HexView, width: number, height: number, hidden: boolean
   return el;
 }
 
+/** Place an element of `width` × `height` on a point of the board, as a hex is. */
+function place(el: HTMLElement, x: number, y: number, width: number, height: number, box: Box): void {
+  el.style.left = `${Math.round(box.width / 2 + x - width / 2)}px`;
+  el.style.top = `${Math.round(box.height / 2 + y - height / 2)}px`;
+}
+
+/**
+ * The mock-ups' white outline behind a hex a fight was fought on this turn. It
+ * is wider than the hex it stands for, which is what makes it read as an outline
+ * rather than a second hex.
+ */
+function outlineElement(outline: OutlineView, box: Box): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "hl";
+  el.dataset.hex = outline.label;
+  place(el, outline.x, outline.y, OUTLINE_WIDTH, OUTLINE_HEIGHT, box);
+  return el;
+}
+
+/**
+ * One submitted order as an arrow: the mock-ups' `.ar`, standing on the edge the
+ * troops crossed and turned to point where they went. The two hexes and the seat
+ * go on the element as well as in the tooltip, because they are how a test finds
+ * the arrow again.
+ */
+function arrowElement(arrow: ArrowView, box: Box): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "ar";
+  el.dataset.seat = arrow.seat;
+  el.dataset.from = arrow.from;
+  el.dataset.to = arrow.to;
+  el.dataset.troops = String(arrow.troops);
+  el.title = `${arrow.seat}: ${arrow.troops} from ${arrow.from} to ${arrow.to}`;
+  place(el, arrow.x, arrow.y, ARROW_WIDTH, ARROW_HEIGHT, box);
+  el.style.transform = `rotate(${arrow.angle}deg)`;
+  return el;
+}
+
 /**
  * Draw `view` into `container`, replacing whatever frame was there before. With
  * a `FogView`, the hexes that seat cannot see are drawn as fog; without one,
- * every hex is drawn as the log says it is.
+ * every hex is drawn as the log says it is. With a `TurnFrame`, that turn's
+ * arrows and fight outlines are drawn over the board, in the mock-up's order:
+ * outlines behind the hexes, arrows in front of them.
  */
-export function renderBoard(container: HTMLElement, view: BoardView, fog: FogView | null = null): void {
+export function renderBoard(
+  container: HTMLElement,
+  view: BoardView,
+  fog: FogView | null = null,
+  overlay: TurnFrame | null = null,
+): void {
   const width = Math.round(view.width);
   const height = Math.round(view.height);
+  const box: Box = { width, height };
   container.classList.add("board");
   container.style.width = `${width}px`;
   container.style.height = `${height}px`;
   container.replaceChildren(
+    ...(overlay === null ? [] : overlay.outlines.map((outline) => outlineElement(outline, box))),
     ...view.hexes.map((hex) => hexElement(hex, width, height, fog !== null && fog.hidden.has(hex.label))),
+    ...(overlay === null ? [] : overlay.arrows.map((arrow) => arrowElement(arrow, box))),
   );
 }
