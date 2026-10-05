@@ -18,6 +18,16 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@24.19.1)(vite@8.3.2(@types/node@24.19.1))
 
+  games/salient/bots:
+    dependencies:
+      '@no-dice/salient-engine':
+        specifier: workspace:*
+        version: link:../engine
+    devDependencies:
+      '@no-dice/salient-server':
+        specifier: workspace:*
+        version: link:../server
+
   games/salient/engine: {}
 
   games/salient/server:

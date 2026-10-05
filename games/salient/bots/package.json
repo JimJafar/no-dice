@@ -1,0 +1,18 @@
+{
+  "name": "@no-dice/salient-bots",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Salient baseline bots: the Random and Greedy decisions over what the two read-only tools answer.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@no-dice/salient-engine": "workspace:*"
+  },
+  "devDependencies": {
+    "@no-dice/salient-server": "workspace:*"
+  }
+}
