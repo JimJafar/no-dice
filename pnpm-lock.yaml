@@ -20,6 +20,16 @@ importers:
 
   games/salient/engine: {}
 
+  packages/runner:
+    dependencies:
+      zod:
+        specifier: ^4.1.11
+        version: 4.6.5
+    devDependencies:
+      '@no-dice/salient-engine':
+        specifier: workspace:*
+        version: link:../../games/salient/engine
+
 packages:
 
   '@jridgewell/sourcemap-codec@1.6.0':
@@ -430,6 +440,9 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
 snapshots:
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
@@ -717,3 +730,5 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  zod@4.6.5: {}

@@ -1,0 +1,16 @@
+{
+  "name": "@no-dice/runner",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Match and series runner, and the salient-log/1 format the runner writes, the stats package reads and the viewer replays.",
+  "exports": {
+    "./log": "./src/log.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@no-dice/salient-engine": "workspace:*"
+  }
+}
