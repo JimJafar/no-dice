@@ -28,7 +28,7 @@ export {
   type TurnPlayerRecords,
 } from "./session";
 export { MatchServer, type CreatedMatch, type TokenOwner } from "./server";
-export { startServer, type RunningServer, type StartServerOptions } from "./http";
+export { startServer, playerToolServer, type RunningServer, type StartServerOptions } from "./http";
 export {
   NOTES_CHAR_LIMIT,
   SIMULATE_LIMIT,

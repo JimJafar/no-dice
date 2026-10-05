@@ -1,12 +1,13 @@
 {
   "name": "@no-dice/salient-engine",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Salient rules engine: pure, deterministic, no I/O.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
   }
 }

@@ -135,6 +135,29 @@ const reply = (res: ServerResponse, status: number, body: Record<string, string>
 };
 
 /**
+ * The seven tools of the matches `matches` is playing, bound to the seat `token`
+ * belongs to. The token, not the caller, is what fixes the seat: no tool takes a
+ * seat argument, and a token this server never issued reaches nothing.
+ *
+ * `startServer` builds one of these per HTTP session. A caller that wants the
+ * same tools with no socket between them — a test that runs a match over
+ * `InMemoryTransport.createLinkedPair()` — connects one of these to the other
+ * end of a linked pair instead, which is why the tool surface lives here rather
+ * than inside the listener.
+ */
+export function playerToolServer(matches: MatchServer, token: string): McpServer {
+  const mcp = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  for (const name of TOOL_NAMES) {
+    mcp.registerTool(
+      name,
+      { description: TOOL_DESCRIPTIONS[name], inputSchema: TOOL_INPUTS[name] },
+      async (args) => toolResult(matches.callAs(token, name, args)),
+    );
+  }
+  return mcp;
+}
+
+/**
  * Serve the seven tools of every match `options.matches` is playing, on a free
  * port of the loopback address, and hand back the URL and a way to shut it down.
  */
@@ -144,25 +167,9 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   /** Every MCP session open now, by the id its client sends back on each request. */
   const sessions = new Map<string, McpSession>();
 
-  /**
-   * A server of its own for one session, with its seven tools bound to the token
-   * that opened it. The token, not the caller, is what fixes the seat.
-   */
-  const buildServer = (token: string): McpServer => {
-    const mcp = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-    for (const name of TOOL_NAMES) {
-      mcp.registerTool(
-        name,
-        { description: TOOL_DESCRIPTIONS[name], inputSchema: TOOL_INPUTS[name] },
-        async (args) => toolResult(matches.callAs(token, name, args)),
-      );
-    }
-    return mcp;
-  };
-
   /** Open the session a request with no session id asks for. */
   const openSession = async (token: string, owner: TokenOwner): Promise<McpSession> => {
-    const mcp = buildServer(token);
+    const mcp = playerToolServer(matches, token);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
