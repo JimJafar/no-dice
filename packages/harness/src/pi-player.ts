@@ -41,7 +41,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { RpcClient } from "@earendil-works/pi-coding-agent";
-import type { SessionStats } from "@earendil-works/pi-coding-agent";
+import type { JsonAgentSessionEvent, SessionStats } from "@earendil-works/pi-coding-agent";
 
 import { piCli } from "./pi-cli.ts";
 import { checkPiAuth } from "./pi-auth.ts";
@@ -140,6 +140,16 @@ export interface PiPlayerOptions {
    * so there is no default: `null`, and a turn is bounded by its time alone.
    */
   outputTokenBudget?: number | null;
+  /**
+   * A tap on the seat's RPC event stream, called with every event Pi puts on
+   * stdout while a turn is being played, before this class acts on it.
+   *
+   * Nothing in a match reads it. Brief §6.3's first-run checklist asks what the
+   * stream itself carries — whether `agent_settled` arrives exactly once per
+   * prompt, which event announces a compaction and what it says — and those are
+   * questions about the wire, which the turn record cannot answer.
+   */
+  onEvent?: (event: JsonAgentSessionEvent) => void;
 }
 
 /** A submission tool's answer, as the harness reads it. */
@@ -399,6 +409,7 @@ export class PiPlayer implements Player {
     this.seatGone = gone;
 
     const unsubscribe = client.onEvent((event) => {
+      this.options.onEvent?.(event);
       switch (event.type) {
         case "tool_execution_start": {
           const tool = stripPrefix(event.toolName);
