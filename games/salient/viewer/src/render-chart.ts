@@ -23,8 +23,15 @@
  *
  * The frame is replaced whole on every render, so a stepped chart shows exactly
  * the turns the frame has reached with nothing left from the last.
+ *
+ * A turn that was marked — a submission refused, a pass, a context compacted —
+ * gets a flag in its slot for each seat the log marked, in that seat's colour and
+ * with the reason as its title, which is brief §6.8's mark on the turn strip. The
+ * facts come from `marks.ts`, the same module the panels mark from, so a turn is
+ * never flagged on the strip without the panel saying why.
  */
 import { SLOT_WIDTH, type ChartView, type LeadSlot } from "./chart.ts";
+import { markLines, markText, type SeatMarks } from "./marks.ts";
 
 /** The key down the left of the axis: what the chart is, and which side is which. */
 function legend(seat: "A" | "B", text: string): HTMLElement {
@@ -51,6 +58,25 @@ function signed(margin: number): string {
   return margin > 0 ? `+${margin}` : String(margin);
 }
 
+/** The classes a flag carries: its seat, and each mark the turn has for it. */
+function flagClasses(mark: SeatMarks): string {
+  return ["flag", `flag-${mark.seat.toLowerCase()}`, ...markLines(mark).map((line) => line.kind)].join(" ");
+}
+
+/**
+ * One seat's mark on one turn: a flag in the slot, named by its classes and
+ * spelled out in its title, so the reason is there without the strip needing a
+ * second legend.
+ */
+function flagElement(mark: SeatMarks): HTMLElement {
+  const el = document.createElement("i");
+  el.className = flagClasses(mark);
+  el.dataset.seat = mark.seat;
+  el.title = `${mark.seat}: ${markText(mark).join("; ")}`;
+  el.textContent = "!";
+  return el;
+}
+
 /** One turn of the axis: its bar if it had one, and the mark if the frame is on it. */
 function slotElement(slot: LeadSlot): HTMLElement {
   const el = document.createElement("div");
@@ -58,6 +84,7 @@ function slotElement(slot: LeadSlot): HTMLElement {
   // The turn goes on the element as well as in the title, so a later task — a
   // scrubber, a hover — can find a turn of the chart again without recounting.
   el.dataset.turn = String(slot.turn);
+  el.append(...slot.marks.map(flagElement));
 
   if (slot.leader !== null) {
     const bar = document.createElement("div");

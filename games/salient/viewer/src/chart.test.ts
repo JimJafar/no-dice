@@ -154,3 +154,48 @@ describe("chartView", () => {
     expect(chartView(shorter, TURN_11).slots).toHaveLength(12);
   });
 });
+
+/**
+ * golden-01 with three of its turns edited so that each of brief §6.8's marks
+ * falls on a different turn: turn 3 has A's first submission refused, turn 7 is
+ * B passing, and turn 12 has A's context compacted. The scripted bots the
+ * fixture holds did none of these, so this is the check that the strip reads the
+ * log rather than the kind of player that made it.
+ */
+function markedLog(): MatchLog {
+  const source = structuredClone(golden01) as Record<string, unknown>;
+  const turns = source.turns as { n: number; players: Record<"A" | "B", Record<string, unknown>> }[];
+  const at = (n: number) => turns.find((turn) => turn.n === n)!;
+
+  at(3).players.A.rejected_submission = {
+    orders: [{ from: "B6", to: "B7", troops: 9 }],
+    wasted: [{ order: { from: "B6", to: "B7", troops: 9 }, reason: "not enough troops in source hex" }],
+  };
+  at(7).players.B.passed = "no_submission";
+  at(12).players.A.compacted = true;
+  return matchLogSchema.parse(source);
+}
+
+describe("the marks on the turn strip", () => {
+  it("marks nothing for turns the log marks nowhere", () => {
+    expect(chartView(log, TURN_11).slots.every((s) => s.marks.length === 0)).toBe(true);
+  });
+
+  it("marks each kind of turn on the turn the log says it was", () => {
+    const view = chartView(markedLog(), 25);
+    expect(slot(view, 3).marks.map((mark) => [mark.seat, mark.rejected])).toEqual([
+      ["A", ["not enough troops in source hex"]],
+    ]);
+    expect(slot(view, 7).marks.map((mark) => [mark.seat, mark.passed])).toEqual([["B", "no_submission"]]);
+    expect(slot(view, 12).marks.map((mark) => [mark.seat, mark.compacted])).toEqual([["A", true]]);
+    // And nowhere else.
+    expect(view.slots.filter((s) => s.marks.length > 0).map((s) => s.turn)).toEqual([3, 7, 12]);
+  });
+
+  it("leaves a turn the frame has not reached unmarked, log or no log", () => {
+    // Turns 7 and 12 are in the log, but at frame 5 the strip has not got to
+    // them, and only the turn it stands on is marked.
+    expect(chartView(markedLog(), 2).slots.every((s) => s.marks.length === 0)).toBe(true);
+    expect(chartView(markedLog(), 5).slots.filter((s) => s.marks.length > 0).map((s) => s.turn)).toEqual([3]);
+  });
+});

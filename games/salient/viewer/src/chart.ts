@@ -23,10 +23,18 @@
  * and does so over the whole match rather than per frame, which keeps the bars
  * from resizing under the scrubber.
  *
+ * A slot also carries the marks of its turn — a submission refused, a pass, a
+ * context compacted — which brief §6.8 asks the strip to show as well as the
+ * panel. They come from `marks.ts`, so the strip and the panel mark the same
+ * turns for the same reasons, and a turn the log does not mark is not marked
+ * here either.
+ *
  * What a slot means — which class it gets, what is written over it — is the
  * renderer's decision, and lives in `render-chart.ts`.
  */
 import type { MatchLog, Seat, TurnRecord } from "@no-dice/log";
+
+import { marksOfTurn, type SeatMarks } from "./marks.ts";
 
 /** The mock-up's chart box, and the zero line at its middle. */
 export const CHART_HEIGHT = 112;
@@ -53,6 +61,12 @@ export interface LeadSlot {
   readonly leader: Seat | null;
   /** The frame's own turn, which is drawn marked with its margin over it. */
   readonly marked: boolean;
+  /**
+   * The seats whose turn here was marked, in seat order and empty when neither
+   * was: a refused submission, a pass, or a compaction. A turn the frame has not
+   * reached has no marks to show, played log or not.
+   */
+  readonly marks: readonly SeatMarks[];
   /** The bar's height in pixels: 0 for a level turn or an unplayed one. */
   readonly height: number;
 }
@@ -107,6 +121,9 @@ export function chartView(log: MatchLog, frame: number): ChartView {
       margin,
       leader: margin > 0 ? "A" : margin < 0 ? "B" : null,
       marked: turn === frame,
+      // The marks belong to the turn as played, so a turn the frame has not
+      // reached shows none even when the log already holds it.
+      marks: record === undefined ? [] : marksOfTurn(record),
       // A level turn has no side to be drawn on, and an unplayed turn has no
       // margin at all, so both come back with no bar.
       height: margin !== 0 ? Math.max(MIN_BAR_HEIGHT, Math.round(Math.abs(margin) * scale)) : 0,

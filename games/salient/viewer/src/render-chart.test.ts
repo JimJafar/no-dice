@@ -160,3 +160,80 @@ describe("renderChart", () => {
     expect(turnOf(el.querySelector(".slot.marked") as HTMLElement)).toBe("11");
   });
 });
+
+/**
+ * golden-01 with its turn records edited, since the scripted bots it holds had
+ * nothing to be marked for: turn 3 has A's first submission refused, turn 7 is B
+ * passing, turn 12 has A compacted, and turn 20 has B refused and compacted at
+ * once. The numbers behind the strip are `chart.test.ts`'s; this is what the
+ * strip does with the marks.
+ */
+function markedLog(): unknown {
+  const source = structuredClone(golden01) as Record<string, unknown>;
+  const turns = source.turns as { n: number; players: Record<"A" | "B", Record<string, unknown>> }[];
+  const at = (n: number) => turns.find((turn) => turn.n === n)!;
+
+  at(3).players.A.rejected_submission = {
+    orders: [{ from: "B6", to: "B7", troops: 9 }],
+    wasted: [{ order: { from: "B6", to: "B7", troops: 9 }, reason: "not enough troops in source hex" }],
+  };
+  at(7).players.B.passed = "no_submission";
+  at(12).players.A.compacted = true;
+  at(20).players.B.rejected_submission = {
+    orders: [{ from: "H6", to: "H7", troops: 1 }],
+    wasted: [
+      { order: { from: "H6", to: "H7", troops: 1 }, reason: "hexes are not adjacent" },
+      { order: { from: "H6", to: "H7", troops: 1 }, reason: "destination is blocked" },
+    ],
+  };
+  at(20).players.B.compacted = true;
+  return source;
+}
+
+/** The flags of one slot, left to right. */
+function flagsOf(slot: HTMLElement): HTMLElement[] {
+  return [...slot.querySelectorAll<HTMLElement>(".flag")];
+}
+
+describe("the marks on the turn strip", () => {
+  it("flags no slot of a log that marks nothing", () => {
+    expect(chart(golden01, 25).querySelectorAll(".flag")).toHaveLength(0);
+  });
+
+  it("flags the refused turn, the passed turn and the compacted turn, each in its own slot", () => {
+    const el = chart(markedLog(), 25);
+    const flagged = slots(el)
+      .filter((slot) => flagsOf(slot).length > 0)
+      .map((slot) => [turnOf(slot), flagsOf(slot).map((flag) => flag.className)]);
+    expect(flagged).toEqual([
+      ["3", ["flag flag-a rejected"]],
+      ["7", ["flag flag-b passed"]],
+      ["12", ["flag flag-a compacted"]],
+      ["20", ["flag flag-b rejected compacted"]],
+    ]);
+  });
+
+  it("names each flag with the seat and the reason the log gives", () => {
+    const el = chart(markedLog(), 25);
+    const titles = (turn: string) =>
+      flagsOf(slots(el).find((slot) => turnOf(slot) === String(turn)) as HTMLElement).map((flag) => flag.title);
+    expect(titles("3")).toEqual(["A: first submission refused: not enough troops in source hex"]);
+    expect(titles("7")).toEqual(["B: passed: sent no orders"]);
+    expect(titles("12")).toEqual(["A: context compacted"]);
+    // A turn with two marks says both, on the one flag the seat has there.
+    expect(titles("20")).toEqual([
+      "B: first submission refused: hexes are not adjacent, destination is blocked; context compacted",
+    ]);
+  });
+
+  it("keeps the bar, the mark and the flag of one turn apart", () => {
+    // The frame's own margin is still written over its slot, and a flag does not
+    // stand in for a bar.
+    const el = chart(markedLog(), 12);
+    const marked = slots(el).find((slot) => turnOf(slot) === "12") as HTMLElement;
+    expect(marked.classList.contains("marked")).toBe(true);
+    expect(marked.querySelector(".mark")?.textContent).toBe("+10");
+    expect(barsOf(marked)).toHaveLength(1);
+    expect(flagsOf(marked)).toHaveLength(1);
+  });
+});

@@ -3,10 +3,10 @@
  * owns the frame, the three ways of handing the page a log — the picker, a drop
  * anywhere on the frame, and `?log=<url>` — and the line that says what went
  * wrong when the file is not one. It draws the board through `render-board.ts`,
- * at the last turn the log holds, the lead chart through `render-chart.ts`, and
- * holds the view mode the toggle asks for: the spectator frame by default, a
- * seat's fog on request. The panels and the turn stepper are the tasks after
- * this one.
+ * at the last turn the log holds, the seat panels through `render-panels.ts`,
+ * the lead chart through `render-chart.ts`, and holds the view mode the toggle
+ * asks for: the spectator frame by default, a seat's fog on request. The turn
+ * stepper is the task after this one.
  */
 import { parseLog, pickLogSource, readLogSource } from "./load.ts";
 import type { LogSource } from "./load.ts";
@@ -17,6 +17,8 @@ import { chartView } from "./chart.ts";
 import { renderChart } from "./render-chart.ts";
 import { fogView } from "./fog.ts";
 import { renderBoard } from "./render-board.ts";
+import { panelsView } from "./panels.ts";
+import { renderPanel } from "./render-panels.ts";
 import { DEFAULT_MODE, mountViewToggle } from "./view-mode.ts";
 import type { BoardMode } from "./view-mode.ts";
 import type { MatchLog } from "@no-dice/log";
@@ -32,14 +34,18 @@ const frame = element<HTMLDivElement>("#frame");
 const status = element<HTMLParagraphElement>("#status");
 const fileInput = element<HTMLInputElement>("#log-file");
 const header = element<HTMLDivElement>("#header");
+const stage = element<HTMLDivElement>("#stage");
 const board = element<HTMLDivElement>("#board");
+const panelA = element<HTMLDivElement>("#panel-a");
+const panelB = element<HTMLDivElement>("#panel-b");
 const chart = element<HTMLDivElement>("#chart");
 const toggleBar = element<HTMLDivElement>("#view-toggle");
 
 /**
  * What the page shows: the log it holds, and whose eyes the board is seen
  * through. The mode is the board's only — the header shows what the match
- * scored whichever frame is up.
+ * scored whichever frame is up, and so do the panels, which describe what each
+ * seat did rather than what that seat could see.
  */
 let log: MatchLog | null = null;
 let mode: BoardMode = DEFAULT_MODE;
@@ -52,10 +58,11 @@ function say(message: string, bad = false): void {
 
 /**
  * The frame the page shows: the header, the board and the lead chart at the
- * last turn the log holds, seen through the mode the toggle is on. Fog is a lens
- * over that one board — the same hexes in the same places — so the only thing it
- * changes is what the frame knows about each of them, never what the match
- * scored or how far ahead either seat was.
+ * last turn the log holds, with each seat's panel beside it, seen through the
+ * mode the toggle is on. Fog is a lens over that one board — the same hexes in
+ * the same places — so the only thing it changes is what the frame knows about
+ * each of them, never what the match scored, what each seat did, or how far
+ * ahead either seat was.
  */
 function redraw(): void {
   if (log === null) return;
@@ -64,11 +71,17 @@ function redraw(): void {
   const turn = log.turns.at(-1)?.n ?? 0;
   const fog = mode === "spectator" ? null : fogView(log, turn, mode);
   header.hidden = false;
+  stage.hidden = false;
   board.hidden = false;
+  panelA.hidden = false;
+  panelB.hidden = false;
   chart.hidden = false;
   toggleBar.hidden = false;
   renderHeader(header, headerView(log, turn));
   renderBoard(board, boardView(log, turn), fog);
+  const panels = panelsView(log, turn);
+  renderPanel(panelA, panels.A);
+  renderPanel(panelB, panels.B);
   renderChart(chart, chartView(log, turn));
   toggle.select(mode);
 }

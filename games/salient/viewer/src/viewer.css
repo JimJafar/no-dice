@@ -50,6 +50,56 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 .summary{font-size:17px;line-height:1.2;color:#eef1f5}
 .series{font-size:15px;line-height:1.2;color:#aab3bf}
 
+/* The stage: each seat's panel and the board between them, which is the mock-up's
+   middle row (`salient/docs/mockups/spectator-view.html`) — the board keeps its
+   own box and each panel takes the width the frame leaves. The panels' own
+   colours and type are the mock-ups' build notes: panels `#1a2028`, the boxes
+   `#232a33`, labels in Barlow Semi Condensed small caps, sentences in IBM Plex.
+   `.label`, `.box`, `.value`, `.block`, `.text`, `.chip`, `.meter`, `.call` are
+   the panels' own; the hex classes above are shorter names and are not reused. */
+.stage{flex:1;min-height:0;display:flex;align-items:stretch;gap:32px}
+/* `hidden` until a log arrives, which an author `display` would otherwise win. */
+.stage[hidden]{display:none}
+.panel{flex:1;min-width:0;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;gap:20px;background:#1a2028;border-radius:8px}
+.panel[hidden]{display:none}
+.panel-a .swatch{background:var(--team-a,#2c6fd1)}
+.panel-b .swatch{background:var(--team-b,#e06f35)}
+.panel-head{display:flex;align-items:baseline;gap:10px;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+.panel-name{font:600 26px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.02em;color:#eef1f5}
+.label{font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+.block{display:flex;flex-direction:column;gap:10px}
+.block .text{margin:0;font-size:20px;line-height:1.45}
+.block .text.empty{color:#aab3bf}
+/* The marks the turn carries — a submission refused, a pass, a context
+   compacted — as chips, in the colours the turn strip's flags use. */
+.marks{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:6px 12px;border:1.5px solid #8a94a3;border-radius:999px;font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;color:#c9d1dc}
+.chip.rejected{border-color:var(--team-b,#e06f35);color:#f0b18a}
+.chip.compacted{border-color:var(--team-a,#2c6fd1);color:#a8c6f0}
+/* The tool-call trace: one line per call, in the log's order. Monospace, because
+   it is a log of calls rather than a sentence, and the arguments are cut short
+   by `render-panels.ts` rather than left to wrap over the panel. */
+.trace{font-size:16px;line-height:1.4;color:#c9d1dc}
+.calls{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.call{display:flex;align-items:baseline;gap:10px;font-family:ui-monospace,monospace;font-size:14px}
+.call-tool{flex:none;font-weight:600;color:#eef1f5}
+.call-args{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#aab3bf}
+.call-ms{flex:none;color:#aab3bf}
+.call.errored .call-tool,.call-error{color:var(--team-b,#e06f35)}
+.scouted{color:#aab3bf}
+/* The context meter brief §6.8 suggests, which `render-panels.ts` leaves out
+   whole for a seat with no window — every bot seat. */
+.meter{height:10px;background:#232a33;border-radius:5px;overflow:hidden}
+.meter span{display:block;height:100%;background:var(--team-a,#2c6fd1)}
+.panel-b .meter span{background:var(--team-b,#e06f35)}
+.context-line{font-size:15px;color:#aab3bf}
+/* The three small boxes along the bottom of the panel: troops, Nodes held,
+   actions used. `margin-top:auto` is the mock-up's — the boxes sit at the panel's
+   foot whatever the sentences above them needed. */
+.boxes{margin-top:auto;display:flex;gap:16px}
+.box{flex:1;display:flex;flex-direction:column;gap:8px;padding:14px 16px;background:#232a33;border-radius:6px}
+.box .value{font:600 34px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif}
+
 /* The board: hexes, their symbols, and the marks that go over them. Copied out
    of salient/docs/mockups/spectator-view.html, which holds the exact CSS the
    mock-ups were drawn with, plus `.f` from salient/docs/mockups/fog-of-war-view.html
@@ -106,3 +156,11 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 .lead-a{bottom:56px;background:var(--team-a,#2c6fd1);border-radius:4px 4px 0 0}
 .lead-b{top:57px;background:var(--team-b,#e06f35);border-radius:0 0 4px 4px}
 .mark{position:absolute;left:0;right:0;top:0;text-align:center;font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;color:#eef1f5}
+/* A turn the log marked: a submission refused, a pass, a context compacted. One
+   flag per seat marked at that turn, in that seat's colour, with the reason in
+   its title. `.flag` rather than `.mark`, which the frame's own margin above
+   already uses, and the kind — `.rejected`, `.passed`, `.compacted` — is there
+   for a frame that wants to draw one mark rather than another. */
+.flag{position:absolute;bottom:2px;width:14px;height:14px;border-radius:3px;font:600 11px/14px 'Barlow Semi Condensed','Arial Narrow',sans-serif;font-style:normal;text-align:center}
+.flag-a{left:8px;background:var(--team-a,#2c6fd1);color:#ffffff}
+.flag-b{right:8px;background:var(--team-b,#e06f35);color:#14110f}
