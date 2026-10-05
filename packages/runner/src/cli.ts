@@ -44,6 +44,7 @@ import { defaultOutName, parseArgs } from "./args.ts";
 import type { MatchCommand, SeatArg, SeriesCommand, StatsCommand } from "./args.ts";
 import { runMatch, seatSpec } from "./match.ts";
 import type { SeatSpec } from "./match.ts";
+import { seatModelsJson } from "./providers.ts";
 import { runSeries } from "./series.ts";
 import type { SeriesMatchRecord, SeriesPairRecord } from "./series.ts";
 
@@ -136,7 +137,13 @@ const seatsHaveCredentials = async (
     ["B", command.b],
   ] as const) {
     if (given.kind !== "model") continue;
-    const auth = await checkPiAuth({ model: `${given.provider}/${given.model}` });
+    const model = `${given.provider}/${given.model}`;
+    // A provider the registry names is checked with the `models.json` its seat
+    // will be given, since the seat home that would otherwise hold it is made per
+    // match and a series is asked before its first one exists. A provider the
+    // registry does not name is checked against the operator's own Pi config,
+    // which is how a built-in provider's exported key has always been found.
+    const auth = await checkPiAuth({ model, modelsJson: seatModelsJson(model) ?? undefined });
     if (!auth.ok) {
       stderr(`error: seat ${seat}: ${auth.message}`);
       return false;

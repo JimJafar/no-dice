@@ -15,9 +15,14 @@
  * home, so a provider named in the seat's `models.json` is found there, and a key
  * the operator exported is found in the environment. That is what lets a test
  * point a seat at a stub provider on loopback and pass the check with no
- * credential in the world.
+ * credential in the world. A check made before the seat exists — the command line
+ * asking about a series' seats — is handed the seat's `models.json` instead of a
+ * home, and asks of a throwaway directory holding just that file.
  */
 import { execFile } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { piCli } from "./pi-cli.ts";
 
@@ -33,6 +38,12 @@ export interface PiAuthOptions {
    * own. The seat's `models.json` is read from the `PI_CODING_AGENT_DIR` in here.
    */
   env?: Record<string, string>;
+  /**
+   * The `models.json` the seat is about to be given, for a run that asks before
+   * the seat exists — the command line checks a series' seats before there is a
+   * match directory to write a home in. See `askWithModelsJson`.
+   */
+  modelsJson?: unknown;
 }
 
 /** What Pi said about the credential. */
@@ -76,6 +87,60 @@ const reportOf = (stdout: string): PiAuthReport | null => {
   }
 };
 
+/** What the pinned CLI answered about a provider. */
+interface PiAnswer {
+  code: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+/** Ask the pinned CLI, in `env`, whether `provider` has a credential. */
+const askPi = (provider: string, env: Record<string, string>): Promise<PiAnswer> =>
+  new Promise((done) => {
+    execFile(
+      process.execPath,
+      [piCli().path, "auth", "check", "--provider", provider, "--json"],
+      { env, timeout: AUTH_TIMEOUT_MS },
+      (error, stdout, stderr) => {
+        const code = error === null ? 0 : typeof error.code === "number" ? error.code : 1;
+        done({
+          code,
+          stdout,
+          stderr,
+          // `error.code` is the signal-killed exit, which looks like a refusal;
+          // the timeout is the fact, and it gets the message.
+          timedOut: error !== null && error.killed === true,
+        });
+      },
+    );
+  });
+
+/**
+ * The same question, of a config directory holding only the `models.json` the
+ * seat is about to be given.
+ *
+ * A seat's own check already has its home, and the file is in it. The command
+ * line's check runs before a series has a match directory to make a home in, so
+ * without this the question is asked of the operator's own config, where a
+ * provider the repo's registry names is not — and the run stops with "name the
+ * provider in its models.json" one step before the file that names it would be
+ * written. The directory is thrown away as soon as Pi has answered.
+ */
+const askWithModelsJson = async (
+  provider: string,
+  env: Record<string, string>,
+  modelsJson: unknown,
+): Promise<PiAnswer> => {
+  const home = mkdtempSync(join(tmpdir(), "no-dice-auth-"));
+  try {
+    writeFileSync(join(home, "models.json"), `${JSON.stringify(modelsJson, null, 2)}\n`, "utf-8");
+    return await askPi(provider, { ...env, PI_CODING_AGENT_DIR: home });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+};
+
 /**
  * Ask the pinned Pi whether a credential resolves for `model`'s provider.
  *
@@ -91,26 +156,10 @@ export const checkPiAuth = async (options: PiAuthOptions): Promise<PiAuth> => {
     if (typeof value === "string") env[name] = value;
   }
 
-  const ran = await new Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }>(
-    (done) => {
-      execFile(
-        process.execPath,
-        [piCli().path, "auth", "check", "--provider", provider, "--json"],
-        { env, timeout: AUTH_TIMEOUT_MS },
-        (error, stdout, stderr) => {
-          const code = error === null ? 0 : typeof error.code === "number" ? error.code : 1;
-          done({
-            code,
-            stdout,
-            stderr,
-            // `error.code` is the signal-killed exit, which looks like a refusal;
-            // the timeout is the fact, and it gets the message.
-            timedOut: error !== null && error.killed === true,
-          });
-        },
-      );
-    },
-  );
+  const ran =
+    options.modelsJson === undefined
+      ? await askPi(provider, env)
+      : await askWithModelsJson(provider, env, options.modelsJson);
 
   const report = reportOf(ran.stdout);
   if (ran.timedOut) {

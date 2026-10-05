@@ -175,8 +175,10 @@ the same seat home and the same seven tools as the scripted match above — only
 the model behind the endpoint changed.
 
 **What the provider entry rests on, measured versus decided.** The entry is
-written in `scripts/measure-match.mjs`, and it was checked against the server
-from this box:
+committed in `providers.json` at the repo root, which is the one file the runner
+and `scripts/measure-match.mjs` both seat from
+(`packages/runner/src/providers.ts` says what each field decides), and it was
+checked against the server from this box:
 
 - `/v1/models` answers, and lists `subagent` as a loaded alias of `Strata-IQ3S`.
   It reports **no context length**, no cost and no output cap, so

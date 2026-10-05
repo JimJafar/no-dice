@@ -32,3 +32,36 @@ command again plays nothing whose log is already on disk. `--max-cost <usd>` and
 `--max-tokens <n>` bound what a run may spend, `--concurrency <n>` how many pairs
 are in flight at once (default 1), `--seed-base <n>` what the seed list is drawn
 from, and `--name <name>` or `--dir <path>` where the series goes.
+
+## The providers a model seat can be seated on
+
+A model seat names a provider (`--a marvin/subagent`), and the provider has to be
+known to the seat. Pi knows a handful natively and takes their credentials from
+the environment; anything else has to be named in a `models.json` written into
+that seat's own Pi home, or the run stops at the credential check before a turn
+is played. The committed `providers.json` at the repo root is that list, read by
+`match`, by `series` and by `scripts/measure-match.mjs` alike:
+
+```json
+{
+  "marvin": {
+    "baseUrl": "https://marvin.akita-betelgeuse.ts.net:8033/v1",
+    "api": "openai-completions",
+    "apiKeyEnv": null,
+    "reasoning": true,
+    "contextWindow": 131072,
+    "maxTokens": 8192,
+    "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+  }
+}
+```
+
+**No key is ever in this file.** `apiKeyEnv` names the environment variable a key
+is read from, and the seat's `models.json` interpolates it as `${NAME}` from the
+seat's own environment; `null` means the endpoint checks no key, which becomes
+Pi's documented `"apiKey": "none"`. `contextWindow`, `maxTokens` and the four
+token rates are committed because an OpenAI-compatible endpoint advertises none
+of them: they are decisions, they are what the log header, `--max-cost` and the
+cost column are read against, and a rerun under different ones is a different
+match. A provider the file does not list is left to Pi's built-in lookup, exactly
+as before. `packages/runner/src/providers.ts` says what each field decides.

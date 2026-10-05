@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { matchLogSchema } from "@no-dice/log";
 import { runMatch } from "@no-dice/runner/match";
+import { providerEntry, seatModelsJson } from "@no-dice/runner/providers";
 
 // The stub model lives in a workspace package the root does not depend on, so it
 // is reached by path: this test is of a script that lives outside the workspace
@@ -17,7 +18,7 @@ import {
   stubModelsJson,
 } from "../packages/harness/src/stub-model.ts";
 
-import { guardBreaches, modelsJsonFor, parseArgs, renderReport, PROVIDERS } from "./measure-match.mjs";
+import { guardBreaches, parseArgs, renderReport } from "./measure-match.mjs";
 
 /**
  * `scripts/measure-match.mjs` is an operator script, so its one run against a
@@ -68,7 +69,7 @@ const report = renderReport({
   matchDir: join(dir, "match"),
   model: "marvin/subagent",
   thinking: "medium",
-  provider: PROVIDERS.marvin,
+  provider: providerEntry("marvin"),
   runWallMs: 12_345,
   guards: { maxTokens: 10_000_000, maxCost: 0, perTurnOutput: null },
 });
@@ -86,7 +87,7 @@ describe("the operator's command line", () => {
     });
   });
 
-  it("refuses a model whose provider it has no entry for, rather than guessing an endpoint", () => {
+  it("refuses a model whose provider the registry has no entry for, rather than guessing an endpoint", () => {
     expect(parseArgs(["--model", "openrouter/deepseek-v4-pro", "--seed", "135"]).error).toContain(
       'provider "openrouter"',
     );
@@ -103,12 +104,16 @@ describe("the operator's command line", () => {
     );
   });
 
-  it("writes the seat's models.json with no key, zero rates and the decided window", () => {
-    const entry = modelsJsonFor("marvin/subagent").providers.marvin;
+  it("seats the model from the committed registry, with no key, zero rates and the decided window", () => {
+    // The same entry `no-dice match` and `no-dice series` seat, so a match
+    // measured here and a match a series plays are seated on one file.
+    const entry = seatModelsJson("marvin/subagent").providers.marvin;
     expect(entry.apiKey).toBe("none");
+    expect(entry.baseUrl).toBe("https://marvin.akita-betelgeuse.ts.net:8033/v1");
     expect(entry.models[0]).toMatchObject({
       id: "subagent",
       contextWindow: 131_072,
+      maxTokens: 8_192,
       reasoning: true,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
@@ -161,12 +166,13 @@ describe("the report", () => {
 
   it("says out loud that this provider's cost is zero, and why", () => {
     expect(report).toContain("`cost_usd` is 0 in every turn and in the totals");
-    expect(report).toContain("Jim's own llama-swap server");
+    expect(report).toContain("prices input, output, cache-read and cache-write tokens at 0");
   });
 
-  it("records the context window as the decision it is, and answers the checklist", () => {
+  it("records the window and the cap as the registry commits them, and answers the checklist", () => {
     // The window the report prints is the one the log's header carries, which is
-    // the stub entry's here and Marvin's 131,072 in a real run.
+    // the stub entry's here and Marvin's 131,072 in a real run, and it now comes
+    // from the same committed entry the CLI seats from.
     expect(report).toContain("contextWindow: 65,536 tokens — a decision, not a lookup");
     expect(report).toContain("maxTokens: 8,192 — also a decision, not a lookup");
     expect(report).toContain("**Cache reads (`tokens.cacheRead`):**");
@@ -239,7 +245,7 @@ describe("the guards", () => {
       matchDir: join(dir, "match"),
       model: "marvin/subagent",
       thinking: "off",
-      provider: PROVIDERS.marvin,
+      provider: providerEntry("marvin"),
       runWallMs: 12_345,
       guards: { maxTokens: 1, maxCost: 0, perTurnOutput: null },
     });

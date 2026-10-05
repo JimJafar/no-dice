@@ -65,6 +65,7 @@ import {
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import type { SeatArg } from "./args.ts";
+import { seatModelsJson } from "./providers.ts";
 
 /** The five minutes brief §6.3 gives a turn before the seat is taken to have passed. */
 const TURN_TIMEOUT_MS = 300_000;
@@ -115,7 +116,9 @@ export interface PiSeat {
   /**
    * The seat's `models.json`, which is how it reaches the model under test. This
    * is what lets a test seat a model on a stub endpoint on loopback and play a
-   * whole match with no credential anywhere on the machine.
+   * whole match with no credential anywhere on the machine, and what lets a real
+   * run seat a model on a provider Pi does not know — the entry comes out of
+   * `providers.json`, see `./providers.ts`.
    */
   modelsJson?: unknown;
   /**
@@ -153,11 +156,23 @@ const DEFAULT_THINKING: PiThinkingLevel = "medium";
  * command and a series get their seats this way, so a pairing is seated the same
  * way however it was asked for; whether a model seat has a credential at all is
  * reported by the run in one line before a turn is played.
+ *
+ * A model seat whose provider is in the committed registry is given that
+ * provider's `models.json`, which is how it reaches an endpoint Pi has never
+ * heard of. A seat whose provider is not listed is given none at all, and Pi's
+ * built-in lookup — and the operator's exported key — is left in charge.
  */
-export const seatSpec = (seat: SeatArg): SeatSpec =>
-  seat.kind === "bot"
-    ? { kind: "bot", bot: seat.bot }
-    : { kind: "pi", model: `${seat.provider}/${seat.model}`, thinking: DEFAULT_THINKING };
+export const seatSpec = (seat: SeatArg): SeatSpec => {
+  if (seat.kind === "bot") return { kind: "bot", bot: seat.bot };
+  const model = `${seat.provider}/${seat.model}`;
+  const modelsJson = seatModelsJson(model);
+  return {
+    kind: "pi",
+    model,
+    thinking: DEFAULT_THINKING,
+    ...(modelsJson === null ? {} : { modelsJson }),
+  };
+};
 
 /** How a seat reaches the match, given the token it is playing with. */
 export type SeatTransport = (matches: MatchServer, seat: Seat, token: string) => Transport;

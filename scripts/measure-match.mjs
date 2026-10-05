@@ -19,17 +19,19 @@
  * takes to evaluate them, and those are the numbers brief §10's per-turn output
  * budget, brief §11's series cost ceiling and the compaction question all wait on.
  *
- * **The provider entry is written here, not discovered.** Marvin answers
- * `/v1/models` and lists `subagent` as a loaded alias of `Strata-IQ3S`, but
- * reports no context length, no cost and no output cap, so
- * `contextWindow: 131072` is a decision — recorded in the report header, and in
- * the log's `players.A.context_window`, which is Pi's reading of the same entry —
- * rather than a lookup. `apiKey: "none"` is Pi's documented pattern for an
- * endpoint that checks no key, and `reasoning: true` is set because the endpoint
- * streams a `reasoning_content` field. Marvin's answers name the llama-swap model
- * behind the alias (`qwen3.8-flash-next-iq3_s` for `subagent`), not `subagent`,
- * so nothing here treats that name as an identity check: the seat is identified
- * by the `--model` it was given and the log's `players.A.model`.
+ * **The provider entry comes from `providers.json`, not from here.** Marvin is
+ * one entry in the registry the CLI reads, and the script reads the same file:
+ * base URL, the environment variable a key would come from, `api`, `reasoning`,
+ * and the two numbers that are decisions rather than lookups —
+ * `contextWindow: 131072` and `maxTokens: 8192`, because `/v1/models` reports
+ * neither. They are recorded in the report header, and the window is in the
+ * log's `players.A.context_window` too, which is Pi's reading of the seat's own
+ * `models.json`. `apiKey: "none"` is Pi's pattern for an endpoint that checks no
+ * key, and it is what an entry with no `apiKeyEnv` turns into. Marvin's answers
+ * name the llama-swap model behind the alias (`qwen3.8-flash-next-iq3_s` for
+ * `subagent`), not `subagent`, so nothing here treats that name as an identity
+ * check: the seat is identified by the `--model` it was given and the log's
+ * `players.A.model`.
  *
  * **The guards.** `--max-tokens` and `--max-cost` are ceilings on the finished
  * match, checked once its log is written: over either one the report is still
@@ -60,6 +62,7 @@ import { pathToFileURL } from "node:url";
 
 import { matchLogSchema } from "@no-dice/log";
 import { runMatch } from "@no-dice/runner/match";
+import { providerEntry, providerRegistry, seatModelsJson } from "@no-dice/runner/providers";
 
 /** What a run prints when its command line did not parse. */
 const USAGE =
@@ -92,34 +95,6 @@ const SEVEN_TOOLS = [
   "read_notes",
   "write_notes",
 ];
-
-/**
- * The providers this script can seat a model on.
- *
- * Marvin is Jim's llama-swap server. Everything in its entry was checked against
- * it from this box with Pi 1.0.2: `/v1/models` lists `subagent` as a loaded alias
- * of `Strata-IQ3S`; a tool call comes back as `finish_reason: "tool_calls"` with
- * `function.name` and `function.arguments`; `usage` carries
- * `prompt_tokens_details.cached_tokens`; the endpoint streams `reasoning_content`
- * whatever `reasoning_effort` says; and it reports no context length, which is
- * why `contextWindow` below is a decision. The rates are zero because the
- * hardware is Jim's and nothing is billed.
- */
-const PROVIDERS = {
-  marvin: {
-    baseUrl: "https://marvin.akita-betelgeuse.ts.net:8033/v1",
-    api: "openai-completions",
-    apiKey: "none",
-    contextWindow: 131_072,
-    maxTokens: 8_192,
-    reasoning: true,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    whyZeroCost:
-      "the provider is Marvin, Jim's own llama-swap server: no API key, no billing, " +
-      "and its models.json entry prices input, output, cache-read and cache-write " +
-      "tokens at 0. Tokens and wall time are what this provider charges in.",
-  },
-};
 
 /** A flag that takes a non-negative number, or the line saying it did not get one. */
 const numberFlag = (flag, raw) => {
@@ -166,11 +141,11 @@ const parseArgs = (argv) => {
     return { error: `--model takes <provider>/<id>, not "${model}"` };
   }
   const provider = model.slice(0, at);
-  if (PROVIDERS[provider] === undefined) {
+  if (providerEntry(provider) === null) {
     return {
       error:
-        `--model names provider "${provider}", which this script has no entry for; ` +
-        `it knows ${Object.keys(PROVIDERS).join(", ")}`,
+        `--model names provider "${provider}", which providers.json has no entry for; ` +
+        `it names ${Object.keys(providerRegistry()).join(", ")}`,
     };
   }
 
@@ -207,37 +182,6 @@ const parseArgs = (argv) => {
       maxTokens: numberFlag("--max-tokens", given.get("--max-tokens")) ?? 10_000_000,
       maxCost: numberFlag("--max-cost", given.get("--max-cost")) ?? 0,
       perTurnOutput: numberFlag("--per-turn-output", given.get("--per-turn-output")),
-    },
-  };
-};
-
-/**
- * The `models.json` a seat reads to reach `model`, in the shape `pi-stub-model`
- * fixed: the provider's `baseUrl`, its `api`, a dummy `apiKey`, and the model's
- * metadata spelled out because a compatible endpoint does not advertise it.
- */
-const modelsJsonFor = (model) => {
-  const at = model.indexOf("/");
-  const providerName = model.slice(0, at);
-  const provider = PROVIDERS[providerName];
-  return {
-    providers: {
-      [providerName]: {
-        baseUrl: provider.baseUrl,
-        api: provider.api,
-        apiKey: provider.apiKey,
-        models: [
-          {
-            id: model.slice(at + 1),
-            name: model,
-            input: ["text"],
-            contextWindow: provider.contextWindow,
-            maxTokens: provider.maxTokens,
-            reasoning: provider.reasoning,
-            cost: provider.cost,
-          },
-        ],
-      },
     },
   };
 };
@@ -376,6 +320,39 @@ const guardBreaches = (log, guards) => {
 };
 
 /**
+ * How a seat reaches its provider's key, as the registry says it. The key itself
+ * is never in `providers.json`: an entry names the variable, and the seat's own
+ * `models.json` interpolates it, so the value exists only in the seat's
+ * environment. An entry that names no variable is a keyless endpoint.
+ */
+const keyWord = (provider) =>
+  provider.apiKeyEnv === null
+    ? '`apiKey: "none"` — the endpoint checks no key'
+    : `key read from \`${provider.apiKeyEnv}\` in the environment the seat starts in`;
+
+/**
+ * What one provider's committed rates mean for the `cost_usd` column, as one
+ * report line. All-zero rates are the case this script was written for — Jim's
+ * own hardware bills nothing, so tokens and wall time are the scarce quantities
+ * — and the report says which of the two a run is in rather than letting a
+ * column of noughts read as a model that costs nothing.
+ */
+const costLine = (provider) => {
+  const rates = provider.cost;
+  const free =
+    rates.input === 0 && rates.output === 0 && rates.cacheRead === 0 && rates.cacheWrite === 0;
+  return free
+    ? "**`cost_usd` is 0 in every turn and in the totals, and that is not a measurement failure:** " +
+      "the provider's entry in `providers.json` prices input, output, cache-read and " +
+      "cache-write tokens at 0, so this run is not billed in dollars. Tokens and wall " +
+      "time are what it charges in, and they are the figures a series budget is set from."
+    : `**\`cost_usd\` below is those rates against the usage the provider reported:** the entry in ` +
+      `\`providers.json\` prices tokens at ${money(rates.input)} per M input, ` +
+      `${money(rates.output)} per M output, ${money(rates.cacheRead)} per M cache-read and ` +
+      `${money(rates.cacheWrite)} per M cache-write.`;
+};
+
+/**
  * The report: the run's facts, the per-turn table, the totals underneath it, what
  * one match costs, and the four questions the milestone asks of a real provider,
  * answered from the log and the seat's transcript.
@@ -437,13 +414,13 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
   lines.push(`- **Seat A:** \`kind: pi\`, model \`${header.model}\`, thinking \`${header.thinking}\``);
   lines.push("- **Seat B:** `kind: bot`, `greedy` — it runs no provider, so every figure below is seat A's");
   lines.push(
-    `- **Provider:** \`${provider.baseUrl}\` (\`api: ${provider.api}\`, \`apiKey: "${provider.apiKey}"\`, \`reasoning: ${String(provider.reasoning)}\`)`,
+    `- **Provider:** \`${model.slice(0, model.indexOf("/"))}\`, the entry \`providers.json\` commits for it — \`${provider.baseUrl}\` (\`api: ${provider.api}\`, ${keyWord(provider)}, \`reasoning: ${String(provider.reasoning)}\`)`,
   );
   lines.push(
-    `- **contextWindow: ${pretty(window)} tokens — a decision, not a lookup.** Marvin's \`/v1/models\` reports no context length for \`${modelId}\`, so this is the window the run was played with; the log's \`players.${seat}.context_window\` carries the same figure because it is Pi's reading of the seat's own \`models.json\`.`,
+    `- **contextWindow: ${pretty(window)} tokens — a decision, not a lookup, and now a committed one.** The entry in \`providers.json\` is what the seat was played with; a compatible endpoint reports no length of its own, so the number had to be chosen rather than read. The log's \`players.${seat}.context_window\` carries the same figure because it is Pi's reading of the seat's own \`models.json\`.`,
   );
   lines.push(
-    `- **maxTokens: ${pretty(provider.maxTokens)} — also a decision, not a lookup.** Marvin reports no output cap either, so this is the cap the run's model requests were made under, and it bounds the output-token figures below; a run under a different cap is a different run.`,
+    `- **maxTokens: ${pretty(provider.maxTokens)} — also a decision, not a lookup.** The endpoint advertises no output cap either, so this is the cap the run's model requests were made under, and it bounds the output-token figures below; a run under a different cap is a different run.`,
   );
   lines.push(`- **Seed:** ${String(log.seed)} — **turns played:** ${String(turns.length)} of ${String(log.config.turns)}`);
   lines.push(
@@ -456,9 +433,7 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
     `- **Seat transcript:** \`${join(matchDir, `session-${seat}`)}\` (${String(session.sessions)} session file${session.sessions === 1 ? "" : "s"})`,
   );
   lines.push("");
-  lines.push(
-    `**\`cost_usd\` is 0 in every turn and in the totals, and that is not a measurement failure:** ${provider.whyZeroCost}`,
-  );
+  lines.push(costLine(provider));
   lines.push("");
 
   lines.push("## Seat A, turn by turn");
@@ -542,7 +517,7 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
     `- **Wall time:** ${seconds(total.wallMs)} s of seat-A turns out of ${seconds(runWallMs)} s for the whole run, which includes the runner's start-up and both seats' processes. The two seats are asked for a turn together, so seat B's turns run inside the same wall time.`,
   );
   lines.push(
-    `- **Money:** ${money(total.cost)} US dollars, because the provider is Jim's own hardware. The token counts above are the transferable figure: a paid provider at the same counts costs whatever its rates say.`,
+    `- **Money:** ${money(total.cost)} US dollars, at the rates \`providers.json\` commits for this provider. The token counts above are the transferable figure: another provider at the same counts costs whatever its own rates say.`,
   );
   lines.push(
     `- **Prompt tokens:** ${pretty(total.prompt)} over the match. The conversation is re-sent on every model call, so this is what a series multiplies, and the cache-read share of it — ${pct(total.cacheRead / Math.max(1, total.prompt))}% — is what softens the cost of doing that.`,
@@ -607,7 +582,7 @@ const renderReport = ({ log, logPath, reportPath, matchDir, model, thinking, pro
 
 /** Play the match, write the report beside its log, and print it. */
 const main = async (command, cwd) => {
-  const provider = PROVIDERS[command.model.slice(0, command.model.indexOf("/"))];
+  const provider = providerEntry(command.model.slice(0, command.model.indexOf("/")));
   const reportPath = resolve(
     cwd,
     command.out ?? join("reports", `pi-cost-${slug(command.model)}-${String(command.seed)}.md`),
@@ -629,7 +604,7 @@ const main = async (command, cwd) => {
   console.log(`  report    ${reportPath}`);
   console.log(`  homes     ${matchDir}`);
   console.log(
-    `  thinking  ${command.thinking} — contextWindow ${num(provider.contextWindow)} (a decision, not a lookup)`,
+    `  thinking  ${command.thinking} — contextWindow ${num(provider.contextWindow)} from providers.json`,
   );
   console.log("a real match takes minutes; the table is printed when it is over.");
 
@@ -642,7 +617,7 @@ const main = async (command, cwd) => {
         kind: "pi",
         model: command.model,
         thinking: command.thinking,
-        modelsJson: modelsJsonFor(command.model),
+        modelsJson: seatModelsJson(command.model),
         ...(command.perTurnOutput === null ? {} : { outputTokenBudget: command.perTurnOutput }),
       },
       B: { kind: "bot", bot: "greedy" },
@@ -703,4 +678,4 @@ if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
   }
 }
 
-export { guardBreaches, modelsJsonFor, parseArgs, renderReport, PROVIDERS };
+export { guardBreaches, parseArgs, renderReport };

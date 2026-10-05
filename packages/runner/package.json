@@ -7,7 +7,8 @@
   "exports": {
     "./match": "./src/match.ts",
     "./cli": "./src/cli.ts",
-    "./args": "./src/args.ts"
+    "./args": "./src/args.ts",
+    "./providers": "./src/providers.ts"
   },
   "bin": {
     "no-dice": "./src/cli.ts"
