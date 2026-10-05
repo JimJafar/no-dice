@@ -27,9 +27,13 @@
  * reason, and is played again by the next run. It is never counted as a match that
  * was played, and it does not take the rest of its batch down with it.
  *
- * The stopping rules are brief §6.5's and live beside this loop: a run currently
- * plays to `--max-pairs` and records that it did, with the interval and the cost
- * and token ceilings to be added there rather than guessed at here.
+ * The stopping rules are brief §6.5's and live beside this loop, in
+ * `./series-stop.ts`. They are asked at the end of every batch of 5 pairs and
+ * never in the middle of a pair, and what they decide is written into the record:
+ * which rule ended the run, the 99% interval if the interval test had been
+ * reached at that boundary (and it is what decided the run when the result came
+ * out clear), the cost and token totals there, and whether the series stopped
+ * short of `--max-pairs`.
  */
 import { readFile } from "node:fs/promises";
 
@@ -44,9 +48,15 @@ import { runMatch, seatSpec } from "./match.ts";
 import type { MatchOutcome, RunMatchOptions, SeatSpec } from "./match.ts";
 import { planSeries, seriesRecordPath, writeSeriesRecord } from "./series-plan.ts";
 import type { PlannedMatch } from "./series-plan.ts";
-
-/** Brief §6.5's batch: matches are played in batches of 5 pairs. */
-const BATCH_PAIRS = 5;
+import {
+  BATCH_PAIRS,
+  checkCeilings,
+  decideStop,
+  stopReasonSchema,
+  stopRecordSchema,
+  tokensSchema,
+} from "./series-stop.ts";
+import type { Ceilings, SeriesTokens, StopDecision, StopInput, StopRecord } from "./series-stop.ts";
 
 /**
  * How one match of a series is played. It takes what `runMatch` takes — the
@@ -66,6 +76,10 @@ export interface RunSeriesOptions {
   b: SeatArg;
   /** Brief §6.5's `--max-pairs`, default 75. */
   maxPairs?: number;
+  /** Brief §6.5's cost guard, `--max-cost <usd>`: summed cost over the matches played. */
+  maxCostUsd?: number;
+  /** `--max-tokens <n>`: summed tokens, the ceiling that binds on unpriced hardware. */
+  maxTokens?: number;
   /** What the seed list is drawn from, `--seed-base`. */
   seedBase?: number;
   /** How a match is played. Defaults to the real `runMatch`. */
@@ -83,18 +97,6 @@ export interface SeriesRun {
   skipped: number;
   failed: number;
 }
-
-/** The tokens one match's two seats used, over every turn, and their sum. */
-const tokensSchema = z
-  .object({
-    input: z.number().int().nonnegative(),
-    output: z.number().int().nonnegative(),
-    cache_read: z.number().int().nonnegative(),
-    cache_write: z.number().int().nonnegative(),
-    total: z.number().int().nonnegative(),
-  })
-  .strict();
-export type SeriesTokens = z.infer<typeof tokensSchema>;
 
 /** How a match ended, as its own log says — the log is never second-guessed. */
 const outcomeSchema = z
@@ -141,12 +143,6 @@ const pairRecordSchema = z
   .strict();
 export type SeriesPairRecord = z.infer<typeof pairRecordSchema>;
 
-/**
- * Why the run stopped. `max_pairs` is the only reason a run has today; brief
- * §6.5's interval and ceiling reasons are recorded by the stopping rules.
- */
-const stopReasonSchema = z.enum(["max_pairs"]);
-
 /** The run's own state, which is what tells a report whether to trust the sample. */
 const stateSchema = z
   .object({
@@ -178,6 +174,12 @@ const seriesRecordSchema = z.object({
   pairing: z.object({ a: seatArgSchema, b: seatArgSchema }).strict(),
   pairs: z.array(pairRecordSchema),
   state: stateSchema,
+  /**
+   * What the stopping rules decided, and what they had to go on: which rule
+   * fired, the interval test at that boundary if the series had reached 10 pairs,
+   * and the cost and token totals there. Absent while a run is still playing.
+   */
+  stop: stopRecordSchema.optional(),
 });
 export type SeriesRecord = z.infer<typeof seriesRecordSchema>;
 
@@ -268,15 +270,22 @@ const reasonOf = (error: unknown): string => {
 const pairsBySeed = (pairs: readonly SeriesPairRecord[]): Map<number, SeriesPairRecord> =>
   new Map(pairs.map((pair) => [pair.seed, pair]));
 
+/** A pair counts towards the series only when both its matches have a log. */
+const completePairs = (pairs: readonly SeriesPairRecord[]): SeriesPairRecord[] =>
+  pairs.filter((pair) => pair.matches.every((match) => match.status === "played"));
+
 /** The run's state, counted over every pair the record holds. */
-const stateOf = (pairs: readonly SeriesPairRecord[]): SeriesState => {
+const stateOf = (pairs: readonly SeriesPairRecord[], stop: StopRecord | null): SeriesState => {
   const matches = pairs.flatMap((pair) => pair.matches);
   return {
-    pairs_played: pairs.filter((pair) => pair.matches.every((match) => match.status === "played")).length,
+    pairs_played: completePairs(pairs).length,
     matches_played: matches.filter((match) => match.status === "played").length,
     matches_failed: matches.filter((match) => match.status === "failed").length,
-    stop_reason: "max_pairs",
-    stopped_early: false,
+    stop_reason: stop?.reason ?? "max_pairs",
+    // Reaching `--max-pairs` is the series running the length it was asked for;
+    // any other reason means it ended short of it, which is what brief §6.5 has
+    // the report say.
+    stopped_early: stop !== null && stop.reason !== "max_pairs",
   };
 };
 
@@ -299,6 +308,11 @@ const batchesOf = <T>(items: readonly T[], size: number): T[][] => {
  */
 export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
   const playMatch = options.playMatch ?? runMatch;
+  const ceilings: Ceilings = {
+    ...(options.maxCostUsd === undefined ? {} : { maxCostUsd: options.maxCostUsd }),
+    ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
+  };
+  checkCeilings(ceilings);
   const plan = await planSeries({
     dir: options.dir,
     a: options.a,
@@ -349,14 +363,52 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
 
   const recordPath = seriesRecordPath(plan.dir);
 
-  /** Write what is known so far: this plan's pairs, plus any older played ones. */
-  const writeRecord = async (): Promise<SeriesRecord> => {
+  /**
+   * What the stopping rules ask about, counted over the record as it now stands:
+   * every match this run played and every one an earlier run left on disk, since
+   * a series resumed a week later has spent all of that already.
+   */
+  const stopInput = (): StopInput => {
     const pairs = [...bySeed.values()];
+    const played = pairs
+      .flatMap((pair) => pair.matches)
+      .filter(
+        (match): match is Extract<SeriesMatchRecord, { status: "played" }> => match.status === "played",
+      );
+    const tokens = { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 };
+    let costUsd = 0;
+    for (const match of played) {
+      tokens.input += match.tokens.input;
+      tokens.output += match.tokens.output;
+      tokens.cache_read += match.tokens.cache_read;
+      tokens.cache_write += match.tokens.cache_write;
+      tokens.total += match.tokens.total;
+      costUsd += match.cost_usd;
+    }
+    return {
+      pairsPlayed: completePairs(pairs).length,
+      // Every match with a result counts towards the win rate, including one
+      // whose pair is not complete: it was played, and the report counts it too.
+      matches: played.map((match) => ({ seat: match.seat, result: { winner: match.result.winner } })),
+      totals: { cost_usd: costUsd, tokens },
+      maxPairs: plan.maxPairs,
+      ceilings,
+    };
+  };
+
+  /** Write what is known so far: this plan's pairs, plus any older played ones. */
+  const writeRecord = async (decision: StopDecision): Promise<SeriesRecord> => {
+    const pairs = [...bySeed.values()];
+    const stop = decision.stopped ? decision.stop : null;
     const written = {
       ...existing,
       pairing: { a: options.a, b: options.b },
       pairs,
-      state: stateOf(pairs),
+      state: stateOf(pairs, stop),
+      // A run that has not stopped leaves no decision behind, and clears the one
+      // an earlier run left, so the field always describes this series as it now
+      // stands rather than the last run that happened to stop.
+      ...(stop === null ? { stop: undefined } : { stop }),
     };
     // Checked before it lands, so the only record a later run can read is one
     // that says what this run knows.
@@ -367,7 +419,7 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
 
   // Written once before anything is played, so a series killed in its first match
   // still has a record, and again after every batch of 5 pairs.
-  let record = await writeRecord();
+  let record = await writeRecord({ stopped: false, test: null });
 
   for (const batch of batchesOf(plan.pairs, BATCH_PAIRS)) {
     for (const pair of batch) {
@@ -376,7 +428,11 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
         matches: [await recordOf(pair.matches[0]), await recordOf(pair.matches[1])],
       });
     }
-    record = await writeRecord();
+    // Brief §6.5's rules are asked at a batch boundary, never inside a pair, so a
+    // series always stops with every pair it started complete on disk.
+    const decision = decideStop(stopInput());
+    record = await writeRecord(decision);
+    if (decision.stopped) break;
   }
 
   return { dir: plan.dir, recordPath, record, played, skipped, failed };

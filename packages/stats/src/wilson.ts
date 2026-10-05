@@ -26,8 +26,13 @@ export type Outcome = "win" | "loss" | "draw";
  * is the only input and is never second-guessed: a `winner` of `null` is a draw
  * the engine recorded, whether the match ran out of time level or both Bases fell
  * in the same turn, and is not inferred from the score.
+ *
+ * Only `winner` is read, so that is the whole parameter: the series runner keeps
+ * the winner it copied out of a log in `series.json` without the score and turn
+ * that go with it, and its stopping test classifies from that record rather than
+ * re-reading a megabyte of log for every match it has already counted.
  */
-export const outcomeOf = (result: LogResult, seat: Seat): Outcome => {
+export const outcomeOf = (result: Pick<LogResult, "winner">, seat: Seat): Outcome => {
   if (result.winner === null) return "draw";
   return result.winner === seat ? "win" : "loss";
 };

@@ -19,6 +19,7 @@
     "@no-dice/salient-bots": "workspace:*",
     "@no-dice/salient-engine": "workspace:*",
     "@no-dice/salient-server": "workspace:*",
+    "@no-dice/stats": "workspace:*",
     "zod": "^4.1.11"
   }
 }
