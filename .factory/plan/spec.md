@@ -67,7 +67,19 @@ Salient-specific code stays inside `games/salient`; no general game framework in
   log name hexes by label (`B6`), so the server does that translation at its edge.
 - `@modelcontextprotocol/sdk` 1.32.0 is on the registry, with peer `zod ^3.25 || ^4.0`.
 - The `salient-log/1` schema lives at the `@no-dice/runner/log` subpath and imports no
-  `node:*` and no engine code, so the viewer and the stats package can use it too.
+  `node:*` and no engine code, so the viewer and the stats package can use it too. Milestone
+  04's first task moves it to a package of its own, `@no-dice/log`: the series runner has to
+  call the stats package for its stopping test and stats reads logs, which with the schema
+  still inside the runner is a second package-level cycle, and `pnpm-workspace.yaml` already
+  names this move as the fix for the first one. Everything after that task imports
+  `@no-dice/log`.
+- What milestone 03 measured, and what milestone 04 takes from it (`docs/pi-harness-notes.md`
+  §7): one `marvin/subagent` match is 4.59M tokens and 19 minutes of seat time, with
+  `cost_usd` 0 on every turn because Marvin is unpriced hardware. A 150-match series is
+  therefore roughly 688M tokens and ~48 hours, the ceiling that actually protects a run is a
+  token ceiling beside brief §6.5's `--max-cost`, and the series runner needs a concurrency
+  knob. Series tests stay scripted: a bot-versus-bot match already takes ~1.3 s, so no series
+  test can play real matches.
 - The server reports absolute hex labels to both seats. A bot that ranks moves in board
   coordinates is seat-biased: identical bots in the prototype split 25% to 69% by seat from
   move ordering alone (rules, "Harness and fairness").
