@@ -7,9 +7,11 @@
   "exports": {
     "./match-metrics": "./src/match-metrics.ts",
     "./wilson": "./src/wilson.ts",
-    "./margin": "./src/margin.ts"
+    "./margin": "./src/margin.ts",
+    "./series-report": "./src/series-report.ts"
   },
   "dependencies": {
-    "@no-dice/log": "workspace:*"
+    "@no-dice/log": "workspace:*",
+    "zod": "^4.1.11"
   }
 }
