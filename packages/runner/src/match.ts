@@ -64,6 +64,8 @@ import {
 } from "@no-dice/salient-server";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
+import type { SeatArg } from "./args.ts";
+
 /** The five minutes brief §6.3 gives a turn before the seat is taken to have passed. */
 const TURN_TIMEOUT_MS = 300_000;
 
@@ -138,6 +140,24 @@ export interface PiSeat {
 
 /** Who plays a seat: a baseline bot, or a model through the Pi harness. */
 export type SeatSpec = BotSeat | PiSeat;
+
+/**
+ * The reasoning level a model seat is played at when nothing chooses one. It is a
+ * measured variable rather than a default a seat carries, so the runner picks it
+ * and the log's header records which level the match was played at.
+ */
+const DEFAULT_THINKING: PiThinkingLevel = "medium";
+
+/**
+ * A seat the command line named as a seat the runner plays. Both the `match`
+ * command and a series get their seats this way, so a pairing is seated the same
+ * way however it was asked for; whether a model seat has a credential at all is
+ * reported by the run in one line before a turn is played.
+ */
+export const seatSpec = (seat: SeatArg): SeatSpec =>
+  seat.kind === "bot"
+    ? { kind: "bot", bot: seat.bot }
+    : { kind: "pi", model: `${seat.provider}/${seat.model}`, thinking: DEFAULT_THINKING };
 
 /** How a seat reaches the match, given the token it is playing with. */
 export type SeatTransport = (matches: MatchServer, seat: Seat, token: string) => Transport;

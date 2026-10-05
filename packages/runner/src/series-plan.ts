@@ -163,9 +163,14 @@ const readRecord = async (dir: string): Promise<RecordedSeries | null> => {
  * Write the record in one step, the way `match.ts` writes a log: the bytes go to
  * `<path>.tmp` and are renamed into place, so the only file a later run can find
  * is a complete one. A half-written seed list would leave a resumed series
- * planning matches on maps that were never recorded.
+ * planning matches on maps that were never recorded. The series runner writes the
+ * same file with its own state added, which is why this is the one atomic write
+ * of it.
  */
-const writeRecord = async (dir: string, record: Record<string, unknown>): Promise<void> => {
+export const writeSeriesRecord = async (
+  dir: string,
+  record: Record<string, unknown>,
+): Promise<void> => {
   const path = seriesRecordPath(dir);
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
@@ -285,7 +290,7 @@ export async function planSeries(options: SeriesPlanOptions): Promise<SeriesPlan
   const before = recorded?.seeds ?? [];
   const seeds = [...before, ...drawSeeds(seedBase, maxPairs - before.length, before)];
   if (recorded === null || recorded.seeds.length !== seeds.length) {
-    await writeRecord(options.dir, {
+    await writeSeriesRecord(options.dir, {
       ...(recorded?.raw ?? {}),
       seed_base: seedBase,
       max_pairs: Math.max(maxPairs, before.length),

@@ -25,12 +25,10 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-import type { PiThinkingLevel } from "@no-dice/harness";
 import type { LogResult } from "@no-dice/log";
 
 import { defaultOutName, parseArgs } from "./args.ts";
-import type { SeatArg } from "./args.ts";
-import { runMatch } from "./match.ts";
+import { runMatch, seatSpec } from "./match.ts";
 import type { SeatSpec } from "./match.ts";
 
 /** Where a run reports, injectable so a test can read it instead of a terminal. */
@@ -50,24 +48,6 @@ const USAGE = "usage: no-dice match --game salient --a <spec> --b <spec> --seed 
 const resultLine = (result: LogResult): string =>
   `${result.type}: ${result.winner === null ? "draw" : `seat ${result.winner} wins`}, ` +
   `A ${String(result.score.A)} - B ${String(result.score.B)}`;
-
-/**
- * The reasoning level a model seat is played at. It is a measured variable, and
- * no flag chooses it yet, so every model seat of a run plays at Pi's own default
- * startup level — and the log's header records which level that was.
- */
-const DEFAULT_THINKING: PiThinkingLevel = "medium";
-
-/**
- * A seat the runner can play: a baseline bot, or a model through the Pi harness.
- * A model seat needs a credential for its provider, and the run says so in one
- * line before a turn is played if it has none; the seat itself is built by the
- * runner, which is where a seat's home and its model's `models.json` are known.
- */
-const seatSpec = (seat: SeatArg): SeatSpec =>
-  seat.kind === "bot"
-    ? { kind: "bot", bot: seat.bot }
-    : { kind: "pi", model: `${seat.provider}/${seat.model}`, thinking: DEFAULT_THINKING };
 
 /**
  * Run one `no-dice` command line and report on it. Zero for a match that was
