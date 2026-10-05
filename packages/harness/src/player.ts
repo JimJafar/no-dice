@@ -49,6 +49,47 @@ export interface RejectedSubmission {
 }
 
 /**
+ * Why a seat played no orders this turn, in the words brief §6.3's turn-outcome
+ * table gives and `passReasonSchema` in `@no-dice/runner/log` accepts. The last
+ * two are not turns at all: they end the match, and a player reports them by
+ * throwing `MatchVoided` rather than by handing back an outcome.
+ *
+ * The names are repeated here rather than imported, for the same reason
+ * `ToolCallRecord` repeats `toolCallSchema`: the harness does not depend on the
+ * runner, and the runner checks what a seat reports against its own schema.
+ */
+export type PassReason =
+  | "no_submission"
+  | "timeout"
+  | "token_budget"
+  | "provider_error"
+  | "harness_crash"
+  | "tool_surface";
+
+/** Why a match is voided rather than played: the two match-level reasons above. */
+export type VoidReason = Extract<PassReason, "harness_crash" | "tool_surface">;
+
+/**
+ * A match-level failure: the seat's Pi process died, or the seat reached a tool
+ * outside the seven. Brief §6.3 voids the match for either, so a log of it must
+ * never be written as a match that was played; a voided match is replayed from
+ * turn 1 on the same seed.
+ *
+ * A player throws this instead of reporting a turn, because a turn that was
+ * never played has no pass reason.
+ */
+export class MatchVoided extends Error {
+  /** Which of the two match-level rules the seat broke. */
+  readonly reason: VoidReason;
+
+  constructor(reason: VoidReason, message: string) {
+    super(message);
+    this.name = "MatchVoided";
+    this.reason = reason;
+  }
+}
+
+/**
  * What one seat's provider run added to that seat's conversation over one turn.
  *
  * A model seat knows these and a bot seat does not, which is why they travel
@@ -89,6 +130,13 @@ export interface TurnOutcome {
   /** The submission the server refused before the final one, if it refused one. */
   rejected: RejectedSubmission | null;
   /**
+   * Why the seat played no orders, as the seat itself can say: `null` when it
+   * submitted. A seat that ran out of its turn is aborted by the runner, which
+   * is the one who knows the turn ran out, so a player leaves `no_submission`
+   * here and the runner replaces it with `timeout`.
+   */
+  passed: PassReason | null;
+  /**
    * What the seat's provider run cost it over this turn, when it runs a
    * provider at all: absent for a bot, present for a seat driven through Pi.
    */
@@ -101,6 +149,22 @@ export interface Player {
   start(ctx: PlayerContext): Promise<void>;
   /** Play one turn: read the position, decide, submit. */
   playTurn(turn: number): Promise<TurnOutcome>;
+  /**
+   * Stop what the seat is doing right now, and leave it in the match.
+   *
+   * Brief §6.3 aborts a turn that ran out of its time, spent its output-token
+   * budget or is still running after it submitted, and the seat is prompted
+   * again next turn with the aborted turn still in its history. So this ends a
+   * turn, not a seat: it must not throw away the conversation, and the runner
+   * never restarts a player to get out of a turn. The turn in flight answers
+   * with the outcome it has, passed.
+   *
+   * `ctx` is the context the seat goes on playing with. A runner that replaces
+   * the connection a seat reaches the match over gives it a new token with it,
+   * and a player that reconnects uses this one; a player whose connection is
+   * fixed for the match is given the context it started with.
+   */
+  abort(ctx: PlayerContext): Promise<void>;
   /** Let the player go. Called once, when the match is over. */
   stop(): Promise<void>;
 }

@@ -501,10 +501,11 @@ describe("a seat that does not play its turn", () => {
     // its own attempt would have been answered `already_submitted`.
     expect(second.players.B.passed).toBe("timeout");
     expect(second.players.B.orders).toEqual([]);
-    expect(second.players.B.tool_calls.map((call) => call.tool)).toEqual([
-      "get_rules",
-      "get_state",
-    ]);
+    // The seat was aborted rather than restarted, so it came into turn 2 still
+    // holding the map it read on turn 1 and asked only for the position. What the
+    // abandoned turn had left on the wire was refused: the connection it was on
+    // is replaced, and the token that authenticated it is replaced with it.
+    expect(second.players.B.tool_calls.map((call) => call.tool)).toEqual(["get_state"]);
     // The seat that kept up played both turns, and the match still reached one.
     for (const turn of [first, second]) {
       expect(turn.players.A.passed).toBeNull();

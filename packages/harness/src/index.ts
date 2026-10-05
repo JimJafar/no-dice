@@ -54,8 +54,11 @@ export type { BotPlayerOptions, BotTools, Decision, SubmitVerdict } from "./bot-
 export type {
   Player,
   PlayerContext,
+  PassReason,
   ProviderTurn,
   RejectedSubmission,
   ToolCallRecord,
   TurnOutcome,
+  VoidReason,
 } from "./player.ts";
+export { MatchVoided } from "./player.ts";

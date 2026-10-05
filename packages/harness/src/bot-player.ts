@@ -87,7 +87,14 @@ const noSubmission = (turn: number, toolCalls: ToolCallRecord[]): TurnOutcome =>
   intent: "",
   prediction: "",
   rejected: null,
+  passed: "no_submission",
 });
+
+/**
+ * The turn a call belonged to was abandoned while the call was in flight. Such
+ * a call has no turn to be recorded in, so it is dropped rather than reported.
+ */
+class AbandonedTurn extends Error {}
 
 /** How a player reaches a real match: the endpoint, and the seat's bearer token. */
 const httpTransport = (ctx: PlayerContext): Transport =>
@@ -117,6 +124,30 @@ export class BotPlayer<Rules = unknown, State = unknown, Order = unknown> implem
     await client.connect((this.options.transport ?? httpTransport)(ctx));
   }
 
+  /**
+   * Stop the turn the seat is in the middle of, and leave it in the match. A bot
+   * has no conversation to keep, so its session is its connection: the way to
+   * end a turn is to close that connection, which drops every call the
+   * abandoned turn still had in flight, and connect again for the turn after —
+   * on the context the runner hands over, which carries the token the seat is
+   * now playing with. What the seat knows, the map it read on turn 1, is kept.
+   */
+  async abort(ctx: PlayerContext): Promise<void> {
+    const client = this.client;
+    // Detached before it is closed, so a call in flight on that client can see
+    // it is no longer the seat's and give up rather than report an error.
+    this.client = null;
+    if (client !== null) {
+      try {
+        await client.close();
+      } catch {
+        // The connection is already gone; there is nothing to close.
+      }
+    }
+    const next = new Client({ name: "no-dice-bot-player", version: "0.0.0" });
+    this.client = next;
+    await next.connect((this.options.transport ?? httpTransport)(ctx));
+  }
   async stop(): Promise<void> {
     const client = this.client;
     this.client = null;
@@ -125,14 +156,27 @@ export class BotPlayer<Rules = unknown, State = unknown, Order = unknown> implem
   }
 
   /**
-   * One turn, end to end: the position read, the decision made, the submission
-   * sent, and — if the server refused it — one resubmission with the refused
-   * orders gone. Every call is recorded as it is made, so a turn that goes wrong
-   * part way still reports what it did.
+   * One turn, end to end, and what an abandoned turn leaves behind: the calls it
+   * had already made, and no orders.
    */
   async playTurn(turn: number): Promise<TurnOutcome> {
-    const { tools } = this.options;
     const toolCalls: ToolCallRecord[] = [];
+    try {
+      return await this.play(turn, toolCalls);
+    } catch (error) {
+      if (error instanceof AbandonedTurn) return noSubmission(turn, toolCalls);
+      throw error;
+    }
+  }
+
+  /**
+   * The turn itself: the position read, the decision made, the submission sent,
+   * and — if the server refused it — one resubmission with the refused orders
+   * gone. Every call is recorded as it is made, so a turn that goes wrong part
+   * way still reports what it did.
+   */
+  private async play(turn: number, toolCalls: ToolCallRecord[]): Promise<TurnOutcome> {
+    const { tools } = this.options;
 
     if (this.rules === null) {
       const rules = await this.call(tools.rules, {}, toolCalls);
@@ -158,6 +202,7 @@ export class BotPlayer<Rules = unknown, State = unknown, Order = unknown> implem
         intent: decision.intent,
         prediction: decision.prediction,
         rejected: null,
+        passed: verdict.accepted ? null : "no_submission",
       };
     }
 
@@ -169,14 +214,16 @@ export class BotPlayer<Rules = unknown, State = unknown, Order = unknown> implem
       { orders: verdict.retry, intent: decision.intent, prediction: decision.prediction },
       toolCalls,
     );
+    const submitted = this.options.verdict(second.result, verdict.retry).accepted;
     return {
       turn,
       toolCalls,
-      submitted: this.options.verdict(second.result, verdict.retry).accepted,
+      submitted,
       orders: verdict.retry,
       intent: decision.intent,
       prediction: decision.prediction,
       rejected: verdict.rejected,
+      passed: submitted ? null : "no_submission",
     };
   }
 
@@ -196,7 +243,14 @@ export class BotPlayer<Rules = unknown, State = unknown, Order = unknown> implem
     // The SDK's type also allows a task handle, which is how a server defers a
     // long-running tool. A game server answers its tools directly, so what
     // comes back is the result.
-    const answered = (await client.callTool({ name: tool, arguments: args })) as CallToolResult;
+    let answered: CallToolResult;
+    try {
+      answered = (await client.callTool({ name: tool, arguments: args })) as CallToolResult;
+    } catch (error) {
+      if (client !== this.client) throw new AbandonedTurn();
+      throw error;
+    }
+    if (client !== this.client) throw new AbandonedTurn();
     const ms = Math.max(0, Math.round(performance.now() - started));
     const error = answered.isError === true;
     const result = answerOf(answered);

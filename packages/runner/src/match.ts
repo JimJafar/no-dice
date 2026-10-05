@@ -7,10 +7,15 @@
  * to tell a tool who is calling. A turn then opens on the server, both seats are
  * asked for it together, and it is resolved once neither of them has anything
  * left to do or the turn has run out of time; a seat that was still playing when
- * it ran out is taken out of the match and back in before that turn is recorded.
- * The log is written last, and written atomically: brief §6.5 treats an existing
- * log as a match that has already been played, so a half-written file must never
- * be the one a resume finds.
+ * it ran out is aborted, and stays in the match for the turn after. The log is
+ * written last, and written atomically: brief §6.5 treats an existing log as a
+ * match that has already been played, so a half-written file must never be the
+ * one a resume finds.
+ *
+ * A match is only written when it was played. A seat that reports a match-level
+ * failure — its process died, or it reached a tool outside the seven — throws
+ * `MatchVoided`, and the run ends with no log on disk for a resume to mistake
+ * for a match.
  *
  * Only bots can be seated until milestone 03 lands the Pi harness. A bot is
  * seeded from the match seed and its seat, so the same match run twice plays the
@@ -20,7 +25,7 @@
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { BotPlayer } from "@no-dice/harness";
+import { BotPlayer, MatchVoided } from "@no-dice/harness";
 import type { Player, PlayerContext, TurnOutcome } from "@no-dice/harness";
 import { greedyBot, randomBot } from "@no-dice/salient-bots";
 import type { Bot, BotOrder } from "@no-dice/salient-bots";
@@ -56,6 +61,9 @@ const TURN_TIMEOUT_MS = 300_000;
 
 /** The resubmission brief §6.2 gives a seat whose first submission was refused. */
 const RESUBMISSIONS = 1;
+
+/** How long an aborted seat is given to hand back the turn it was aborted out of. */
+const ABORT_GRACE_MS = 10_000;
 
 /** The URL recorded for a seat that was handed its transport instead of an endpoint. */
 const LINKED_URL = "in-memory";
@@ -230,30 +238,54 @@ interface SeatTurn {
   wallMs: number;
 }
 
+/** The same promise, answered `null` if it has not arrived within `ms`. */
+const within = async <T>(promise: Promise<T>, ms: number): Promise<T | null> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
 /**
  * One seat's turn, under brief §6.3's five minutes. A seat that settles hands
- * back what it did; one still playing when the clock runs out hands back nothing,
- * and the runner logs its turn as a pass.
+ * back what it did; one still playing when the clock runs out is aborted and
+ * hands back what it had done by then, and the runner logs its turn as a pass.
  *
- * Brief §6.3 aborts a session that overruns. Racing the clock does not do that:
- * `Player` has no abort yet — milestone 03 gives `PiPlayer` one — so the turn the
- * seat was playing is left running and only its answer is dropped here. What
- * keeps it out of the match is the caller, which takes the seat out and back in
- * before that turn is recorded and resolved; see `abortSeat`.
+ * Aborting is the seat's own affair, and is asked for by the caller so it can
+ * put a new token under a seat whose connection it replaces: `Player.abort`
+ * ends the turn and leaves the seat in the match, with the aborted turn still
+ * in its history, and the runner never restarts a player to get out of a turn.
+ * The aborted turn is still waited for, briefly, because it carries the calls
+ * the seat did make; a seat that cannot answer for itself, its process gone, is
+ * what makes that wait end empty-handed.
  */
-const playSeat = async (player: Player, turn: number, timeoutMs: number): Promise<SeatTurn> => {
+const playSeat = async (
+  player: Player,
+  turn: number,
+  timeoutMs: number,
+  abort: () => Promise<void>,
+): Promise<SeatTurn> => {
   const started = performance.now();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), timeoutMs);
-  });
   const played = player.playTurn(turn);
-  const outcome = await Promise.race([played, deadline]);
-  if (timer !== undefined) clearTimeout(timer);
-  if (outcome === null) void played.catch(() => undefined);
+  // The turn's failure is picked up by the races below, or by the caller's; this
+  // only keeps Node from calling an unhandled rejection fatal in between.
+  played.catch(() => undefined);
+  let outcome = await within(played, timeoutMs);
+  const timedOut = outcome === null;
+  if (timedOut) {
+    await abort();
+    outcome = await within(played, ABORT_GRACE_MS);
+  }
   return {
     outcome,
-    timedOut: outcome === null,
+    timedOut,
     wallMs: Math.max(0, Math.round(performance.now() - started)),
   };
 };
@@ -267,9 +299,11 @@ const playSeat = async (player: Player, turn: number, timeoutMs: number): Promis
  */
 const withHarness = (record: TurnPlayerRecord, played: SeatTurn): TurnPlayerRecord => ({
   ...record,
-  // The server can only say a seat never submitted. Over a turn that ran out of
-  // time, brief §6.3's reason is the timeout.
-  passed: record.passed === null ? null : played.timedOut ? "timeout" : "no_submission",
+  // The server can only say a seat never submitted. Brief §6.3's table names the
+  // reason, and the seat is the one that can tell most of them; a turn that ran
+  // out of its time is the one the runner caused, and it says so here.
+  passed:
+    record.passed === null ? null : played.timedOut ? "timeout" : played.outcome?.passed ?? "no_submission",
   usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
   cost_usd: 0,
   context_tokens: 0,
@@ -302,11 +336,21 @@ const writeAtomically = async (path: string, log: MatchLog): Promise<void> => {
   }
 };
 
-/** A seat as the loop holds it: who plays it, and the token it plays with. */
+/** A seat as the loop holds it: who plays it, and how far the runner may go. */
 interface Seated {
   player: Player;
-  /** The token it was last started on. A seat that ran out of a turn gets a new one. */
+  /** The token it was started on, and plays with until its connection moves. */
   token: string;
+  /**
+   * Whether the seat reaches the match over a connection the runner may replace.
+   * It is true of a bot, whose abort reconnects it, and false of a Pi session,
+   * which holds one connection for the whole match. A connection that is
+   * replaced is given a new token with it, which is what keeps a call the
+   * abandoned turn had already sent from being counted against the turn after
+   * it; a seat whose connection cannot be replaced has that call cut off by its
+   * own abort instead, and keeps the token it was dealt.
+   */
+  replacesConnection: boolean;
 }
 
 /**
@@ -336,30 +380,26 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
     A: {
       player: playerFor(options.seats.A, "A", options.seed, connectFor(options, matches, "A")),
       token: tokens.A,
+      replacesConnection: options.seats.A.kind === "bot",
     },
     B: {
       player: playerFor(options.seats.B, "B", options.seed, connectFor(options, matches, "B")),
       token: tokens.B,
+      replacesConnection: options.seats.B.kind === "bot",
     },
   };
 
   /**
-   * Brief §6.4's "abort any player still running". The seat's token is replaced
-   * first, so a call the abandoned turn had already sent is refused by the match
-   * instead of being counted — against the turn being closed if it arrives before
-   * that turn is resolved, against the next one if it arrives after. A seat that
-   * overran its turn would otherwise hand that turn's orders in as the next
-   * turn's. The player is then stopped and started again on the new token, which
-   * kills its in-flight calls and leaves it able to be asked for the next turn.
-   * `Player` has no abort yet — milestone 03 gives `PiPlayer` one — so this is
-   * what the runner can do alone, and the price is that a seat which ran out of
-   * its turn starts the next one with nothing of the turn carried over.
+   * Brief §6.4's "abort any player still running", done without taking the seat
+   * out of the match. The seat keeps its session, and with it the aborted turn:
+   * brief §6.3 prompts it again next turn over the conversation that turn is
+   * part of. Only a seat whose connection the runner replaces is re-tokened, and
+   * it is handed the new token by its own abort.
    */
   const abortSeat = async (seat: Seat): Promise<void> => {
     const at = seated[seat];
-    at.token = matches.rotateToken(matchId, seat);
-    await at.player.stop();
-    await at.player.start({ serverUrl, token: at.token });
+    if (at.replacesConnection) at.token = matches.rotateToken(matchId, seat);
+    await at.player.abort({ serverUrl, token: at.token });
   };
 
   const turns: TurnRecord[] = [];
@@ -373,17 +413,12 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
     for (let turn = 1; turn <= config.turns && result === null; turn++) {
       matches.openTurn(matchId);
       const [playedA, playedB] = await Promise.all([
-        playSeat(seated.A.player, turn, turnTimeoutMs),
-        playSeat(seated.B.player, turn, turnTimeoutMs),
+        playSeat(seated.A.player, turn, turnTimeoutMs, () => abortSeat("A")),
+        playSeat(seated.B.player, turn, turnTimeoutMs, () => abortSeat("B")),
       ]);
-      // Both seats have answered, or the turn has had its time. A seat still
-      // playing is taken out of the match here, before the turn is recorded and
-      // resolved, which is where brief §6.4 aborts a player still running: left
-      // as it is, the calls of the turn it just lost are spent against the turn
-      // after it, and a submission that never arrived in time is taken as that
-      // turn's.
-      if (playedA.timedOut) await abortSeat("A");
-      if (playedB.timedOut) await abortSeat("B");
+      // Both seats have answered, or the turn has had its time; a seat still
+      // playing was aborted by `playSeat` on the way here, which is brief §6.4's
+      // "abort any player still running", and it stays in the match.
       // The engine gets what each seat handed in, and the record of the turn is
       // read back afterwards so it carries the orders the engine dropped and why.
       const resolved = matches.resolveTurn(matchId);
@@ -399,6 +434,15 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
         after: boardOf(session.state, config),
       });
     }
+  } catch (error) {
+    // Brief §6.3's two match-level failures end the match rather than a turn, and
+    // they end it before the log is written: a voided match must never be
+    // presented as one that was played, and a match voided is replayed from turn
+    // 1 on the same seed rather than resumed from a log.
+    if (error instanceof MatchVoided) {
+      throw new MatchVoided(error.reason, `match ${matchId} is voided: ${error.message}`);
+    }
+    throw error;
   } finally {
     // Brief §6.4 stops both players before the log is written, so nothing a seat
     // does on its way out can land in a turn that has already been recorded.
@@ -443,7 +487,8 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
 /**
  * How one seat reaches the server: the endpoint by default, a linked pair if
  * given. The token comes from the context the seat was started with, which is the
- * current one — a seat that ran out of a turn is started again on a new token.
+ * only one it is ever given: a seat that is aborted over a turn keeps its
+ * connection and its identity.
  */
 function connectFor(
   options: RunMatchOptions,

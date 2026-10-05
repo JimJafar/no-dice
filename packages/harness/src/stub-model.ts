@@ -635,6 +635,37 @@ export const callsToolOutsideTheSeven = (name = "mcp__salient__launch_nukes"): S
 ];
 
 /**
+ * A seat whose conversation outgrows the model's window inside one turn.
+ *
+ * Pi compacts when the conversation passes `contextWindow - reserveTokens`, and
+ * the reserve defaults to 16384 tokens, so compaction cannot be forced by a
+ * small window alone: the cut point has to fall somewhere, which needs a reply
+ * with real bulk in it. Play this against a `contextWindow` of 40000 and the
+ * session crosses the line on the first turn.
+ *
+ * The summarisation call compaction makes is answered by the same script, which
+ * is why a test that plays past compaction re-arms it: the summary eats one of
+ * its entries.
+ */
+export const outgrowsTheWindow = (
+  text = "the map is a hex grid and the map is the territory ".repeat(3_000),
+  usage: StubUsage = { input: 30_000, output: 2_000, cacheRead: 0, cacheWrite: 0 },
+): StubReply[] => [
+  { toolCalls: [{ name: salientToolName("get_state"), args: {} }], usage },
+  {
+    toolCalls: [
+      {
+        name: salientToolName("submit_orders"),
+        args: { orders: [], intent: "The stub is holding still.", prediction: "The other seat moves east." },
+      },
+    ],
+    usage,
+  },
+  { text, usage },
+  { text: "I have submitted. I will hold this line." },
+];
+
+/**
  * A seat that is busy for longer than its turn allows.
  *
  * The script is held on its last entry, so every turn overruns the same way,

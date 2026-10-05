@@ -23,6 +23,16 @@
  * alive across turns because the match is one continuous game, and Pi's stats
  * are cumulative over that session, so a turn's tokens and cost are the
  * difference from the totals the last turn left behind.
+ *
+ * Brief §6.3's turn outcomes are this class's business, except for the one the
+ * runner causes: a turn that settles with an accepted submission is a normal
+ * turn, one that settles without one passes with `no_submission`, a provider
+ * that fails after Pi's own retries passes with `provider_error`, and output
+ * tokens over the per-turn budget abort the seat and pass with `token_budget`.
+ * A turn that runs out of its time is aborted by the runner, which is the one
+ * that knows, and the runner says `timeout` on the way to the log. The two
+ * match-level failures — a tool outside the seven, and the Pi process dying —
+ * are not turns, and are thrown as `MatchVoided`.
  */
 import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -32,13 +42,16 @@ import type { SessionStats } from "@earendil-works/pi-coding-agent";
 
 import { piCli } from "./pi-cli.ts";
 import { createSeatHome, MCP_SERVER_NAME, type SeatHome, type SeatId } from "./pi-home.ts";
-import type {
-  Player,
-  PlayerContext,
-  ProviderTurn,
-  RejectedSubmission,
-  ToolCallRecord,
-  TurnOutcome,
+import {
+  MatchVoided,
+  type PassReason,
+  type Player,
+  type PlayerContext,
+  type ProviderTurn,
+  type RejectedSubmission,
+  type ToolCallRecord,
+  type TurnOutcome,
+  type VoidReason,
 } from "./player.ts";
 import { answerOf } from "./tool-answer.ts";
 
@@ -68,6 +81,22 @@ const TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
  * records.
  */
 const SUBMIT_TOOL = "submit_orders";
+
+/**
+ * The seven tools brief §6.3 locks a seat to, named as the log names them. The
+ * seat is offered exactly these — `createSeatHome` turns off every built-in tool
+ * and connects one MCP server — so a call to anything else is a seat that
+ * reached outside the game, which voids the match however the call was answered.
+ */
+const SALIENT_TOOLS = new Set([
+  "get_rules",
+  "get_state",
+  "scout",
+  "simulate",
+  "submit_orders",
+  "read_notes",
+  "write_notes",
+]);
 
 /** How a seat is driven. */
 export interface PiPlayerOptions {
@@ -101,6 +130,12 @@ export interface PiPlayerOptions {
    * provider's key.
    */
   env?: Record<string, string>;
+  /**
+   * The output tokens one turn may cost before the seat is aborted and the turn
+   * passes with `token_budget`. Brief §6.3 leaves the number to the experiment,
+   * so there is no default: `null`, and a turn is bounded by its time alone.
+   */
+  outputTokenBudget?: number | null;
 }
 
 /** A submission tool's answer, as the harness reads it. */
@@ -142,9 +177,22 @@ const noteOf = (args: unknown, key: "intent" | "prediction"): string => {
   return typeof value === "string" ? value : "";
 };
 
-/** The tool as the log names it: Pi's name, without the MCP server's prefix. */
+/** A tool as the log names it: Pi's name, without the MCP server's prefix. */
 const stripPrefix = (tool: string): string =>
   tool.startsWith(TOOL_PREFIX) ? tool.slice(TOOL_PREFIX.length) : tool;
+
+/**
+ * Whether a failed command means the seat's Pi process is gone.
+ *
+ * `RpcClient` exposes no exit event: when the child dies it remembers an error
+ * and rejects every command that is outstanding or comes later with it, so a
+ * rejected command is how a death is noticed. Matching on the text is what there
+ * is to match on; the phrases are the client's own.
+ */
+const seatIsGone = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /process exited|process error|Client not started/i.test(message);
+};
 
 /** A turn's tokens, from the cumulative totals either side of it. */
 const delta = (from: number, to: number): number =>
@@ -159,33 +207,40 @@ const delta = (from: number, to: number): number =>
  * `get_session_stats` answers the whole session, so the turn is the difference
  * between the totals it reports now and the ones the turn before it left
  * behind. `compacted` is the one figure that is not a number: it comes from the
- * events the turn produced.
+ * events the turn produced, or from the conversation being smaller than the
+ * turn before it left it, which is what a compaction is.
  */
 const providerTurn = (
   previous: SessionStats | null,
   stats: SessionStats,
   compacted: boolean,
-): ProviderTurn => ({
-  usage: {
-    input: delta(previous?.tokens.input ?? 0, stats.tokens.input),
-    output: delta(previous?.tokens.output ?? 0, stats.tokens.output),
-    cache_read: delta(previous?.tokens.cacheRead ?? 0, stats.tokens.cacheRead),
-    cache_write: delta(previous?.tokens.cacheWrite ?? 0, stats.tokens.cacheWrite),
-  },
-  costUsd: delta(previous?.cost ?? 0, stats.cost),
+): ProviderTurn => {
   // `null` when Pi cannot say, which is what a compaction leaves behind until
   // the next assistant answer. Not folded into zero.
-  contextTokens: stats.contextUsage?.tokens ?? null,
-  compacted,
-});
+  const contextTokens = stats.contextUsage?.tokens ?? null;
+  const before = previous?.contextUsage?.tokens ?? null;
+  return {
+    usage: {
+      input: delta(previous?.tokens.input ?? 0, stats.tokens.input),
+      output: delta(previous?.tokens.output ?? 0, stats.tokens.output),
+      cache_read: delta(previous?.tokens.cacheRead ?? 0, stats.tokens.cacheRead),
+      cache_write: delta(previous?.tokens.cacheWrite ?? 0, stats.tokens.cacheWrite),
+    },
+    costUsd: delta(previous?.cost ?? 0, stats.cost),
+    contextTokens,
+    // Either signal is enough. The events are the direct one; a drop is the
+    // trace it leaves in the totals, and catches a compaction whose events the
+    // turn never reported because the seat was aborted over it.
+    compacted: compacted || (before !== null && contextTokens !== null && contextTokens < before),
+  };
+};
 
 /**
  * A seat played by one Pi session that lasts the match.
  *
  * `start` writes the seat's home and spawns the pinned CLI; `playTurn` prompts
- * once and reads that turn's events; `stop` lets the process go. A turn that
- * runs out of its time, a provider that fails and a tool outside the seven are
- * the turn rules, and are not this class's business yet.
+ * once and reads that turn's events; `abort` ends the turn in flight and leaves
+ * the session alone; `stop` lets the process go.
  */
 export class PiPlayer implements Player {
   private readonly options: PiPlayerOptions;
@@ -199,6 +254,15 @@ export class PiPlayer implements Player {
    * these, and these are replaced with the new totals at the end of every turn.
    */
   private totals: SessionStats | null = null;
+  /** The bearer token the seat's connection was made with, for the whole match. */
+  private token: string | null = null;
+  /**
+   * Ends the turn in flight because the seat's process was found gone. Set while
+   * a turn is being played, and called by `abort` when the command it sent was
+   * refused by a dead child: without it, a turn whose `agent_settled` can never
+   * arrive would hang the match.
+   */
+  private seatGone: (() => void) | null = null;
 
   // Assigned in the body rather than as constructor parameters: the `no-dice`
   // bin runs this file through Node's type stripping, which erases annotations
@@ -246,6 +310,7 @@ export class PiPlayer implements Player {
       );
     }
     this.home = home;
+    this.token = ctx.token;
 
     const client = new RpcClient({
       cliPath: piCli().path,
@@ -283,6 +348,9 @@ export class PiPlayer implements Player {
    * at once and an event that arrives between the two would be missing from the
    * turn. The prompt text is brief §6.3's, exactly: `Turn <n> of 25. Play your
    * turn.`, with nothing else, so both seats are asked identically.
+   *
+   * Nothing here retries a turn: brief §6.3 forbids it, and Pi's own provider
+   * retries are the only ones a turn gets.
    */
   async playTurn(turn: number): Promise<TurnOutcome> {
     const client = this.client;
@@ -292,20 +360,41 @@ export class PiPlayer implements Player {
     /** The calls Pi has started but not finished, keyed by its own call id. */
     const open = new Map<string, { tool: string; args: unknown; at: number }>();
     let compacted = false;
+    /** Why the turn is ending without orders, as far as this end can tell. */
+    let passed: PassReason = "no_submission";
+    /** A tool the seat was not given, which voids the match. */
+    let outside: string | null = null;
+    /** Output tokens the turn's answers have reported, against the budget. */
+    let outputTokens = 0;
+    let died = false;
+
     let settle!: () => void;
     const settled = new Promise<void>((resolveSettled) => {
       settle = resolveSettled;
     });
+    let gone!: () => void;
+    const seatGone = new Promise<void>((resolveGone) => {
+      gone = resolveGone;
+    });
+    this.seatGone = gone;
 
     const unsubscribe = client.onEvent((event) => {
       switch (event.type) {
-        case "tool_execution_start":
+        case "tool_execution_start": {
+          const tool = stripPrefix(event.toolName);
+          if (!event.toolName.startsWith(TOOL_PREFIX) || !SALIENT_TOOLS.has(tool)) {
+            // Brief §6.3 voids the match over this, so there is no point letting
+            // the seat go on playing the turn.
+            outside ??= event.toolName;
+            this.stopTheSeat(client);
+          }
           open.set(event.toolCallId, {
             tool: event.toolName,
             args: event.args,
             at: performance.now(),
           });
           break;
+        }
         case "tool_execution_end": {
           // Pi reports the call id on both halves, so the pair is matched on it
           // and the wall time is measured at this end of the wire.
@@ -325,6 +414,22 @@ export class PiPlayer implements Player {
         case "compaction_end":
           compacted = true;
           break;
+        case "auto_retry_end":
+          // Pi's own retries are over and the provider still said no. The turn
+          // is not retried from here: brief §6.3 passes it, with the reason.
+          if (event.success === false) passed = "provider_error";
+          break;
+        case "message_end": {
+          const message = event.message;
+          if (message.role !== "assistant") break;
+          outputTokens += message.usage?.output ?? 0;
+          const budget = this.options.outputTokenBudget ?? null;
+          if (budget !== null && outputTokens > budget && outside === null) {
+            passed = "token_budget";
+            this.stopTheSeat(client);
+          }
+          break;
+        }
         case "agent_settled":
           // The only signal that Pi will do nothing more for this prompt.
           // `agent_end` is not enough: a retry, a compaction or a queued
@@ -336,15 +441,27 @@ export class PiPlayer implements Player {
 
     try {
       const prompt = `Turn ${String(turn)} of ${String(this.turns)}. Play your turn.`;
-      const disposition = await client.prompt(prompt);
+      const disposition = await this.command("the prompt", () => client.prompt(prompt));
       // A prompt that Pi handled without starting a run — an extension command,
       // say — never settles, so waiting on it would hang the turn.
-      if (disposition === "started") await settled;
+      if (disposition === "started") {
+        const ended = await Promise.race([settled.then(() => false), seatGone.then(() => true)]);
+        died = ended;
+      }
     } finally {
       unsubscribe();
+      this.seatGone = null;
     }
 
-    const stats = await client.getSessionStats();
+    if (died) throw this.voided("harness_crash", "the seat's Pi process exited during the match");
+    if (outside !== null) {
+      throw this.voided(
+        "tool_surface",
+        `the seat called ${outside}, which is not one of the seven tools it was given`,
+      );
+    }
+
+    const stats = await this.command("the session stats", () => client.getSessionStats());
     const previous = this.totals;
     this.totals = stats;
 
@@ -352,11 +469,12 @@ export class PiPlayer implements Player {
     const last = submissions.at(-1) ?? null;
     const refused = submissions.find((call) => submissionOf(call.result)?.accepted === false) ?? null;
     const verdict = last === null ? null : submissionOf(last.result);
+    const submitted = verdict?.accepted === true;
 
     return {
       turn,
       toolCalls,
-      submitted: verdict?.accepted === true,
+      submitted,
       orders: ordersOf(last?.args),
       intent: noteOf(last?.args, "intent"),
       prediction: noteOf(last?.args, "prediction"),
@@ -364,14 +482,83 @@ export class PiPlayer implements Player {
         refused === null
           ? null
           : { orders: ordersOf(refused.args), wasted: submissionOf(refused.result)?.wasted ?? [] },
+      // A turn the runner aborted is a turn that ran out of its time, but the
+      // runner is the one that knows that; the seat only knows it has no orders.
+      passed: submitted ? null : passed,
       provider: providerTurn(previous, stats, compacted),
     };
+  }
+
+  /**
+   * End the turn this seat is in the middle of, and leave the seat in the match:
+   * brief §6.3 aborts a turn and never a session, so the conversation, the tool
+   * calls already made and the aborted turn itself all stay in the history the
+   * next turn is prompted on.
+   *
+   * A seat whose process has died cannot be aborted, and saying so here would
+   * hide the reason the match is over: the death is reported by the turn in
+   * flight, which is unblocked by this.
+   */
+  async abort(ctx: PlayerContext): Promise<void> {
+    const client = this.client;
+    if (client === null) throw new Error("the player has not started");
+    // A Pi session holds one connection, and the bearer token written into it,
+    // for the whole match: brief §6.3 keeps the conversation, and the calls it
+    // has already made were made as this seat. A runner that hands an aborted
+    // Pi seat another token has taken the seat out of the match by the back
+    // door — every call it makes from here would be refused — so it is said to
+    // out loud rather than left to show up as a seat that stops submitting.
+    if (this.token !== null && ctx.token !== this.token) {
+      throw new Error("a Pi seat cannot be given a new token in the middle of a match");
+    }
+    try {
+      await client.abort();
+    } catch (error) {
+      if (!seatIsGone(error)) throw error;
+      // There is nothing to abort. The death is reported by the turn in flight,
+      // which this unblocks.
+      this.markGone();
+    }
+  }
+
+  /** Send the seat a command, and turn a dead process into a voided match. */
+  private async command<T>(what: string, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!seatIsGone(error)) throw error;
+      this.markGone();
+      throw this.voided(
+        "harness_crash",
+        `the seat's Pi process exited during the match; ${what} was refused`,
+      );
+    }
+  }
+
+  /** The match-level failure this seat caused, as brief §6.3 names it. */
+  private voided(reason: VoidReason, message: string): MatchVoided {
+    return new MatchVoided(reason, message);
+  }
+
+  /** Tell the seat to stop what it is doing, for a rule the harness enforces. */
+  private stopTheSeat(client: RpcClient): void {
+    void client.abort().catch((error: unknown) => {
+      if (seatIsGone(error)) this.markGone();
+    });
+  }
+
+  /** End the turn in flight, because the seat's process is gone. */
+  private markGone(): void {
+    const endTurn = this.seatGone;
+    this.seatGone = null;
+    endTurn?.();
   }
 
   /** Let the seat go. The saved session stays on disk: it is the match's transcript. */
   async stop(): Promise<void> {
     const client = this.client;
     this.client = null;
+    this.token = null;
     if (client !== null) await client.stop();
   }
 }
