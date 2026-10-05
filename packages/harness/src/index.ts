@@ -7,7 +7,9 @@
  * decision function driven through an ordinary MCP client, holding a seat's
  * bearer token and seeing nothing but what the tools answer. `piCli` is where
  * the first of those gets its build: the Pi this repo pins, as a path to spawn
- * and a version to record.
+ * and a version to record. `createSeatHome` is where it gets its isolation: the
+ * config directory, empty working directory and session directory that keep the
+ * developer's own `~/.pi/agent` out of a match.
  */
 export const harnessPackage = {
   name: "@no-dice/harness",
@@ -16,5 +18,7 @@ export const harnessPackage = {
 export { BotPlayer } from "./bot-player.ts";
 export { PI_PACKAGE, piCli } from "./pi-cli.ts";
 export type { PiCli } from "./pi-cli.ts";
+export { createSeatHome } from "./pi-home.ts";
+export type { SeatHome, SeatHomeOptions, SeatId } from "./pi-home.ts";
 export type { BotPlayerOptions, BotTools, Decision, SubmitVerdict } from "./bot-player.ts";
 export type { Player, PlayerContext, RejectedSubmission, ToolCallRecord, TurnOutcome } from "./player.ts";
