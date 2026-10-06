@@ -953,8 +953,10 @@ export const renderSeriesReportMarkdown = (report: SeriesReport): string => {
     if (model.metrics.context.compactionTurns.length > 0) {
       // A seed names a pair, so each turn is named by its match: the seed and
       // the seat this model played in it, in the words the "Missing matches"
-      // list already uses for a match. Entries are separated by `; ` because the
-      // entry itself now carries commas.
+      // list already uses for a match (`<label> in seat <X>`). The seed is left
+      // bare rather than in backticks as that list puts it — this is one prose
+      // sentence, not a list of paths to open. Entries are separated by `; `
+      // because the entry itself now carries commas.
       out.push(
         `Compaction turns: ${model.metrics.context.compactionTurns
           .map(

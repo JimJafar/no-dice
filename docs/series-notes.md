@@ -239,8 +239,10 @@ names a pair — and they are the only prose in it the generator did not write.
 That kept copy predates one change to the generator, so a report regenerated from
 now on differs from it in that line: `renderSeriesReportMarkdown` now names the
 **match** each compaction turn came from — `seed 479473028, marvin/subagent in
-seat A, turn 15`, the seat model X played in — where the kept copy prints `seed
-479473028 turn 15` and the hand-written note under it says what the seed cannot.
+seat B, turn 15`, the seat model X played in, which for that pair is seat B
+because its seat-A match is the one `tool_surface` took (§5) — where the kept
+copy prints `seed 479473028 turn 15` and the hand-written note under it says what
+the seed cannot.
 The turns themselves are unchanged, and the order is the record's, so the
 line is the same one every time. The series directory is gone (§6), so nothing
 here regenerates over the kept report: it stays as it was generated, and only a

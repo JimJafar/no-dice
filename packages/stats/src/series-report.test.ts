@@ -74,6 +74,8 @@ const logOf = (input: {
   xSeat: Seat;
   result: Outcome;
   trouble?: Trouble[];
+  /** Turns on which the seat model X did not play compacted — used by a bot seat. */
+  otherCompacted?: number[];
 }): Record<string, unknown> => {
   const other: Seat = input.xSeat === "A" ? "B" : "A";
   const at = (turn: number): Trouble | undefined => input.trouble?.find((each) => each.turn === turn);
@@ -92,7 +94,10 @@ const logOf = (input: {
         usage: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
         cost_usd: 0,
         context_tokens: 0,
-        compacted: false,
+        // A bot seat runs no provider, so its context is a stated nought — unless
+        // the fixture says it compacted, which is how a test pins that a model's
+        // row names the seat *that model* held rather than model X's.
+        compacted: (input.otherCompacted ?? []).includes(turn),
         wall_ms: 0,
       };
     }
@@ -808,7 +813,7 @@ describe("a pair that lost one of its two matches", () => {
   const seriesOf = async (
     pairs: readonly {
       seed: number;
-      matches: readonly { seat: Seat; compact: number[]; voided?: boolean }[];
+      matches: readonly { seat: Seat; compact: number[]; otherCompact?: number[]; voided?: boolean }[];
     }[],
   ): Promise<string> => {
     const where = await mkdtemp(join(tmpdir(), "no-dice-series-pair-"));
@@ -824,6 +829,7 @@ describe("a pair that lost one of its two matches", () => {
             ...(match.voided === true ? [{ turn: 3, passed: "tool_surface" as const }] : []),
             ...match.compact.map((turn) => ({ turn, compacted: true, contextTokens: 0 })),
           ],
+          otherCompacted: match.otherCompact ?? [],
         });
         await writeFile(
           join(where, "matches", basename(recordPathOf(pair.seed, match.seat))),
@@ -864,7 +870,7 @@ describe("a pair that lost one of its two matches", () => {
         seed: 101,
         matches: [
           { seat: "A", compact: [6], voided: true },
-          { seat: "B", compact: [4, 9] },
+          { seat: "B", compact: [4, 9], otherCompact: [3] },
         ],
       },
     ]);
@@ -901,6 +907,13 @@ describe("a pair that lost one of its two matches", () => {
       );
       // The same words the "Missing matches" list uses for the match it names.
       expect(markdown).toContain("seed `101`, marvin/subagent in seat A");
+
+      // The seat travels with the model, not with the pair: the bot held the
+      // other seat of the same match, and its row says so. A row that printed
+      // model X's seat for every model would print seat B here.
+      const bot = pair.models.find((model) => model.label === "bot:greedy")!;
+      expect(bot.metrics.context.compactionTurns).toEqual([{ seed: 101, seat: "A", turn: 3 }]);
+      expect(markdown).toContain("Compaction turns: seed 101, bot:greedy in seat A, turn 3.");
     } finally {
       await rm(where, { recursive: true, force: true });
     }
