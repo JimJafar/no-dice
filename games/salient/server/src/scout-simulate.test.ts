@@ -17,6 +17,7 @@
  */
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import type { Seat } from "@no-dice/salient-engine";
+import type { HexLabel, LogOrder } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 
 import { MatchServer } from "./server.ts";
@@ -68,6 +69,69 @@ function bothSeatsAdvanced(server: MatchServer, matchId: string): void {
   server.resolveTurn(matchId);
   server.openTurn(matchId);
 }
+
+/**
+ * Both seats walk the corridor seed 135 leaves walkable end to end —
+ * `B6 C6 D6 E5 F5 G5 H5 I5 J5 J6` — one move a turn, except seat A resting on
+ * turn 4. D6 is a Node garrisoned to three, so a stack taking it arrives with
+ * four. Four turns leave seat A holding B6, D6 and E5, and seat B's pair split
+ * between I5 (3) and G5 (1) — G5 one hex past the ring seat A can see, and next
+ * to F5, which seat A can see.
+ */
+function bothSeatsMarched(server: MatchServer, matchId: string): void {
+  const march: { a: LogOrder[]; b: LogOrder[] }[] = [
+    { a: [{ from: "B6", to: "C6", troops: 4 }], b: [{ from: "J6", to: "J5", troops: 4 }] },
+    { a: [{ from: "C6", to: "D6", troops: 4 }], b: [{ from: "J5", to: "I5", troops: 4 }] },
+    { a: [{ from: "D6", to: "E5", troops: 1 }], b: [{ from: "I5", to: "H5", troops: 1 }] },
+    { a: [], b: [{ from: "H5", to: "G5", troops: 1 }] },
+  ];
+  for (const step of march) {
+    server.call(matchId, "A", "submit_orders", {
+      orders: step.a,
+      intent: "along the corridor",
+      prediction: "the corridor holds",
+    });
+    server.call(matchId, "B", "submit_orders", {
+      orders: step.b,
+      intent: "along the corridor",
+      prediction: "the corridor holds",
+    });
+    server.resolveTurn(matchId);
+    server.openTurn(matchId);
+  }
+}
+
+/**
+ * The ring seat A can see once the march is over, in the board's one
+ * order — the geometry both edge cases stand on. E6, which E5 also touches,
+ * is blocked and so is never answered. F5 is the last hex in, and G5 sits one
+ * hex beyond it.
+ */
+const aRingAfterMarch: HexLabel[] = [
+  "E4",
+  "F4",
+  "B5",
+  "C5",
+  "D5",
+  "E5",
+  "F5",
+  "A6",
+  "B6",
+  "C6",
+  "D6",
+  "A7",
+  "B7",
+  "C7",
+  "D7",
+];
+
+/** Seat B's own answer for the hex seat A must not see: the stack, standing there. */
+const g5AsItsOwnerSeesIt = {
+  id: "G5",
+  owner: "you",
+  troops: 1,
+  neighbours: ["H5", "H4", "G4", "F5", "F6"],
+};
 
 describe("scout", () => {
   it("spends one action point on the hex asked for and the hexes it touches", () => {
@@ -127,6 +191,35 @@ describe("scout", () => {
     // onto I6.
     expect(hexIds(revealed.hexes)).toEqual(["D5", "E5", "C6", "D6", "C7", "D7"]);
     expect(revealed.hexes.some((hex) => hex.owner === "enemy")).toBe(false);
+  });
+
+  it("leaves a stack one hex past the ring it scouted out of the answer", () => {
+    const { server, matchId } = openedMatch();
+    // Seat B's lone troop stands on G5, one hex outside seat A's ring.
+    bothSeatsMarched(server, matchId);
+    expect(hexIds(stateOf(server, matchId, "A").hexes)).toEqual(aRingAfterMarch);
+
+    // F4 is the hex at the very edge of what seat A can see. Its ring is
+    // `E4 E5 F3 F4 F5 G3 G4`: G5 touches two hexes in that ring — F5 and G4 —
+    // and is in none of it, so the scout still has to leave it out.
+    const revealed = scout(server, matchId, "A", "F4");
+
+    expect(hexIds(revealed.hexes)).toEqual(["F3", "G3", "E4", "F4", "G4", "E5", "F5"]);
+    // Nothing else in the answer carries it either: not the neighbours of the hex
+    // seat A owns inside the ring, not a 0-troop placeholder for the hex itself.
+    expect(JSON.stringify(revealed)).not.toContain("G5");
+
+    // What the scout made known stops at its ring: the three hexes of it seat A
+    // had not seen are in its answer from here on, and G5 still is not.
+    const known = hexIds(stateOf(server, matchId, "A").hexes);
+    expect(known).toContain("F3");
+    expect(known).toContain("G4");
+    expect(known).not.toContain("G5");
+
+    // The control: the stack is where the march put it, and its own seat is told.
+    expect(stateOf(server, matchId, "B").hexes.find((hex) => hex.id === "G5")).toEqual(
+      g5AsItsOwnerSeesIt,
+    );
   });
 
   it("makes the hexes it revealed known for the rest of the turn", () => {
@@ -228,6 +321,46 @@ describe("simulate", () => {
     // Only the caller's own score is answered: the enemy's would say what is on
     // the hexes it has not seen.
     expect(view.your_score_after).toBe(2);
+  });
+
+  it("keeps a stack one hex past the caller's ring out of the projection, and refuses an order from it", () => {
+    const { server, matchId } = openedMatch();
+    bothSeatsMarched(server, matchId);
+    // The ring the case stands on: F5 is the hex seat A can see, G5 the one next
+    // to it that it cannot.
+    expect(hexIds(stateOf(server, matchId, "A").hexes)).toEqual(aRingAfterMarch);
+
+    // Seat A marches its lone troop onto the last hex it can see. The projection
+    // runs on a board where G5 is empty, so nothing there fights back.
+    const view = simulate(server, matchId, "A", { orders: [{ from: "E5", to: "F5", troops: 1 }] });
+
+    expect(view.accepted).toEqual([{ from: "E5", to: "F5", troops: 1 }]);
+    expect(view.wasted).toEqual([]);
+    expect(view.changed_hexes).toEqual([
+      { id: "E5", owner: "you", troops: 0 },
+      { id: "F5", owner: "you", troops: 1 },
+      { id: "B6", owner: "you", troops: 11 },
+      { id: "D6", owner: "you", troops: 4 },
+    ]);
+    expect(view.your_score_after).toBe(7);
+    // No field of the projection names the hex: not a changed one, not an
+    // accepted order into it.
+    expect(JSON.stringify(view)).not.toContain("G5");
+
+    // An order out of G5 is refused the same way an order out of far-off I6 is:
+    // the caller may only assume orders from a hex it has seen the enemy
+    // hold, and nearly seeing it is not seeing it.
+    const refused = server.call(matchId, "A", "simulate", {
+      orders: [],
+      assumed_enemy_orders: [{ from: "G5", to: "F5", troops: 1 }],
+    });
+    expect(refused.error).toBe("unknown_enemy_hex");
+    expect(refused.result).toEqual({ error: "unknown_enemy_hex" });
+
+    // The control: the stack is where the march put it, and its own seat is told.
+    expect(stateOf(server, matchId, "B").hexes.find((hex) => hex.id === "G5")).toEqual(
+      g5AsItsOwnerSeesIt,
+    );
   });
 
   it("refuses an assumed enemy order from a hex the caller has not seen the enemy hold", () => {

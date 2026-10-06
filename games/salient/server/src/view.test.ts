@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { DEFAULT_CONFIG, boardCells, hexLabel } from "@no-dice/salient-engine";
 import type { Seat } from "@no-dice/salient-engine";
 import { matchConfigSchema } from "@no-dice/log";
-import type { HexLabel } from "@no-dice/log";
+import type { HexLabel, LogOrder } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
 
 import { MatchServer } from "./server.ts";
@@ -75,6 +75,37 @@ function bothSeatsAdvanced(server: MatchServer, matchId: string): void {
   });
   server.resolveTurn(matchId);
   server.openTurn(matchId);
+}
+
+/**
+ * Both seats walk the corridor seed 135 leaves walkable end to end —
+ * `B6 C6 D6 E5 F5 G5 H5 I5 J5 J6` — one move a turn, except seat A resting on
+ * turn 4. D6 is a Node garrisoned to three, so a stack taking it arrives with
+ * four. Four turns leave seat A holding B6, D6 and E5, and seat B's pair split
+ * between I5 (3) and G5 (1) — G5 one hex past the ring seat A can see, and next
+ * to F5, which seat A can see.
+ */
+function bothSeatsMarched(server: MatchServer, matchId: string): void {
+  const march: { a: LogOrder[]; b: LogOrder[] }[] = [
+    { a: [{ from: "B6", to: "C6", troops: 4 }], b: [{ from: "J6", to: "J5", troops: 4 }] },
+    { a: [{ from: "C6", to: "D6", troops: 4 }], b: [{ from: "J5", to: "I5", troops: 4 }] },
+    { a: [{ from: "D6", to: "E5", troops: 1 }], b: [{ from: "I5", to: "H5", troops: 1 }] },
+    { a: [], b: [{ from: "H5", to: "G5", troops: 1 }] },
+  ];
+  for (const step of march) {
+    server.call(matchId, "A", "submit_orders", {
+      orders: step.a,
+      intent: "along the corridor",
+      prediction: "the corridor holds",
+    });
+    server.call(matchId, "B", "submit_orders", {
+      orders: step.b,
+      intent: "along the corridor",
+      prediction: "the corridor holds",
+    });
+    server.resolveTurn(matchId);
+    server.openTurn(matchId);
+  }
 }
 
 describe("get_rules", () => {
@@ -273,6 +304,55 @@ describe("get_state", () => {
     // And no field of either answer names the other seat.
     expect(seatNames(a)).toEqual([]);
     expect(seatNames(b)).toEqual([]);
+  });
+
+  it("leaves a stack one hex past the visible ring out of the answer, and shows it to its own seat", () => {
+    const { server, matchId } = openedMatch();
+    // Seat B's last move steps from H5 onto G5: the hex just outside seat A's
+    // ring, which the far-away I6 case above cannot reach.
+    bothSeatsMarched(server, matchId);
+
+    const a = stateOf(server, matchId, "A");
+    const b = stateOf(server, matchId, "B");
+
+    // The ring this case was built on, in the board's order: seat A holds B6, D6
+    // and E5, and sees the fifteen hexes around them. E6, which E5 also touches,
+    // is blocked and so is not answered.
+    expect(a.hexes.map((hex) => hex.id)).toEqual([
+      "E4",
+      "F4",
+      "B5",
+      "C5",
+      "D5",
+      "E5",
+      "F5",
+      "A6",
+      "B6",
+      "C6",
+      "D6",
+      "A7",
+      "B7",
+      "C7",
+      "D7",
+    ]);
+    // G5 is not in that ring, and F5 — which is — touches it.
+    expect(a.hexes.find((hex) => hex.id === "F5")).toEqual({ id: "F5", owner: null, troops: 0 });
+
+    // The hex is left out outright: not as `enemy`, not as unowned, not with 0
+    // troops. And no other field of the answer mentions it — not last turn's
+    // events, which the capture at G5 would belong to, not the neighbours of a
+    // hex seat A can move from.
+    expect(a.hexes.some((hex) => hex.id === "G5")).toBe(false);
+    expect(JSON.stringify(a)).not.toContain("G5");
+    expect(seatNames(a)).toEqual([]);
+
+    // The control: seat B, which owns the hex, is told about the very same stack.
+    expect(b.hexes.find((hex) => hex.id === "G5")).toEqual({
+      id: "G5",
+      owner: "you",
+      troops: 1,
+      neighbours: ["H5", "H4", "G4", "F5", "F6"],
+    });
   });
 
   it("treats a hex scouted this turn as known, and spends its action point", () => {
