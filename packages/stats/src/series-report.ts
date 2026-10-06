@@ -214,15 +214,26 @@ export interface Knockouts {
   matches: Knockout[];
 }
 
-/** One turn of one match, named by the match it belongs to. */
+/**
+ * One turn of one match, named by the match it belongs to.
+ *
+ * The seed alone does not name a match: it names a *pair*, and a pair is two
+ * matches that model X plays from opposite seats. A series that lost one of them
+ * — voided, or never logged — has turns from one match of a seed and no turns
+ * from the other, and a line that cited only the seed read as though it cited
+ * the match that is not in the figures. `seat` is the seat *this model* played
+ * in that match, which is what makes the pair of figures one match.
+ */
 export interface SeriesTurnRef {
   seed: number;
+  /** The seat the model whose row this is played in that match of the pair. */
+  seat: Seat;
   turn: number;
 }
 
 /** Context size across a series: the same figures, over more than one match. */
 export interface SeriesContext {
-  byTurn: { seed: number; turn: number; tokens: number | null; compacted: boolean }[];
+  byTurn: { seed: number; seat: Seat; turn: number; tokens: number | null; compacted: boolean }[];
   compactionTurns: SeriesTurnRef[];
   unstatedTurns: SeriesTurnRef[];
   mean: number | null;
@@ -526,17 +537,24 @@ const knockoutsOf = (counted: readonly CountedMatch[]): Knockouts => {
   return { count: matches.length, turns: matches.map((each) => each.turn), matches };
 };
 
-/** Context size over several matches, each sample still naming the match it came from. */
-const contextOf = (parts: readonly { seed: number; context: TurnMetrics["context"] }[]): SeriesContext => {
+/**
+ * Context size over several matches, each sample still naming the match it came
+ * from — the seed and the seat this model held in it, since a seed names a
+ * pair. The parts come in the order the series record gives its matches, and the
+ * rows below keep that order, so a report of one series is one report.
+ */
+const contextOf = (
+  parts: readonly { seed: number; seat: Seat; context: TurnMetrics["context"] }[],
+): SeriesContext => {
   const byTurn: SeriesContext["byTurn"] = [];
   const compactionTurns: SeriesTurnRef[] = [];
   const unstatedTurns: SeriesTurnRef[] = [];
   const stated: number[] = [];
-  for (const { seed, context } of parts) {
+  for (const { seed, seat, context } of parts) {
     for (const sample of context.byTurn) {
-      byTurn.push({ seed, turn: sample.turn, tokens: sample.tokens, compacted: sample.compacted });
-      if (sample.compacted) compactionTurns.push({ seed, turn: sample.turn });
-      if (sample.tokens === null) unstatedTurns.push({ seed, turn: sample.turn });
+      byTurn.push({ seed, seat, turn: sample.turn, tokens: sample.tokens, compacted: sample.compacted });
+      if (sample.compacted) compactionTurns.push({ seed, seat, turn: sample.turn });
+      if (sample.tokens === null) unstatedTurns.push({ seed, seat, turn: sample.turn });
       else stated.push(sample.tokens);
     }
   }
@@ -562,7 +580,9 @@ const contextOf = (parts: readonly { seed: number; context: TurnMetrics["context
  * report that disagreed with the match report it was built from would be
  * unreadable.
  */
-const aggregate = (parts: readonly { seed: number; metrics: TurnMetrics }[]): ModelMetrics => {
+const aggregate = (
+  parts: readonly { seed: number; seat: Seat; metrics: TurnMetrics }[],
+): ModelMetrics => {
   const passes = zeroCounts(passReasonSchema.options);
   const wastedByReason = zeroCounts(wasteReasonSchema.options);
   const tokens = { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 };
@@ -622,7 +642,7 @@ const aggregate = (parts: readonly { seed: number; metrics: TurnMetrics }[]): Mo
       costUsd: perTurn(costUsd),
       wallMs: perTurn(wallMs),
     },
-    context: contextOf(parts.map(({ seed, metrics }) => ({ seed, context: metrics.context }))),
+    context: contextOf(parts.map(({ seed, seat, metrics }) => ({ seed, seat, context: metrics.context }))),
   };
 };
 
@@ -647,7 +667,9 @@ interface SeatScope {
 const modelRowOf = (label: string, played: readonly SeatScope[]): ModelRow => {
   const bands = {} as Record<BandName, ModelMetrics>;
   for (const band of DEPTH_BANDS) {
-    bands[band.name] = aggregate(played.map((each) => ({ seed: each.seed, metrics: each.bands[band.name].metrics })));
+    bands[band.name] = aggregate(
+      played.map((each) => ({ seed: each.seed, seat: each.seat, metrics: each.bands[band.name].metrics })),
+    );
   }
   return {
     label,
@@ -929,10 +951,17 @@ export const renderSeriesReportMarkdown = (report: SeriesReport): string => {
     for (const [label, pick] of counts) out.push(across(label, pick));
     out.push("");
     if (model.metrics.context.compactionTurns.length > 0) {
+      // A seed names a pair, so each turn is named by its match: the seed and
+      // the seat this model played in it, in the words the "Missing matches"
+      // list already uses for a match. Entries are separated by `; ` because the
+      // entry itself now carries commas.
       out.push(
         `Compaction turns: ${model.metrics.context.compactionTurns
-          .map((each) => `seed ${String(each.seed)} turn ${String(each.turn)}`)
-          .join(", ")}.`,
+          .map(
+            (each) =>
+              `seed ${String(each.seed)}, ${model.label} in seat ${each.seat}, turn ${String(each.turn)}`,
+          )
+          .join("; ")}.`,
         "",
       );
     }

@@ -236,6 +236,17 @@ that copy afterwards — one under "Missing matches" saying what the `tool_surfa
 voids were, one under the "Compaction turns:" line saying that a seed there
 names a pair — and they are the only prose in it the generator did not write.
 
+That kept copy predates one change to the generator, so a report regenerated from
+now on differs from it in that line: `renderSeriesReportMarkdown` now names the
+**match** each compaction turn came from — `seed 479473028, marvin/subagent in
+seat A, turn 15`, the seat model X played in — where the kept copy prints `seed
+479473028 turn 15` and the hand-written note under it says what the seed cannot.
+The turns themselves are unchanged, and the order is the record's, so the
+line is the same one every time. The series directory is gone (§6), so nothing
+here regenerates over the kept report: it stays as it was generated, and only a
+fresh series — or `no-dice stats --series` on a series that is on disk — prints
+the seat.
+
 `.gitignore`'s series pattern is anchored to `/series/` for this to work at all:
 unanchored, `series/` matched `reports/series/` too and the report could not be
 tracked. The runner's own series directories are all at the repository root, so

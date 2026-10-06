@@ -682,10 +682,12 @@ describe("the per-model rows", () => {
 
   it("keeps the context figures per match, and a compaction's nought out of them", () => {
     const x = report.models[0];
-    // One compaction turn in the fixture, on turn 18 of seed 101, logged with no
-    // figure because Pi had just rewritten the context.
-    expect(x.metrics.context.compactionTurns).toEqual([{ seed: 101, turn: 18 }]);
-    expect(x.metrics.context.unstatedTurns).toEqual([{ seed: 101, turn: 18 }]);
+    // One compaction turn in the fixture, on turn 18 of seed 101 from seat A,
+    // logged with no figure because Pi had just rewritten the context. The seat
+    // travels with the turn: a seed names a pair, and only one of its two
+    // matches has the turn.
+    expect(x.metrics.context.compactionTurns).toEqual([{ seed: 101, seat: "A", turn: 18 }]);
+    expect(x.metrics.context.unstatedTurns).toEqual([{ seed: 101, seat: "A", turn: 18 }]);
     const stated = COUNTED.flatMap((match) =>
       (
         match.log as {
@@ -792,6 +794,138 @@ describe("a series that is broken, or has nothing in it", () => {
   });
 });
 
+describe("a pair that lost one of its two matches", () => {
+  /**
+   * A series directory in the runner's layout, one entry per pair: the seat
+   * model X played in each of its two matches, the turns of that match which
+   * compacted, and whether the match was voided for `tool_surface` — a log that
+   * is on disk and carries the match-level pass, so it exists and is still not a
+   * result. That is the shape the first real series left: seeds `479473028` and
+   * `313966722` each lost one match to `tool_surface` and kept the other, and a
+   * compaction line naming only the seed read as though it cited the match that
+   * was voided.
+   */
+  const seriesOf = async (
+    pairs: readonly {
+      seed: number;
+      matches: readonly { seat: Seat; compact: number[]; voided?: boolean }[];
+    }[],
+  ): Promise<string> => {
+    const where = await mkdtemp(join(tmpdir(), "no-dice-series-pair-"));
+    await mkdir(join(where, "matches"), { recursive: true });
+    for (const pair of pairs) {
+      for (const match of pair.matches) {
+        const log = logOf({
+          seed: pair.seed,
+          turns: 9,
+          xSeat: match.seat,
+          result: { type: "time", winner: match.seat, turn: 9, margin: 4 },
+          trouble: [
+            ...(match.voided === true ? [{ turn: 3, passed: "tool_surface" as const }] : []),
+            ...match.compact.map((turn) => ({ turn, compacted: true, contextTokens: 0 })),
+          ],
+        });
+        await writeFile(
+          join(where, "matches", basename(recordPathOf(pair.seed, match.seat))),
+          `${JSON.stringify(log, null, 2)}\n`,
+          "utf8",
+        );
+      }
+    }
+    await writeFile(
+      join(where, "series.json"),
+      `${JSON.stringify(
+        {
+          max_pairs: pairs.length,
+          seeds: pairs.map((pair) => pair.seed),
+          pairing: { a: X, b: OPPONENT },
+          pairs: pairs.map((pair) => ({
+            seed: pair.seed,
+            matches: pair.matches.map((match) => ({
+              seat: match.seat,
+              path: recordPathOf(pair.seed, match.seat),
+              status: "played",
+              result: { type: "time", winner: match.seat, margin: 4 },
+            })),
+          })),
+          state: { stop_reason: "max_pairs", stopped_early: false },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    return where;
+  };
+
+  it("names the match each compaction turn came from, not only the pair's seed", async () => {
+    const where = await seriesOf([
+      {
+        seed: 101,
+        matches: [
+          { seat: "A", compact: [6], voided: true },
+          { seat: "B", compact: [4, 9] },
+        ],
+      },
+    ]);
+    try {
+      const pair = await seriesReport(where);
+      expect(pair.counted).toBe(1);
+      expect(pair.missing.matches.map((match) => [match.seed, match.seat, match.kind])).toEqual([
+        [101, "A", "voided"],
+      ]);
+
+      const x = pair.models.find((model) => model.label === "marvin/subagent")!;
+      // Both turns come from the seat-B match, and the row says so. The voided
+      // seat-A match compacted on turn 6 as well; that turn is not in the
+      // figures at all, because the match that logged it is not one.
+      expect(x.metrics.context.compactionTurns).toEqual([
+        { seed: 101, seat: "B", turn: 4 },
+        { seed: 101, seat: "B", turn: 9 },
+      ]);
+      expect(x.metrics.context.unstatedTurns).toEqual([
+        { seed: 101, seat: "B", turn: 4 },
+        { seed: 101, seat: "B", turn: 9 },
+      ]);
+      // The per-turn rows name their match the same way, since they too span
+      // more than one match of a pair.
+      expect(x.metrics.context.byTurn.filter((sample) => sample.compacted)).toEqual([
+        { seed: 101, seat: "B", turn: 4, tokens: null, compacted: true },
+        { seed: 101, seat: "B", turn: 9, tokens: null, compacted: true },
+      ]);
+
+      const markdown = renderSeriesReportMarkdown(pair);
+      expect(markdown).toContain(
+        "Compaction turns: seed 101, marvin/subagent in seat B, turn 4; " +
+          "seed 101, marvin/subagent in seat B, turn 9.",
+      );
+      // The same words the "Missing matches" list uses for the match it names.
+      expect(markdown).toContain("seed `101`, marvin/subagent in seat A");
+    } finally {
+      await rm(where, { recursive: true, force: true });
+    }
+  });
+
+  it("lists the turns in the order the record gives its matches", async () => {
+    // The record lists seed 102 before 101. A report is a published figure, so
+    // the line comes out in the record's order and not an order the report
+    // invented: sorting it by seed would print a different report of one series
+    // each time the matches were read in a different order.
+    const where = await seriesOf([
+      { seed: 102, matches: [{ seat: "A", compact: [5] }, { seat: "B", compact: [] }] },
+      { seed: 101, matches: [{ seat: "A", compact: [] }, { seat: "B", compact: [7] }] },
+    ]);
+    try {
+      const markdown = renderSeriesReportMarkdown(await seriesReport(where));
+      expect(markdown).toContain(
+        "Compaction turns: seed 102, marvin/subagent in seat A, turn 5; " +
+          "seed 101, marvin/subagent in seat B, turn 7.",
+      );
+    } finally {
+      await rm(where, { recursive: true, force: true });
+    }
+  });
+});
 describe("the markdown", () => {
   let markdown: string;
   beforeAll(() => {
@@ -830,7 +964,7 @@ describe("the markdown", () => {
     expect(markdown).toContain("|  | series | turns 1-8 | turns 9-17 | turns 18-25 |");
     expect(markdown).toContain("| tool errors | 5 | 1 | 1 | 3 |");
     expect(markdown).toContain("| turns | 97 | 39 | 34 | 24 |");
-    expect(markdown).toContain("Compaction turns: seed 101 turn 18.");
+    expect(markdown).toContain("Compaction turns: seed 101, marvin/subagent in seat A, turn 18.");
   });
 
   it("prints the seat split, which is the check on the board", () => {
