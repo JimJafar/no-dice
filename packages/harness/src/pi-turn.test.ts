@@ -327,6 +327,28 @@ describe("a seat's turn outcomes", () => {
   );
 
   it(
+    "lets a seat that calls one of the seven by its bare name carry on, the call refused",
+    async () => {
+      const submit = { orders: [], intent: "The stub is holding still.", prediction: "The other seat moves east." };
+      const stub = await startStub([
+        { toolCalls: [{ name: "submit_orders", args: submit }] },
+        ...callsToolThenSubmits("get_state"),
+      ]);
+      const { player } = await startSeat("A", stub);
+
+      const outcome = await player.playTurn(turn);
+
+      expect(outcome.submitted).toBe(true);
+      const [bare, ...rest] = outcome.toolCalls;
+      expect(bare).toMatchObject({ tool: "submit_orders", error: true });
+      expect(rest.map((call) => call.tool)).toEqual(["get_state", "submit_orders"]);
+
+      nextTurn();
+    },
+    SEAT_TIMEOUT_MS,
+  );
+
+  it(
     "voids the match when the seat calls a tool outside the seven",
     async () => {
       const stub = await startStub(callsToolOutsideTheSeven());

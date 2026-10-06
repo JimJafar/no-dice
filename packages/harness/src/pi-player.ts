@@ -91,6 +91,10 @@ const SUBMIT_TOOL = "submit_orders";
  * seat is offered exactly these — `createSeatHome` turns off every built-in tool
  * and connects one MCP server — so a call to anything else is a seat that
  * reached outside the game, which voids the match however the call was answered.
+ * One exception: one of the seven by its bare name (`submit_orders` for
+ * `mcp__salient__submit_orders`). Pi has no such tool and answers "not found",
+ * so nothing outside the game was reached; the call is a refused one, recorded
+ * like any other, and the turn goes on.
  */
 const SALIENT_TOOLS = new Set([
   "get_rules",
@@ -388,7 +392,9 @@ export class PiPlayer implements Player {
 
     const toolCalls: ToolCallRecord[] = [];
     /** The calls Pi has started but not finished, keyed by its own call id. */
-    const open = new Map<string, { tool: string; args: unknown; at: number }>();
+    const open = new Map<string, { tool: string; args: unknown; at: number; misnamed: boolean }>();
+    /** Calls to one of the seven by its bare name, which never reached the game. */
+    const misnamed = new Set<ToolCallRecord>();
     let compacted = false;
     /** Why the turn is ending without orders, as far as this end can tell. */
     let passed: PassReason = "no_submission";
@@ -413,7 +419,8 @@ export class PiPlayer implements Player {
       switch (event.type) {
         case "tool_execution_start": {
           const tool = stripPrefix(event.toolName);
-          if (!event.toolName.startsWith(TOOL_PREFIX) || !SALIENT_TOOLS.has(tool)) {
+          const bare = !event.toolName.startsWith(TOOL_PREFIX) && SALIENT_TOOLS.has(event.toolName);
+          if (!bare && (!event.toolName.startsWith(TOOL_PREFIX) || !SALIENT_TOOLS.has(tool))) {
             // Brief §6.3 voids the match over this, so there is no point letting
             // the seat go on playing the turn.
             outside ??= event.toolName;
@@ -423,6 +430,7 @@ export class PiPlayer implements Player {
             tool: event.toolName,
             args: event.args,
             at: performance.now(),
+            misnamed: bare,
           });
           break;
         }
@@ -432,13 +440,15 @@ export class PiPlayer implements Player {
           const started = open.get(event.toolCallId);
           open.delete(event.toolCallId);
           const at = performance.now();
-          toolCalls.push({
+          const record: ToolCallRecord = {
             tool: stripPrefix(started?.tool ?? event.toolName),
             args: started?.args ?? {},
             result: answerOf(event.result),
-            error: event.isError,
+            error: event.isError || started?.misnamed === true,
             ms: Math.max(0, Math.round(at - (started?.at ?? at))),
-          });
+          };
+          toolCalls.push(record);
+          if (started?.misnamed === true) misnamed.add(record);
           break;
         }
         case "compaction_start":
@@ -496,7 +506,7 @@ export class PiPlayer implements Player {
     const previous = this.totals;
     this.totals = stats;
 
-    const submissions = toolCalls.filter((call) => call.tool === SUBMIT_TOOL);
+    const submissions = toolCalls.filter((call) => call.tool === SUBMIT_TOOL && !misnamed.has(call));
     const last = submissions.at(-1) ?? null;
     const refused = submissions.find((call) => submissionOf(call.result)?.accepted === false) ?? null;
     const verdict = last === null ? null : submissionOf(last.result);
