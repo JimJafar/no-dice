@@ -21,7 +21,11 @@ TypeScript on Node 22+ (Node 24 is installed), pnpm workspaces (pnpm 9 installed
 for tests, zod for schemas shared between server and runner, `@modelcontextprotocol/sdk`
 with the Streamable HTTP transport for the MCP server, Vite for the static viewer.
 Players run through the Pi coding agent (`@earendil-works/pi-coding-agent`) in RPC mode,
-one session per seat per match.
+one session per seat per match. The management console the `management-ui` epic adds is a new
+workspace package, `packages/ui` (`@no-dice/ui`): a bare-Node `node:http` server bound to
+`127.0.0.1` and a Vite browser app, no framework on either side, started by its own `no-dice-ui`
+bin rather than a `no-dice ui` subcommand so the runner never has to depend back on it. Runs play
+inside that process through `runCli` and `runSeries`, not as a child `no-dice`.
 
 Repository layout follows brief §5: `packages/{harness,runner,stats}` shared by future
 games, `games/salient/{engine,server,bots,viewer,prompts,golden}`, `docs/` as-is.
@@ -106,9 +110,14 @@ Salient-specific code stays inside `games/salient`; no general game framework in
 
 ## Out of scope for v0 (brief §3)
 
-Live streaming, video export, more than two players, leagues/ratings across many models, a
-web UI for launching matches, own-orientation boards, a calibrated win-probability bar, and
-any general-purpose game framework.
+Live streaming, video export, more than two players, leagues/ratings across many models,
+own-orientation boards, a calibrated win-probability bar, and any general-purpose game framework.
+
+"A web UI for launching matches" was on that list until the `management-ui` epic, and brief §3 and
+`docs/viewer-notes.md` are amended by it: the loopback console under `packages/ui` is in scope,
+for one user on one machine. What sits outside it stays out — auth, sessions, HTTPS, hosting, more
+than one user — and so does live per-turn streaming of a match in progress, since the console's
+progress is per pair and per match.
 
 ## Open dependencies on Jim (brief §11)
 
