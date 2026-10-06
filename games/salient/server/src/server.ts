@@ -35,11 +35,22 @@ export interface TokenOwner {
 export class MatchServer {
   private readonly matches = new Map<string, MatchSession>();
   private readonly tokens = new Map<string, TokenOwner>();
+  /**
+   * The monotonic timer every match this server hosts measures its tool
+   * calls with. It is optional so a caller that does not care keeps working; the
+   * match runner passes the one its own turn timings come off, so a rerun on one
+   * seed writes the same bytes.
+   */
+  private readonly timer?: () => number;
+
+  constructor(timer?: () => number) {
+    this.timer = timer;
+  }
 
   /** Deal a new match from `seed`, and give each seat its own token. */
   createMatch(seed: number, config: Config = DEFAULT_CONFIG): CreatedMatch {
     const matchId = randomUUID();
-    this.matches.set(matchId, new MatchSession(matchId, seed, config));
+    this.matches.set(matchId, new MatchSession(matchId, seed, config, this.timer));
     const tokens: Record<Seat, string> = { A: newToken(), B: newToken() };
     this.tokens.set(tokens.A, { matchId, seat: "A" });
     this.tokens.set(tokens.B, { matchId, seat: "B" });

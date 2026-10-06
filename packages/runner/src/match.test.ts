@@ -9,9 +9,11 @@
  * - the engine, given the logged orders from the logged start position,
  *   reproduces every logged board, event, dropped order, score and result, so
  *   the log records a match that really was played rather than a plausible one;
- * - the same seed and the same bots play the same match twice, and a match over
- *   a socket writes the same log as one over a linked transport with no socket
- *   between the seats and the tools, so the transport is not what is measured;
+ * - the same seed and the same bots play the same match twice, to the
+ *   byte — timings included, once a run is given a timer that advances a fixed
+ *   step per reading — and a match over a socket writes the same log as one over
+ *   a linked transport with no socket between the seats and the tools, so the
+ *   transport is not what is measured;
  * - a seat that hands in nothing passes, with the reason brief §6.3 gives, and
  *   stays in the match to be asked again next turn.
  *
@@ -49,6 +51,19 @@ const SEATS: Record<Seat, SeatSpec> = {
   B: { kind: "bot", bot: "random" },
 };
 
+/**
+ * A monotonic timer that advances one millisecond per reading, made fresh for
+ * each run. Every duration in a log is measured off it — the runner's per-turn
+ * `wall_ms`, and the server's per-call `ms` — so two runs that make the same
+ * calls land on the same ticks and write the same bytes. A run that makes a
+ * different number of calls, because a turn timed out or a submission was
+ * refused, says so in the comparison.
+ */
+const ticks = (): (() => number) => {
+  let called = 0;
+  return () => called++;
+};
+
 /** Where the logs land, in a directory that is gone when the suite is done. */
 let dir: string;
 beforeAll(async () => {
@@ -57,14 +72,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
-
-/**
- * The only fields a rerun cannot reproduce are the ones that were measured: the
- * milliseconds the server saw each tool call take, and the wall time the runner
- * saw each turn take. Everything else in two logs of one match is byte for byte
- * the same, which is what this shows by blanking exactly those.
- */
-const withoutTimings = (text: string): string => text.replace(/"(ms|wall_ms)": [0-9]+/g, '"$1": 0');
 
 describe("a Greedy-versus-Random match over Streamable HTTP", () => {
   it("writes one log that validates against salient-log/1", async () => {
@@ -207,15 +214,29 @@ describe("a Greedy-versus-Random match over Streamable HTTP", () => {
     const second = join(dir, "twice-b.json");
     const otherSeed = join(dir, "twice-other-seed.json");
 
-    await runMatch({ out: first, seed: 135, seats: SEATS, clock });
-    await runMatch({ out: second, seed: 135, seats: SEATS, clock });
-    await runMatch({ out: otherSeed, seed: 202, seats: SEATS, clock });
+    // A timer made fresh for each run: the same calls land on the same ticks, so
+    // the two files have to be the same bytes, measured fields included.
+    await runMatch({ out: first, seed: 135, seats: SEATS, clock, timer: ticks() });
+    await runMatch({ out: second, seed: 135, seats: SEATS, clock, timer: ticks() });
+    await runMatch({ out: otherSeed, seed: 202, seats: SEATS, clock, timer: ticks() });
 
     const a = await readFile(first, "utf8");
     const b = await readFile(second, "utf8");
-    expect(withoutTimings(b)).toBe(withoutTimings(a));
+    expect(b).toBe(a);
     // The comparison is not vacuous: another seed is another match.
-    expect(withoutTimings(await readFile(otherSeed, "utf8"))).not.toBe(withoutTimings(a));
+    expect(await readFile(otherSeed, "utf8")).not.toBe(a);
+
+    // And the injected timer is what the logged durations really come off: a
+    // counter that advances a millisecond per reading costs every tool call the
+    // two readings it reads, which no wall clock would do twenty-five turns and
+    // both seats running.
+    const logged = matchLogSchema.parse(JSON.parse(a) as unknown);
+    for (const turn of logged.turns) {
+      for (const seat of ["A", "B"] as const) {
+        expect(turn.players[seat].wall_ms).toBeGreaterThan(0);
+        for (const call of turn.players[seat].tool_calls) expect(call.ms).toBe(1);
+      }
+    }
   }, 120_000);
 
   it("writes the same log over a linked transport as over HTTP", async () => {
@@ -224,12 +245,16 @@ describe("a Greedy-versus-Random match over Streamable HTTP", () => {
     /** The MCP servers this run stands on the other end of, kept until it is over. */
     const servers: McpServer[] = [];
 
-    await runMatch({ out: overHttp, seed: 135, seats: SEATS, clock });
+    // A fresh timer per run: the same calls go through the same `MatchSession`
+    // either way, so the server's per-call `ms` lands on the same ticks in
+    // both logs and is compared as written.
+    await runMatch({ out: overHttp, seed: 135, seats: SEATS, clock, timer: ticks() });
     await runMatch({
       out: linked,
       seed: 135,
       seats: SEATS,
       clock,
+      timer: ticks(),
       transport: (matches: MatchServer, _seat: Seat, token: string) => {
         const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
         const mcp = playerToolServer(matches, token);
@@ -241,9 +266,19 @@ describe("a Greedy-versus-Random match over Streamable HTTP", () => {
       },
     });
 
-    expect(withoutTimings(await readFile(linked, "utf8"))).toBe(
-      withoutTimings(await readFile(overHttp, "utf8")),
-    );
+    const overSocket = await readFile(overHttp, "utf8");
+    const linkedText = await readFile(linked, "utf8");
+
+    // The one field a transport does change is the runner's own `wall_ms`: it
+    // measures a seat's turn while the other seat plays alongside it, and a
+    // socket and a linked pair interleave those two concurrent turns
+    // differently — over HTTP seat A's turn closes before seat B's last call of
+    // turn 1 lands, over a linked pair it does not, and the shared timer counts
+    // that call inside A's turn either way. Everything the server measured,
+    // the per-call `ms` included, is byte for byte the same either way.
+    const withoutWallMs = (text: string): string => text.replace(/"wall_ms": [0-9]+/g, '"wall_ms": 0');
+    expect(withoutWallMs(linkedText)).toBe(withoutWallMs(overSocket));
+
     await Promise.all(servers.map((server) => server.close()));
   }, 60_000);
 });

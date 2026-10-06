@@ -134,6 +134,9 @@ const emptySeatTurn = (): SeatTurn => ({
 /** A call refused before it reached a tool: nothing was spent, nothing was seen. */
 const refused = (error: string): ToolOutcome => ({ ok: false, result: { error }, error, ms: 0 });
 
+/** The monotonic clock a call's `ms` is measured off when the match is given none. */
+const performanceTimer = (): number => performance.now();
+
 /** One of `submit_orders`' two notes: required, and 1 to 280 characters. */
 const isSubmissionNote = (value: unknown): value is string =>
   typeof value === "string" && value.length >= 1 && value.length <= SUBMISSION_NOTE_CHARS;
@@ -201,11 +204,19 @@ export class MatchSession {
   /** Each resolved turn's records, kept so the log can be written turn by turn. */
   private readonly settled = new Map<number, TurnPlayerRecords>();
   private previous: SettledTurn | null = null;
+  /**
+   * The monotonic clock every call's `ms` is measured off, in milliseconds. It is
+   * injectable for the same reason the runner's clock is: a logged match has to
+   * be reproducible byte for byte, and a measured duration is the one number in
+   * it no two runs would otherwise agree on.
+   */
+  private readonly timer: () => number;
 
-  constructor(matchId: string, seed: number, config: Config) {
+  constructor(matchId: string, seed: number, config: Config, timer?: () => number) {
     this.matchId = matchId;
     this.seed = seed;
     this.config = config;
+    this.timer = timer ?? performanceTimer;
     this.board = generateMap(seed, config);
     this.live = { turn: this.board.turn, seats: { A: emptySeatTurn(), B: emptySeatTurn() } };
   }
@@ -260,7 +271,7 @@ export class MatchSession {
    */
   call(seat: Seat, tool: string, args: unknown): ToolOutcome {
     if (!this.accepting) return refused("turn_not_open");
-    const started = performance.now();
+    const started = this.timer();
     const handler = KNOWN_TOOLS.has(tool) ? this.handlers[tool as ToolName] : undefined;
     const blocked = this.refusal(seat, tool);
     const handled: HandlerResult =
@@ -269,7 +280,7 @@ export class MatchSession {
         : handler === undefined
           ? { ok: false, error: "unknown_tool" }
           : handler(seat, args);
-    const ms = Math.max(0, Math.round(performance.now() - started));
+    const ms = Math.max(0, Math.round(this.timer() - started));
     this.count(seat, tool, args, handled, ms);
     return {
       ok: handled.ok,

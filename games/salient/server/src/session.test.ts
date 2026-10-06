@@ -111,6 +111,21 @@ describe("call", () => {
     expect(server.turnRecord(matchId, 1).B.tool_calls).toHaveLength(1);
   });
 
+  it("measures each call's `ms` off the timer it was given", () => {
+    // A timer that advances one millisecond per reading: every call reads it
+    // twice, so every call costs the same millisecond, and a rerun says so in the
+    // same bytes. Without the injected timer these are wall-clock numbers
+    // no two runs agree on.
+    let reading = 0;
+    const server = new MatchServer(() => reading++);
+    const { matchId } = server.createMatch(135, DEFAULT_CONFIG);
+    server.openTurn(matchId);
+
+    expect(server.call(matchId, "A", "get_state", {}).ms).toBe(1);
+    expect(server.call(matchId, "A", "read_notes", {}).ms).toBe(1);
+    expect(server.turnRecord(matchId, 1).A.tool_calls.map((call) => call.ms)).toEqual([1, 1]);
+  });
+
   it("refuses a submission it could not write into the log", () => {
     const { server, matchId } = openedMatch();
 

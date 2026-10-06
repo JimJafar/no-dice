@@ -21,8 +21,8 @@
  * Pi harness, and the loop does not care which: both are a `Player` asked for a
  * turn and read back through the same tools. A bot is seeded from the match seed
  * and its seat, so the same match run twice plays the same game at both ends,
- * and `created` comes from an injected clock for the same reason: two runs of one
- * seed have to be comparable byte for byte.
+ * and `created` and every logged duration come from an injectable clock and timer
+ * for the same reason: two runs of one seed have to be comparable byte for byte.
  */
 import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -202,6 +202,15 @@ export interface RunMatchOptions {
   seats: Record<Seat, SeatSpec>;
   /** The clock `created` is taken from. Injectable so two runs can be compared. */
   clock?: () => Date;
+  /**
+   * The monotonic timer durations are measured off, in milliseconds: the log's
+   * per-turn `wall_ms`, and the per-call `ms` the server records. Injectable for
+   * the same reason as `clock`, and for the same good — a rerun on one seed has to
+   * write the same bytes, and a measured duration is the one number in a log no
+   * two runs would otherwise agree on. A timer that advances a fixed step per call
+   * makes two runs of one match say the same thing about how long each call took.
+   */
+  timer?: () => number;
   /** How long a seat may take over a turn before it is taken to have passed. */
   turnTimeoutMs?: number;
   /**
@@ -419,9 +428,11 @@ const playSeat = async (
     afterSubmissionMs: number;
     /** Whether the server holds this seat's submission for the turn. */
     hasSubmission: () => boolean;
+    /** The monotonic clock the turn's wall time is measured off. */
+    timer: () => number;
   },
 ): Promise<SeatTurn> => {
-  const started = performance.now();
+  const started = limits.timer();
   const played = player.playTurn(turn);
   // The turn's failure is picked up by the races below, or by the caller's; this
   // only keeps Node from calling an unhandled rejection fatal in between.
@@ -446,7 +457,7 @@ const playSeat = async (
   return {
     outcome,
     timedOut,
-    wallMs: Math.max(0, Math.round(performance.now() - started)),
+    wallMs: Math.max(0, Math.round(limits.timer() - started)),
   };
 };
 
@@ -606,6 +617,7 @@ const piSeats = (options: RunMatchOptions): PiSeat[] =>
 export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> {
   const config = options.config ?? DEFAULT_CONFIG;
   const clock = options.clock ?? ((): Date => new Date());
+  const timer = options.timer ?? ((): number => performance.now());
   const turnTimeoutMs = options.turnTimeoutMs ?? TURN_TIMEOUT_MS;
   const afterSubmissionMs = options.afterSubmissionMs ?? AFTER_SUBMISSION_MS;
   const matchDir = options.matchDir ?? matchDirOf(options.out);
@@ -613,7 +625,7 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
   // names a Pi build at all, and which budget its turns were played under.
   const pi = piSeats(options);
 
-  const matches = new MatchServer();
+  const matches = new MatchServer(timer);
   const { matchId, tokens } = matches.createMatch(options.seed, config);
   const session = matches.match(matchId);
   const frame = frameOf(session.state, config);
@@ -672,6 +684,7 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
       timeoutMs: turnTimeoutMs,
       afterSubmissionMs,
       hasSubmission: () => matches.status(matchId).submitted[seat],
+      timer,
     });
 
   /**
