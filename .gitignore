@@ -1,6 +1,8 @@
 node_modules/
 dist/
-series/
+# Anchored: the runner's series directories live at the repo root, and a series'
+# report is kept under `reports/series/`, which must not be caught by this.
+/series/
 matches/
 # A measurement run's log and its seat homes; the report beside them is kept.
 reports/*.json
