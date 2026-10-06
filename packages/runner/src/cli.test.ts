@@ -1,5 +1,6 @@
 /**
- * The `no-dice` command line, run for real: `match`, `series` and `stats`.
+ * The `no-dice` command line, run for real: `match`, `series`, `stats` and
+ * `evidence`.
  *
  * What these tests pin down is what a person at a terminal gets:
  *
@@ -570,5 +571,64 @@ describe("no-dice stats", () => {
 
     expect(result.code).not.toBe(0);
     expect(result.err[0]).toContain("--series is required");
+  });
+});
+
+describe("no-dice evidence", () => {
+  it("counts the rules' open questions for a series directory, and writes them beside it", async () => {
+    const seriesDir = join(dir, "series", "evidenced");
+    const played = await run([...SERIES, "--dir", seriesDir]);
+    expect(played.code).toBe(0);
+
+    const result = await run(["evidence", "--series", seriesDir]);
+
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+    expect(result.out[0]).toBe(`evidence: ${join(seriesDir, "evidence.md")}`);
+    const printed = result.out.join("\n");
+    expect(printed).toContain("# Rules evidence: bot:greedy vs bot:random");
+    expect(printed).toContain("**4 counted**, **0 missing**");
+    expect(printed).toContain("## Against the rules' bot figures");
+    expect(printed).toContain("## Node ping-pong");
+
+    // The file on disk is the report that was printed, as with `stats`: the
+    // first line names the file rather than belonging to the report.
+    const written = await readFile(join(seriesDir, "evidence.md"), "utf8");
+    expect(written).toBe(`${result.out.slice(1).join("\n")}\n`);
+  }, 120_000);
+
+  it("counts the same matches `stats` reported", async () => {
+    const seriesDir = join(dir, "series", "evidenced-pairing");
+    const played = await run([...SERIES, "--dir", seriesDir]);
+    expect(played.code).toBe(0);
+
+    const stats = await run(["stats", "--series", seriesDir]);
+    const evidence = await run(["evidence", "--series", seriesDir]);
+
+    expect(stats.code).toBe(0);
+    expect(evidence.code).toBe(0);
+    // Both say how many matches the series recorded and how many counted, and
+    // they cannot answer differently.
+    const countedOf = (lines: string[]): string =>
+      lines.find((line) => /\*\*\d+ counted\*\*/.test(line)) ?? "";
+    expect(countedOf(evidence.out)).toBe(countedOf(stats.out));
+  }, 120_000);
+
+  it("names a directory that holds no series", async () => {
+    const result = await run(["evidence", "--series", join(dir, "series", "nothing")]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("is not there, so there is no series to report");
+  });
+
+  it("names a missing --series, and a flag it does not take", async () => {
+    const missing = await run(["evidence"]);
+    expect(missing.code).not.toBe(0);
+    expect(missing.err[0]).toContain("--series is required");
+
+    const extra = await run(["evidence", "--series", dir, "--seed", "135"]);
+    expect(extra.code).not.toBe(0);
+    expect(extra.err[0]).toContain('unknown flag "--seed"');
+    expect(extra.err[0]).toContain('"evidence" takes --series');
   });
 });

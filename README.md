@@ -21,6 +21,7 @@ the workspace names its file (`./match.ts`, a `package.json` read with
 ```sh
 pnpm exec no-dice series --game salient --a bot:greedy --b bot:random --max-pairs 2
 pnpm exec no-dice stats --series series/greedy-vs-random
+pnpm exec no-dice evidence --series series/greedy-vs-random
 ```
 
 A series plays each seed twice, once with the two seats swapped, in batches of 5
@@ -32,6 +33,13 @@ command again plays nothing whose log is already on disk. `--max-cost <usd>` and
 `--max-tokens <n>` bound what a run may spend, `--concurrency <n>` how many pairs
 are in flight at once (default 1), `--seed-base <n>` what the seed list is drawn
 from, and `--name <name>` or `--dir <path>` where the series goes.
+
+`stats` prints the win-rate report and rewrites `report.md`. `evidence` counts the
+numbers `salient/docs/salient-rules-v0.md` leaves open — lead changes, largest
+single-turn swing, hex flips per turn band, captures of neutral hexes, Node hand
+changes and ping-pong, and how much each seat re-scouts — over the same
+`series.json` and the same counted matches, and writes them to
+`series/<name>/evidence.md`.
 
 ## The providers a model seat can be seated on
 

@@ -83,7 +83,7 @@ export const seatLabel = (seat: SeatRef): string =>
   seat.kind === "bot" ? `bot:${seat.bot}` : `${seat.provider}/${seat.model}`;
 
 /** How a reader names one seat's header, as a match log records it. */
-const playerLabel = (player: PlayerHeader): string =>
+export const playerLabel = (player: PlayerHeader): string =>
   player.kind === "bot" ? `bot:${player.bot}` : player.model;
 
 /** The part of `series.json` this report reads. Non-strict on purpose: see the header. */
@@ -112,7 +112,7 @@ const failedMatchSchema = z.object({
 });
 
 const matchRecordSchema = z.discriminatedUnion("status", [playedMatchSchema, failedMatchSchema]);
-type MatchRecord = z.infer<typeof matchRecordSchema>;
+export type MatchRecord = z.infer<typeof matchRecordSchema>;
 
 /** The interval test as the runner recorded it at the boundary the series stopped at. */
 const intervalTestSchema = z.object({
@@ -295,8 +295,12 @@ export interface SeriesReportOptions {
 const isMissing = (error: unknown): boolean =>
   typeof error === "object" && error !== null && (error as { code?: string }).code === "ENOENT";
 
-/** The series record, read and checked. A directory with no `series.json` is not a series. */
-const readRecord = async (dir: string): Promise<SeriesRecord> => {
+/**
+ * The series record, read and checked. A directory with no `series.json` is not
+ * a series. Exported for `./rules-evidence.ts`, which reports the same matches
+ * and must not grow its own idea of where a series lives.
+ */
+export const readSeriesRecord = async (dir: string): Promise<SeriesRecord> => {
   const path = join(dir, "series.json");
   let text: string;
   try {
@@ -330,7 +334,7 @@ const readRecord = async (dir: string): Promise<SeriesRecord> => {
  * `(tool_surface)` groups as `tool_surface`. Anything else is grouped under its
  * own message, which is the most that can honestly be said about it.
  */
-const reasonOfFailure = (error: string): string => {
+export const reasonOfFailure = (error: string): string => {
   const bracketed = /\(([^()]+)\)\s*$/.exec(error)?.[1];
   return bracketed !== undefined && VOID_REASONS.includes(bracketed as PassReason)
     ? bracketed
@@ -338,7 +342,7 @@ const reasonOfFailure = (error: string): string => {
 };
 
 /** The match-level reason a played log carries, if it carries one: that match was voided. */
-const voidReasonOf = (log: MatchLog): PassReason | null => {
+export const voidReasonOf = (log: MatchLog): PassReason | null => {
   for (const turn of log.turns) {
     for (const seat of ["A", "B"] as const) {
       const passed = turn.players[seat].passed;
@@ -370,7 +374,7 @@ interface CountedMatch {
 }
 
 /** Every match the record names, in the order it names them. */
-const recordsOf = (record: SeriesRecord): { seed: number; match: MatchRecord }[] =>
+export const seriesMatchRecords = (record: SeriesRecord): { seed: number; match: MatchRecord }[] =>
   record.pairs.flatMap((pair) => pair.matches.map((match) => ({ seed: pair.seed, match })));
 
 /**
@@ -389,7 +393,7 @@ const recordsOf = (record: SeriesRecord): { seed: number; match: MatchRecord }[]
  * is naming, and the whole path relative to the series directory is tried too,
  * for a record whose paths are written relative to the directory itself.
  */
-const logPathsOf = (dir: string, path: string): string[] => {
+export const logPathsOf = (dir: string, path: string): string[] => {
   const candidates = [resolve(path), resolve(dir, path)];
   const underMatches = /(?:^|[/\\])matches[/\\](.+)$/.exec(path);
   if (underMatches !== null) candidates.push(join(dir, "matches", underMatches[1]));
@@ -404,6 +408,28 @@ const parseFailureOf = (error: unknown): string => {
   }
   if (error instanceof SyntaxError) return "not JSON";
   return error instanceof Error ? error.message : String(error);
+};
+
+/**
+ * The log one record names, tried at every path it could be at (see
+ * `logPathsOf`). `log` is null when none of them held one, and `why` says what
+ * went wrong: the empty string means no file was there at all, rather than a
+ * file that would not parse.
+ */
+export const readLogOf = async (
+  dir: string,
+  path: string,
+): Promise<{ log: MatchLog | null; why: string }> => {
+  let why = "";
+  for (const candidate of logPathsOf(dir, path)) {
+    try {
+      const json: unknown = JSON.parse(await readFile(candidate, "utf8"));
+      return { log: matchLogSchema.parse(json), why: "" };
+    } catch (error) {
+      if (!isMissing(error)) why = parseFailureOf(error);
+    }
+  }
+  return { log: null, why };
 };
 
 /** Read every log, and sort the matches into the ones that count and the ones that do not. */
@@ -424,16 +450,7 @@ async function readMatches(
       leftOut("failed", reasonOfFailure(match.error));
       continue;
     }
-    let log: MatchLog | null = null;
-    let why = "";
-    for (const path of paths) {
-      try {
-        log = matchLogSchema.parse(JSON.parse(await readFile(path, "utf8")) as unknown);
-        break;
-      } catch (error) {
-        if (!isMissing(error)) why = parseFailureOf(error);
-      }
-    }
+    const { log, why } = await readLogOf(dir, match.path);
     if (log === null) {
       leftOut(
         why === "" ? "missing_log" : "unreadable_log",
@@ -459,7 +476,7 @@ async function readMatches(
 }
 
 /** The missing matches, counted by kind and by reason. */
-const missingOf = (matches: readonly MissingMatch[]): MissingMatches => {
+export const missingOf = (matches: readonly MissingMatch[]): MissingMatches => {
   const byKind = zeroCounts(MISSING_KINDS);
   const grouped = new Map<string, { reason: string; kinds: MissingKind[]; count: number }>();
   for (const match of matches) {
@@ -652,8 +669,8 @@ export async function seriesReport(
   dir: string,
   options: SeriesReportOptions = {},
 ): Promise<SeriesReport> {
-  const record = await readRecord(dir);
-  const records = recordsOf(record);
+  const record = await readSeriesRecord(dir);
+  const records = seriesMatchRecords(record);
   const { counted, missing } = await readMatches(dir, records);
 
   const outcomes = counted.map((match) => outcomeOf(match.result, match.seat));

@@ -1,10 +1,11 @@
 /**
  * The `no-dice` command line's argument parsing, kept apart from what it starts
- * so the CLI can grow around it: `match`, milestone 04's `series` beside it, and
- * `stats`, which reports a series that has already been run. Nothing here runs a
- * match or touches the filesystem — `argv` comes back either as what was asked
- * for or as one line naming exactly what is wrong with it, which is what the CLI
- * prints and exits non-zero on.
+ * so the CLI can grow around it: `match`, milestone 04's `series` beside it,
+ * `stats`, which reports a series that has already been run, and `evidence`,
+ * which counts the rules' open questions over the same directory. Nothing here
+ * runs a match or touches the filesystem — `argv` comes back either as what was
+ * asked for or as one line naming exactly what is wrong with it, which is what
+ * the CLI prints and exits non-zero on.
  *
  * A model seat parses here and is played by the Pi harness: `<provider>/
  * <model-id>` is the shape the runner seats a model with, and a provider with no
@@ -30,7 +31,7 @@ export type GameName = (typeof GAMES)[number];
 export const BOTS = ["random", "greedy"] as const;
 
 /** The commands v0 has. */
-export const COMMANDS = ["match", "series", "stats"] as const;
+export const COMMANDS = ["match", "series", "stats", "evidence"] as const;
 export type CommandName = (typeof COMMANDS)[number];
 
 /** The flags `match` takes. Anything else on its command line is a mistake. */
@@ -60,8 +61,8 @@ const SERIES_FLAGS = [
 /** The flags `series` cannot do without. Its limits all have defaults. */
 const SERIES_REQUIRED = ["--game", "--a", "--b"] as const;
 
-/** The flags `stats` takes, and the one it cannot do without. */
-const STATS_FLAGS = ["--series"] as const;
+/** The flags `stats` and `evidence` take, and the one neither can do without. */
+const SERIES_DIR_FLAGS = ["--series"] as const;
 
 /** One command: the flags it accepts and the ones it needs. */
 interface CommandSpec {
@@ -70,11 +71,12 @@ interface CommandSpec {
   required: readonly string[];
 }
 
-/** The three commands, with their flags, so the flag rules are written once. */
+/** The four commands, with their flags, so the flag rules are written once. */
 const SPECS: readonly CommandSpec[] = [
   { name: "match", flags: MATCH_FLAGS, required: MATCH_REQUIRED },
   { name: "series", flags: SERIES_FLAGS, required: SERIES_REQUIRED },
-  { name: "stats", flags: STATS_FLAGS, required: STATS_FLAGS },
+  { name: "stats", flags: SERIES_DIR_FLAGS, required: SERIES_DIR_FLAGS },
+  { name: "evidence", flags: SERIES_DIR_FLAGS, required: SERIES_DIR_FLAGS },
 ];
 
 /**
@@ -149,8 +151,18 @@ export interface StatsCommand {
   series: string;
 }
 
+/**
+ * What `no-dice evidence` asks for: the series directory whose rules evidence is
+ * counted. The same directory `stats` reports, because the evidence is counted
+ * out of the same match logs and has to leave out the same missing matches.
+ */
+export interface EvidenceCommand {
+  name: "evidence";
+  series: string;
+}
+
 /** Any command the parser recognised. */
-export type AnyCommand = MatchCommand | SeriesCommand | StatsCommand;
+export type AnyCommand = MatchCommand | SeriesCommand | StatsCommand | EvidenceCommand;
 
 /** The result of parsing: the command, or one line naming what is wrong. */
 export type ParseResult = { ok: true; command: AnyCommand } | { ok: false; error: string };
@@ -263,7 +275,12 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   const given = readFlags(rest, spec);
   if (typeof given === "string") return { ok: false, error: given };
 
-  if (spec.name === "stats") return { ok: true, command: { name: "stats", series: String(given.get("--series")) } };
+  if (spec.name === "stats") {
+    return { ok: true, command: { name: "stats", series: String(given.get("--series")) } };
+  }
+  if (spec.name === "evidence") {
+    return { ok: true, command: { name: "evidence", series: String(given.get("--series")) } };
+  }
 
   const game = gameArg(given);
   if (game === null) return { ok: false, error: gameError(given) };

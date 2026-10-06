@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * The `no-dice` command line: brief §1's `no-dice match`, its `no-dice series`
- * beside that, and `no-dice stats` for a series that has already been run.
+ * beside that, `no-dice stats` for a series that has already been run, and
+ * `no-dice evidence`, which counts the rules' open questions over the same
+ * series directory.
  *
  * `runCli` is the whole command, and it returns its exit code rather than
  * calling `process.exit`, so a test can drive a real run and read what it
@@ -37,11 +39,12 @@ import { resolve } from "node:path";
 import { checkPiAuth } from "@no-dice/harness";
 import type { LogResult, Seat } from "@no-dice/log";
 import { renderSeriesReport } from "@no-dice/stats/series-report";
+import { renderSeriesEvidence } from "@no-dice/stats/rules-evidence";
 import { outcomeOf, wilsonInterval, winRateOf, zOf } from "@no-dice/stats/wilson";
 import type { Outcome, WilsonInterval, WinRate } from "@no-dice/stats/wilson";
 
 import { defaultOutName, parseArgs } from "./args.ts";
-import type { MatchCommand, SeatArg, SeriesCommand, StatsCommand } from "./args.ts";
+import type { EvidenceCommand, MatchCommand, SeatArg, SeriesCommand, StatsCommand } from "./args.ts";
 import { runMatch, seatSpec } from "./match.ts";
 import type { SeatSpec } from "./match.ts";
 import { seatModelsJson } from "./providers.ts";
@@ -64,6 +67,7 @@ const USAGE = [
   "usage: no-dice series --game salient --a <spec> --b <spec> [--max-pairs <n>] [--max-cost <usd>]" +
     " [--max-tokens <n>] [--concurrency <n>] [--seed-base <n>] [--name <name> | --dir <path>]",
   "usage: no-dice stats --series <dir>",
+  "usage: no-dice evidence --series <dir>",
 ];
 
 /** How the match ended, in the one line a run prints: type, winner, score. */
@@ -97,7 +101,8 @@ export async function runCli(argv: readonly string[], io: CliIo = {}): Promise<n
   const { command } = parsed;
   if (command.name === "match") return runMatchCommand(command, cwd, stdout, stderr);
   if (command.name === "series") return runSeriesCommand(command, cwd, stdout, stderr);
-  return runStatsCommand(command, cwd, stdout, stderr);
+  if (command.name === "stats") return runStatsCommand(command, cwd, stdout, stderr);
+  return runEvidenceCommand(command, cwd, stdout, stderr);
 }
 
 /** One `no-dice match`: the match, then where its log is and how it ended. */
@@ -278,6 +283,29 @@ const runStatsCommand = async (
   try {
     const { markdown, path } = await renderSeriesReport(resolve(cwd, command.series));
     stdout(`report: ${path}`);
+    for (const line of markdown.replace(/\n+$/, "").split("\n")) stdout(line);
+    return 0;
+  } catch (error) {
+    stderr(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+};
+
+/**
+ * One `no-dice evidence`: the rules' open questions counted over a series, on the
+ * terminal and in `<dir>/evidence.md`. It reads the same `series.json` `stats`
+ * reads and leaves out the same missing matches, so the two files cannot report
+ * different sets of matches.
+ */
+const runEvidenceCommand = async (
+  command: EvidenceCommand,
+  cwd: string,
+  stdout: (line: string) => void,
+  stderr: (line: string) => void,
+): Promise<number> => {
+  try {
+    const { markdown, path } = await renderSeriesEvidence(resolve(cwd, command.series));
+    stdout(`evidence: ${path}`);
     for (const line of markdown.replace(/\n+$/, "").split("\n")) stdout(line);
     return 0;
   } catch (error) {
