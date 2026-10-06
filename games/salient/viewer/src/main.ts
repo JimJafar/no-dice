@@ -39,6 +39,7 @@ function element<T extends HTMLElement>(selector: string): T {
 }
 
 const frame = element<HTMLDivElement>("#frame");
+const loadBox = element<HTMLDivElement>("#load");
 const status = element<HTMLParagraphElement>("#status");
 const fileInput = element<HTMLInputElement>("#log-file");
 const header = element<HTMLDivElement>("#header");
@@ -96,6 +97,9 @@ function redraw(): void {
   // Fog over the board the frame is drawing, which mid-animation is still the
   // previous turn's — the seat's knowledge follows the picture, not the counter.
   const fog = mode === "spectator" ? null : fogView(log, view.board, mode);
+  // The frame's rows are sized for the match alone (viewer.css, .frame): the loading
+  // screen gives its height up to them, and a drop on the frame still loads another log.
+  loadBox.hidden = true;
   header.hidden = false;
   headlineRow.hidden = false;
   stage.hidden = false;

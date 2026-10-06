@@ -10,6 +10,7 @@ body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',syste
    everything inside every row, is still the mock-up's (docs/viewer-notes.md §4). */
 .frame{width:1920px;height:1080px;box-sizing:border-box;padding:36px;display:flex;flex-direction:column;gap:12px;background:#12161c;color:#eef1f5}
 .frame.dropping{outline:4px dashed var(--team-a,#2c6fd1);outline-offset:-16px}
+.load[hidden]{display:none}
 .load{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#1a2028;border-radius:8px}
 .load-title{font:600 24px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.16em;color:#aab3bf}
 .status{max-width:900px;margin:0;font-size:22px;line-height:1.45;text-align:center}
