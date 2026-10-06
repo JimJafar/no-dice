@@ -27,6 +27,8 @@ The series never reached the interval test, so it recorded no stopping interval.
 - seed `479473028`, marvin/subagent in seat A, `/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy/matches/479473028-marvin-subagent-greedy.json` — failed: tool_surface
 - seed `313966722`, marvin/subagent in seat B, `/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy/matches/313966722-greedy-marvin-subagent.json` — failed: tool_surface
 
+In both, the seat called `submit_orders` by its bare name instead of `mcp__salient__submit_orders`, the name the harness registers it under. Pi answered that no such tool exists, and the harness took a tool name outside the seven as a seat that had reached outside the game, voided the match and wrote no log — which is why these two have a reason and no file. The paths above name files the task workspace that played the series no longer holds. [`docs/series-notes.md` §5](../../docs/series-notes.md) has the detail, and records that commit `749d236` has since made a bare-name call a refused call rather than a void.
+
 ## Margin
 
 | matches | mean margin | bootstrap interval | resamples | confidence |
@@ -81,6 +83,8 @@ No match ended in a knockout.
 | compaction turns | 7 | 0 | 5 | 2 |
 
 Compaction turns: seed 572152369 turn 9, seed 708123 turn 13, seed 479473028 turn 15, seed 313966722 turn 15, seed 313966722 turn 20, seed 1003578858 turn 17, seed 1003578858 turn 21.
+
+A seed names a *pair*, not a match: seeds `479473028` and `313966722` each lost one of their two matches (see "Missing matches") and kept the other, so those three turns come from the match of the pair that has a log. The generator names only the seed.
 
 ### bot:greedy
 

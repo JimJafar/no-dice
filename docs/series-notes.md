@@ -3,8 +3,9 @@
 The first real series: `marvin/subagent` against the Greedy bot, five seat-swapped
 pairs, on Jim's Marvin server. This file records what was actually run — the
 command, the ceiling, the concurrency, the wall time, the matches that went
-missing and how to resume it — so the series can be continued, and a second
-pairing can be started, without anyone re-deriving either from the code.
+missing and what a re-run of it would do — so a second pairing can be started,
+and anyone tempted to replay this one knows what they would get, without either
+having to be re-derived from the code.
 
 The figures themselves are in the report:
 [`reports/series/marvin-subagent-vs-greedy.md`](../reports/series/marvin-subagent-vs-greedy.md).
@@ -66,8 +67,9 @@ says so.
 `--concurrency` bounds **pairs**, and a pair's two matches are played together
 (`pairRecordOf` in `packages/runner/src/series.ts`), so `--concurrency 1` still
 puts two matches in flight — one Pi seat each — against one llama.cpp server.
-That is what Jim asked for and it is what was done; it is also the main reason
-the run took longer than §7's 19-minutes-a-match estimate suggested.
+That is what Jim asked for and it is what was done; it is also one reason the run
+took longer than §7's 19-minutes-a-match estimate suggested. The main one is
+at the end of this section.
 
 Wall time, start to finish: **5 h 27 m 44 s**, 2026-10-06 00:10:53Z to 05:38:37Z.
 
@@ -82,13 +84,25 @@ Wall time, start to finish: **5 h 27 m 44 s**, 2026-10-06 00:10:53Z to 05:38:37Z
 Pairs 3 and 4 are the short ones because each lost a match part-way (section 5).
 
 Per played match, the Pi seat's own turn time came to 56–75 minutes against §7's
-18.8 minutes for a single match played alone. The prompt cache is where that
-went: §7 measured 95.1% of a match's prompt tokens served from Marvin's cache,
+18.8 minutes for a single match played alone. The prompt cache is part of where
+that went: §7 measured 95.1% of a match's prompt tokens served from Marvin's cache,
 and these matches ran at **14.2% to 80.4%** — two seats evicting each other's KV
 cache on one server. §7's warning that the cache-missing turns are the slowest
 turns of the match held here with a vengeance: the seat's slowest turn in seven
 of the eight matches hit the runner's 300 s turn cap exactly, and 34 of its 200
 turns were recorded as `timeout` passes.
+
+The cache is the secondary cause, and it is worth saying what the main one was.
+**The factory's own builder agent was sending requests to the same Marvin server
+while the series ran**, and Marvin answers one request at a time. Every seat turn
+therefore queued behind the builder agent's requests as well as behind the other
+seat's, which is what pushed turns past the 300 s cap and — when Pi's own retries
+ran out inside that queue — what produced the 18 `provider_error` passes of
+section 4. The consequence for the figures: this series' per-turn times and pass
+counts measure a **contended** server, not a seat playing alone, and §7's 18.8
+minutes for a match played alone is the uncontended number. Nothing in the report
+says which of its 53 passes were the builder's fault and which the seats'; the
+series was not run alone, and that is what it cost.
 
 ## 4. What the series says
 
@@ -102,7 +116,10 @@ The report's per-model table says how the model seat lost them, and it is worth
 reading before anyone concludes the model was outplayed: of its 200 turns, **53
 ended as passes** — 34 `timeout` (the 300 s cap above), 18 `provider_error` (a Pi
 agent loop that failed after Pi's own retries), 1 `no_submission` — and 17
-submissions were rejected by the server. Seven turns compacted, with the largest
+submissions were rejected by the server. The 34 and the 18 are the contended
+server of section 3 — the factory's builder agent on a Marvin that answers one
+request at a time — before they are anything about the seat. Seven turns
+compacted, with the largest
 per-turn `context_tokens` in the logs 85,963 of the 131,072 window — which is not
 the figure Pi compares against its 114,688 threshold: `context_tokens` is the
 conversation sampled at the end of a turn, while Pi's threshold check runs
@@ -135,31 +152,55 @@ their bare names — `get_rules`, `get_state`, scout, simulate, `read_notes`,
 `write_notes`, `submit_orders` — and never gives the `mcp__salient__` prefix the
 harness registers them under, which is the name a call has to carry to be inside
 the seven. The rules and the harness are untouched either way, because a series
-whose matches were played under two different prompts is not one series. The two
-voided matches have no log on disk, so the next run of the same command plays
-them again — that is the honest way to find out whether they were bad luck.
+whose matches were played under two different prompts is not one series.
 
-## 6. Resuming it, and extending it
+**The rule has since changed.** Commit `749d236` ("harness: a seat that calls one
+of its seven tools by the bare name is refused, not voided") changed `PiPlayer`
+in `packages/harness/src/pi-player.ts`: a call to one of the seven by its bare
+name — `submit_orders` for `mcp__salient__submit_orders` — is now recorded as a
+refused call and the turn goes on, because Pi answers that no such tool exists
+and so nothing outside the game was reached; only a call to something outside the
+seven still voids the match. These two matches would not be lost to it now. Hold that against the idea of simply repeating the run: a re-run plays
+under a different harness rule, so it is **not a continuation of this series**,
+and its `tool_surface` row is not comparable with the one above. Section 6 says
+what a re-run actually does with the series gone.
 
-The rule is a log on disk: `planSeries` (`packages/runner/src/series-plan.ts`)
-skips every match whose `matches/<seed>-<seat-map>.json` already exists, and
+## 6. What a re-run of that command would do: a new series
+
+**There is nothing here to resume.** `series/marvin-subagent-vs-greedy/` —
+`series.json`, `report.md` and the ten match logs — was written inside the
+`series-real-run` task's own workspace, `/series/` in `.gitignore` is anchored to
+the repository root and caught the whole directory (section 7), and it was
+deleted when that task merged. Checked on this box:
+`/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/` does not
+exist. Only the two committed documents of section 7 survived.
+
+So `planSeries` (`packages/runner/src/series-plan.ts`) has no `series.json` to
+read: `seedBase` falls back to `options.seedBase ?? DEFAULT_SEED_BASE` — `0`, as
+the original record said — and `drawSeeds` draws a fresh list from it. **Running
+the command in section 1 again starts a new series** in a new
+`series/marvin-subagent-vs-greedy/` directory: it plays all ten matches, not the
+two that went missing, and the `series.json` and `report.md` it writes describe
+that series alone. The 8 matches already played are not in it: they exist only
+as the numbers in the kept report. The maps would be the same —
+a fresh draw from base `0` at five pairs gives back exactly the five seeds
+listed in section 1, which is what a fixed `seed_base` is for — but the record
+would not be, and section 5 says the harness rule over a bare-name tool call has
+changed since, so those ten matches are not the ten this one was.
+
+The mechanics themselves are unchanged, and on a series that *is* on disk they
+work as stated: a match whose `matches/<seed>-<seat-map>.json` exists is skipped;
 `series.json` — written atomically once before anything is played and again after
 every batch of `BATCH_PAIRS = 5` pairs — holds the pairing and the seed list, so
 a resumed run continues from the seeds it already drew rather than drawing new
-ones.
-
-So: **run the command in section 1 again.** It will play only the two voided
-matches, reprint the standing lines, and rewrite `report.md`. To make the series
-longer, raise the limit and change nothing else:
+ones, and raising `--max-pairs` appends to that list instead of replacing it:
 
 ```bash
 no-dice series --game salient --a marvin/subagent --b bot:greedy \
   --name marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 60000000 --concurrency 1
 ```
 
-That continues the same series: the five pairs already on disk are kept and
-counted, and five more seeds are drawn from the recorded `seed_base`. Lowering
-`--max-pairs` does not erase anything either — a played match is never dropped
+Lowering `--max-pairs` erases nothing either — a played match is never dropped
 from the record. To reprint a finished series' report without playing anything:
 
 ```bash
@@ -172,13 +213,28 @@ are written as each match finishes, so an interrupted run loses nothing — the
 next run reads those logs back — but the record it leaves behind describes the
 series as of the last completed batch.
 
+**Keeping a series across tasks takes a deliberate step.** The logs are
+gitignored on purpose — a real one is ~0.9–1.1 MB of tool results, section 7 — so
+a series that has to outlive the task that played it has to be copied somewhere
+tracked before that workspace goes. `series.json` and `report.md` are a few
+kilobytes between them, and `series.json` alone is enough to put a later run back
+on the same maps, though without the logs it replays the matches rather than
+skipping them. Failing that, the series is replayed: the same command at the same
+`--seed-base` deals the same maps, and its figures are comparable with an
+earlier run's only while the harness rule and the prompt are the same (section 5
+says they are not here, and section 3 says the machine was not either).
+
 ## 7. What the repository keeps
 
 `series/` is gitignored and a real log is ~0.9–1.1 MB of tool results, so the
 logs and the seat homes are not committed. What is kept is the report, copied
-verbatim from `series/marvin-subagent-vs-greedy/report.md` into
+from `series/marvin-subagent-vs-greedy/report.md` into
 `reports/series/marvin-subagent-vs-greedy.md`; it carries absolute paths from
-the machine that played the series, which is what the generator writes.
+the machine that played the series, which is what the generator writes, and those
+paths name files that no longer exist. Two hand-written notes were added to
+that copy afterwards — one under "Missing matches" saying what the `tool_surface`
+voids were, one under the "Compaction turns:" line saying that a seed there
+names a pair — and they are the only prose in it the generator did not write.
 
 `.gitignore`'s series pattern is anchored to `/series/` for this to work at all:
 unanchored, `series/` matched `reports/series/` too and the report could not be
