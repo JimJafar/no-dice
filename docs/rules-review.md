@@ -33,7 +33,7 @@ next epic.
 | | |
 | --- | --- |
 | pairs recorded / matches | 5 / 10 |
-| counted / missing | **8** / **2** (both voided for `tool_surface`) |
+| counted / missing | **8** / **2** (voided for `tool_surface` over a bare tool name, which the harness no longer voids — `749d236`, see Guessing check) |
 | marvin/subagent | 0 wins, 8 losses, 0 draws — **0.0% win rate, 95% Wilson interval 0.0% – 32.4%** |
 | seat split | seat A 0–4 (0.0%, 0.0% – 49.0%), seat B 0–4 (0.0%, 0.0% – 49.0%) |
 | margin | mean **33.9**, bootstrap **27.3 – 41.5** (2000 resamples, 95%) |
@@ -65,22 +65,28 @@ Greedy's own row is the control: 408 tool calls at 2.04 a turn, **0** scouts, **
 **0** tool errors, **0** rejected submissions, **0** passes, **0** compaction turns — it runs no
 provider, so it has no context to lose.
 
-## The five counters that were never recorded
+## The five counters, none of which survive the run
 
 The rules' questions are stated as counts — hex flips a turn, lead changes a match, Node hand
 changes, neutral captures, re-scouts. `packages/stats/src/rules-evidence.ts` computes all five
 from a match log alone, and `no-dice evidence --series <dir>` writes them to
-`series/<name>/evidence.md`. **Whatever was run at the time, nothing survives it: the series
-directory and its match logs were deleted with the workspace that played them** — `series/` is
-gitignored because a real log is 0.9–1.1 MB of tool results ([series-notes §7](series-notes.md)).
-The report was copied into `reports/series/`; the evidence file was not, and with the logs gone
-there is nothing left to recompute from.
+`series/<name>/evidence.md`. **Nothing of it survives in the repository.** `series/` is gitignored
+because a real log is 0.9–1.1 MB of tool results ([series-notes §7](series-notes.md)); the report
+was copied into `reports/series/` and the evidence file was not; and the directory the report
+header names —
+`/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy` —
+is absent from this workspace and was never committed. Jim confirmed that directory and its
+`matches/` were deleted with the workspace that played the series, so `no-dice evidence` has no
+logs left to read. Were those 8 logs ever found again, all five counters come out of them with no
+new matches played; short of that they have to be re-earned.
 
 So the four sections that turn on those counts — Home bonus, Final-turn lunge, Centre Node
 ping-pong, No last-seen memory — carry the real-series numbers the report *does* hold, and are
 `Left open` on the counter itself rather than on the sample size. That is a different kind of
-open than "ten matches is not enough", and it is fixable without new matches: re-run the series
-and keep `evidence.md` beside the report the way `report.md` is kept.
+open than "ten matches is not enough", and it needs no new code: `rules-evidence.ts` already
+computes all five, and `no-dice evidence` already writes them. What they need is logs that survive
+the run that made them — and since these ones do not, that means the re-run the closing section
+sets out.
 
 ---
 
@@ -92,9 +98,9 @@ with it, **1 to 2.4 hexes** flip and the lead changes **1.4 times**.
 
 | | bots without | bots with | marvin/subagent vs Greedy |
 | --- | ---: | ---: | ---: |
-| hexes flipped a turn, turns 18-25 | 6.5 | 1 – 2.4 | **not recorded** |
-| lead changes a match | 3.2 | 1.4 | **not recorded** |
-| captures of neutral hexes | "single troops trading empty hexes" | — | **not recorded** |
+| hexes flipped a turn, turns 18-25 | 6.5 | 1 – 2.4 | **no surviving record** |
+| lead changes a match | 3.2 | 1.4 | **no surviving record** |
+| captures of neutral hexes | "single troops trading empty hexes" | — | **no surviving record** |
 
 What the series does say about the shape of these matches: Greedy won all 8 by a mean margin of
 **33.9** on a 93-point board, with a bootstrap interval of **27.3 – 41.5** — a narrow band of
@@ -122,7 +128,7 @@ scoring the average of the last few turns would remove that. The test is whether
 and its neutral captures stand out from turn 24's.
 
 The two counters this needs — the largest single-turn swing with the turn it happened on, and
-captures of neutral hexes per turn band — were never recorded. What the report holds is the
+captures of neutral hexes per turn band — have no surviving record. What the report holds is the
 behaviour around the last turn, and it points the other way: all 8 matches ran to turn 25 with no
 knockout, and the 18-25 band is the model's worst, with **22 of 64 turns passed** (10 timeouts,
 12 provider errors), **1 scout**, **8 simulations** against 24 in the middle band, and
@@ -155,16 +161,17 @@ in a knockout, so neither side ever converted an approach into the 93-to-0 prize
 **Left open:** the ping-pong flag over at least 10 pairs, plus the Node hand changes per turn band
 that go with it, from `no-dice evidence` — the counter exists and needs no new code. If it
 fires, the fix is not a rules change but a look at whether attacking with the exact
-minimum is meant to be rewarded; that goes to the next epic as an engine question. Nothing here
-would force a replay unless the combat or garrison rule changes, in which case all 10 matches are
-replayed at their seeds.
+minimum is meant to be rewarded; that goes to the next epic as an engine question, with no task
+filed for it yet (the closing section marks it as owed one). Nothing here would force a replay
+unless the combat or garrison rule changes, in which case all 10 matches are replayed at their
+seeds.
 
 ### No last-seen memory
 
 The rules' question: the engine does not report what a player saw on earlier turns, so should
 `get_state` show last-seen values? The test the brief sets is re-scouts per seat per match — a
 seat that re-scouts the same hexes over and over is paying tool calls for memory the engine could
-hand it. Re-scout counts were never recorded.
+hand it. Re-scout counts have no surviving record either.
 
 What the report shows instead is the opposite failure, and it is a strong signal. The model seat
 scouted **57 times in 200 turns — 0.28 a turn**, against the harness's 12-call cap — and the rate
@@ -213,14 +220,19 @@ compactions in 9-17 sit in a band with only 4 provider errors, so nothing here a
 error to a compaction. That join needs the per-turn `compacted` flag against the per-turn error
 counts, which is one pass over the logs — logs that no longer exist.
 
-**Decision:** compaction stays on, and the rules' alternative — let it fail when it runs out of
-room — is refused on this evidence. It is not a hypothetical failure: the seat already lost **18
-turns to provider errors** and **34 more to the 300 s cap**, so 53 of its 200 turns were already
-lost to the harness, and removing the one mechanism that keeps a 25-turn conversation
-inside its window would add to that count rather than protect anything. No engine or config
-change, nothing to replay. What is still owed is the attribution — compaction turns against
-error counts on those turns — which the next series should record. Jim's tick on the box is
-his to give; this line is the recommendation and the numbers behind it.
+**Decision:** none taken here — the recommendation is that compaction stays on, and the
+rules' alternative, let it fail when it runs out of room, is refused on these numbers. It is not a
+hypothetical failure: the
+seat already lost **18 turns to provider errors** and **34 more to the 300 s cap**, so 53 of its
+200 turns were already lost to the harness, and removing the one mechanism that keeps a 25-turn
+conversation inside its window would add to that count rather than protect anything. No engine or
+config change, nothing to replay. The place this is answered is the brief §11 open item **"Whether
+compaction stays on, after seeing how often it happens"** — how often it happens is now measured
+(7 turns, every seed, the first on turn 9), so the item can be answered. Until Jim answers it
+there, the box in `salient/docs/salient-rules-v0.md` stays unticked and this line is a
+recommendation with numbers under it, not a decision. What is still owed alongside it is the
+attribution — compaction turns against error counts on those turns — which the next series should
+record.
 
 ### Cost growth
 
@@ -300,8 +312,27 @@ thin: 0.0% – 32.4% is the width an 8-match series gives, and the adaptive stop
 **Decision:** no change to the simultaneous-turn rules on this evidence, and nothing to replay.
 The guessing check is not answered — it is blocked — and the thing to fix first is the harness,
 not the rules: turn latency and the tool-name slip are what put 53 turns and 2 matches out of
-play. Re-run the check on a series of at least 10 pairs in which passes are a small share of turns
-and both matches of every pair produce a log; if Greedy still wins above 50% with the interval
+play.
+
+**One of those two is already fixed, three hours after this series finished.** Commit `749d236`
+changed `packages/harness/src/pi-player.ts` so that a call to one of the seven by its bare name —
+`submit_orders` for `mcp__salient__submit_orders`, which is what voided seeds 479473028 and
+313966722 — is logged as a refused call and the turn carries on, instead of voiding the match for
+`tool_surface`. A tool outside the seven still voids it. A re-run should not lose matches this way,
+so of the two confounders only turn latency is still owed.
+
+That fix has a cost for the recommendation below it: **extending this series crosses the harness
+change.** The 5 pairs already on disk were played by a harness that voided a bare-name call; the
+new ones will be played by one that does not, so the two halves are not matches played under
+identical conditions — the same comparability problem [series-notes §5](series-notes.md) cites for
+changing nothing mid-series. It bites the report's own rows: both missing matches are `tool_surface`
+voids the new harness would not have made for that reason, so a resumed series' missing-match
+figures straddle the boundary, and the win-rate interval would be computed over 8 old matches plus
+however many new ones survive. Read the seat split and the missing-match rows as two samples
+across that line, not one.
+
+Re-run the check on a series of at least 10 pairs in which passes are a small share of turns and
+both matches of every pair produce a log; if Greedy still wins above 50% with the interval
 excluding 50%, the depth change goes to the next epic as an engine question, and every match in
 the series would be replayed at its seeds.
 
@@ -314,7 +345,18 @@ One run, and one change to what the repository keeps:
 1. `no-dice series --game salient --a marvin/subagent --b bot:greedy --name
    marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 60000000 --concurrency 1` — the same
    command at a higher pair limit continues this series from its recorded seeds
-   ([series-notes §6](series-notes.md)) and replays the two voided matches.
+   ([series-notes §6](series-notes.md)) and replays the two voided matches, which under the
+   post-`749d236` harness are likely to produce logs the old one threw away.
+
+   **Read that as two series stitched together.** The five pairs on disk were played before
+   `749d236` turned a bare-name call from a `tool_surface` void into a refused call; the five new
+   pairs will be played after it, so the ten are not one comparable sample — the missing-match row
+   of the standing report describes the old half only, and the win-rate interval mixes the two.
+   That is the judgement [series-notes §5](series-notes.md) already made about not changing the
+   prompt mid-series, and it is Jim's to make again here: extend this name and treat the boundary
+   openly, or start a fresh series name so the sample is one harness from turn 1. Extending keeps
+   the 8 matches already paid for but makes the sample two samples; starting fresh throws away
+   17,379,888 tokens and 5 h 27 m of Marvin and buys one clean sample.
 2. `no-dice evidence --series series/marvin-subagent-vs-greedy` afterwards, and the resulting
    `evidence.md` kept in `reports/series/` beside the report the way `report.md` is kept. Without
    step 2 the counters are computed into a directory that is deleted with the workspace, which is
@@ -322,3 +364,10 @@ One run, and one change to what the repository keeps:
 
 At 10 pairs the interval test runs, the win-rate interval narrows, and each of the counters above
 has 20 matches behind it instead of none.
+
+Two engine questions are deferred in prose above and have **no task filed behind them**: whether
+attacking a Node with the exact minimum is meant to be rewarded (Centre Node ping-pong), and whether
+the simultaneous-turn rules need more depth (Guessing check). Neither can carry acceptance criteria
+until the counters exist, so filing them now would file a task with nothing to test. They should be
+filed out of the next series' `evidence.md`, and this paragraph is the marker that they are still
+owed a task.
