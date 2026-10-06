@@ -22,6 +22,7 @@ the workspace names its file (`./match.ts`, a `package.json` read with
 pnpm exec no-dice series --game salient --a bot:greedy --b bot:random --max-pairs 2
 pnpm exec no-dice stats --series series/greedy-vs-random
 pnpm exec no-dice evidence --series series/greedy-vs-random
+pnpm exec no-dice showcase --series series/greedy-vs-random
 ```
 
 A series plays each seed twice, once with the two seats swapped, in batches of 5
@@ -40,6 +41,17 @@ single-turn swing, hex flips per turn band, captures of neutral hexes, Node hand
 changes and ping-pong, and how much each seat re-scouts — over the same
 `series.json` and the same counted matches, and writes them to
 `series/<name>/evidence.md`.
+
+`showcase` picks the one match of a finished series worth rendering, and writes
+`series/<name>/showcase.json`: the path of the match log, its excitement score and
+the three figures it is made of, and the one-line series result — `X` versus its
+opponent, the win rate with its 95% interval, the pairs played and the stop reason
+— the viewer's header shows beside it. The winner is the side whose interval
+excludes 50%, and its match is the most exciting of the wins whose margin falls
+between the quartiles of that winner's own margins; a series whose interval covers
+50% has no winner and ranks every counted match instead. Either exception is said
+in the file. Nothing in the choice reads a clock, so running it twice over an
+unchanged series writes the same bytes.
 
 ## The providers a model seat can be seated on
 

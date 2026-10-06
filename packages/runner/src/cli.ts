@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * The `no-dice` command line: brief §1's `no-dice match`, its `no-dice series`
- * beside that, `no-dice stats` for a series that has already been run, and
+ * beside that, `no-dice stats` for a series that has already been run,
  * `no-dice evidence`, which counts the rules' open questions over the same
- * series directory.
+ * series directory, and `no-dice showcase`, which names the one match of that
+ * series worth rendering and writes the sidecar the viewer is pointed at.
  *
  * `runCli` is the whole command, and it returns its exit code rather than
  * calling `process.exit`, so a test can drive a real run and read what it
@@ -40,11 +41,12 @@ import { checkPiAuth } from "@no-dice/harness";
 import type { LogResult, Seat } from "@no-dice/log";
 import { renderSeriesReport } from "@no-dice/stats/series-report";
 import { renderSeriesEvidence } from "@no-dice/stats/rules-evidence";
+import { writeSeriesShowcase } from "@no-dice/stats/showcase";
 import { outcomeOf, wilsonInterval, winRateOf, zOf } from "@no-dice/stats/wilson";
 import type { Outcome, WilsonInterval, WinRate } from "@no-dice/stats/wilson";
 
 import { defaultOutName, parseArgs } from "./args.ts";
-import type { EvidenceCommand, MatchCommand, SeatArg, SeriesCommand, StatsCommand } from "./args.ts";
+import type { EvidenceCommand, MatchCommand, SeatArg, SeriesCommand, ShowcaseCommand, StatsCommand } from "./args.ts";
 import { runMatch, seatSpec } from "./match.ts";
 import type { SeatSpec } from "./match.ts";
 import { seatModelsJson } from "./providers.ts";
@@ -68,6 +70,7 @@ const USAGE = [
     " [--max-tokens <n>] [--concurrency <n>] [--seed-base <n>] [--name <name> | --dir <path>]",
   "usage: no-dice stats --series <dir>",
   "usage: no-dice evidence --series <dir>",
+  "usage: no-dice showcase --series <dir>",
 ];
 
 /** How the match ended, in the one line a run prints: type, winner, score. */
@@ -102,7 +105,8 @@ export async function runCli(argv: readonly string[], io: CliIo = {}): Promise<n
   if (command.name === "match") return runMatchCommand(command, cwd, stdout, stderr);
   if (command.name === "series") return runSeriesCommand(command, cwd, stdout, stderr);
   if (command.name === "stats") return runStatsCommand(command, cwd, stdout, stderr);
-  return runEvidenceCommand(command, cwd, stdout, stderr);
+  if (command.name === "evidence") return runEvidenceCommand(command, cwd, stdout, stderr);
+  return runShowcaseCommand(command, cwd, stdout, stderr);
 }
 
 /** One `no-dice match`: the match, then where its log is and how it ended. */
@@ -307,6 +311,47 @@ const runEvidenceCommand = async (
     const { markdown, path } = await renderSeriesEvidence(resolve(cwd, command.series));
     stdout(`evidence: ${path}`);
     for (const line of markdown.replace(/\n+$/, "").split("\n")) stdout(line);
+    return 0;
+  } catch (error) {
+    stderr(`error: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+};
+
+/**
+ * One `no-dice showcase`: the match of a series worth rendering, printed and
+ * written to `<dir>/showcase.json`.
+ *
+ * The file carries the path of the log rather than a copy of it, which is what
+ * lets the viewer be pointed straight at the series' own match, and the series
+ * line the header shows beside it. It is written from the series alone — no
+ * clock, no random draw — so running the command twice on an unchanged series
+ * leaves the same bytes, and an operator can re-run it after a resumed series
+ * without wondering what moved.
+ */
+const runShowcaseCommand = async (
+  command: ShowcaseCommand,
+  cwd: string,
+  stdout: (line: string) => void,
+  stderr: (line: string) => void,
+): Promise<number> => {
+  try {
+    const { showcase, path } = await writeSeriesShowcase(resolve(cwd, command.series));
+    stdout(`showcase: ${path}`);
+    stdout(showcase.seriesLine);
+    stdout(showcase.selection.note);
+    if (showcase.match === null) {
+      stdout("no match to render: the series counted none");
+      return 0;
+    }
+    const { excitement } = showcase.match;
+    stdout(`chosen: ${showcase.match.path}`);
+    stdout(
+      `excitement ${String(excitement.score)} — ${String(excitement.leadChanges)} lead changes, ` +
+        `largest swing ${String(excitement.largestSwing)}, final lead change ` +
+        `${excitement.finalChangeTurn === 0 ? "none" : `turn ${String(excitement.finalChangeTurn)}`}` +
+        ` (margin ${String(showcase.match.margin)})`,
+    );
     return 0;
   } catch (error) {
     stderr(`error: ${error instanceof Error ? error.message : String(error)}`);

@@ -414,22 +414,24 @@ const parseFailureOf = (error: unknown): string => {
  * The log one record names, tried at every path it could be at (see
  * `logPathsOf`). `log` is null when none of them held one, and `why` says what
  * went wrong: the empty string means no file was there at all, rather than a
- * file that would not parse.
+ * file that would not parse. `path` is the file the log was read from, or null
+ * when none was — the path a caller hands on to a reader has to be one that is
+ * actually there, which the record's own path is not always.
  */
 export const readLogOf = async (
   dir: string,
   path: string,
-): Promise<{ log: MatchLog | null; why: string }> => {
+): Promise<{ log: MatchLog | null; path: string | null; why: string }> => {
   let why = "";
   for (const candidate of logPathsOf(dir, path)) {
     try {
       const json: unknown = JSON.parse(await readFile(candidate, "utf8"));
-      return { log: matchLogSchema.parse(json), why: "" };
+      return { log: matchLogSchema.parse(json), path: candidate, why: "" };
     } catch (error) {
       if (!isMissing(error)) why = parseFailureOf(error);
     }
   }
-  return { log: null, why };
+  return { log: null, path: null, why };
 };
 
 /** Read every log, and sort the matches into the ones that count and the ones that do not. */

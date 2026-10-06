@@ -25,13 +25,15 @@
  * (`docs/pi-harness-notes.md` §7). The long series stays with the runner's own
  * tests, which script `playMatch` instead.
  *
- * Seed 135 is the map the other suites use.
+ * Seed 135 is the map the other suites use. `no-dice stats`, `no-dice evidence`
+ * and `no-dice showcase` are tested against a directory a real run left behind,
+ * which is the only shape any of them reads.
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -630,5 +632,103 @@ describe("no-dice evidence", () => {
     expect(extra.code).not.toBe(0);
     expect(extra.err[0]).toContain('unknown flag "--seed"');
     expect(extra.err[0]).toContain('"evidence" takes --series');
+  });
+});
+
+describe("no-dice showcase", () => {
+  it("names the one match worth rendering, and writes it beside the series", async () => {
+    const seriesDir = join(dir, "series", "shown");
+    const played = await run([...SERIES, "--dir", seriesDir]);
+    expect(played.code).toBe(0);
+
+    const result = await run(["showcase", "--series", seriesDir]);
+
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+    expect(result.out[0]).toBe(`showcase: ${join(seriesDir, "showcase.json")}`);
+
+    const written = await readFile(join(seriesDir, "showcase.json"), "utf8");
+    const parsed = JSON.parse(written) as Record<string, any>;
+    expect(parsed.format).toBe("salient-showcase/1");
+
+    // The one-line series result the viewer's header shows: model X against its
+    // opponent, the win rate with its 95% interval, the pairs played, and why the
+    // run stopped. Printed as well as written, so the header can be read off the
+    // terminal without opening the file.
+    expect(parsed.series.line).toContain("bot:greedy vs bot:random");
+    expect(parsed.series.line).toContain(`${String(parsed.series.pairs)} pairs`);
+    expect(parsed.series.line).toContain("stopped on max_pairs");
+    expect(result.out[1]).toBe(parsed.series.line);
+
+    // The match is the series' own log rather than a copy of it, and the path is
+    // one that is really there.
+    const chosen = parsed.match;
+    expect(chosen).not.toBeNull();
+    expect(chosen.path.startsWith(`${join(seriesDir, "matches")}${sep}`)).toBe(true);
+    await expect(readFile(chosen.path, "utf8")).resolves.toBeTypeOf("string");
+
+    // The score is the sum of the three components written beside it, and the
+    // choice is the best of the matches the margin filter kept out of a ranking
+    // that is in the order the choice came out of.
+    expect(chosen.excitement.score).toBe(
+      chosen.excitement.lead_changes + chosen.excitement.largest_swing + chosen.excitement.final_change_turn,
+    );
+    const kept = parsed.ranked.filter((each: Record<string, any>) => each.kept === true);
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept[0]!.path).toBe(chosen.path);
+    const scores = parsed.ranked.map((each: Record<string, any>) => each.excitement.score as number);
+    expect(scores).toEqual([...scores].sort((left, right) => right - left));
+
+    // A series with a winner has its match chosen from that winner's wins; a
+    // series whose interval covers 50% says it has no winner instead.
+    if (parsed.selection.winner !== null) {
+      const wonByWinner =
+        parsed.selection.winner.side === "x"
+          ? chosen.result.winner === chosen.x_seat
+          : chosen.result.winner !== chosen.x_seat;
+      expect(wonByWinner).toBe(true);
+      expect(parsed.series.winner).toBe(parsed.selection.winner.label);
+    } else {
+      expect(parsed.series.winner).toBeNull();
+      expect(parsed.selection.note).toContain("no series winner");
+    }
+
+    // What was printed is what was written: the line, the reason the pool was the
+    // pool, and the choice with its three components.
+    const printed = result.out.join("\n");
+    expect(printed).toContain(parsed.selection.note);
+    expect(printed).toContain(`chosen: ${chosen.path}`);
+    expect(printed).toContain(`excitement ${String(chosen.excitement.score)}`);
+    expect(result.out).toHaveLength(5);
+  }, 120_000);
+
+  it("writes the same bytes when it is run again over an unchanged series", async () => {
+    const seriesDir = join(dir, "series", "shown-twice");
+    const played = await run([...SERIES, "--dir", seriesDir]);
+    expect(played.code).toBe(0);
+
+    const first = await run(["showcase", "--series", seriesDir]);
+    expect(first.code).toBe(0);
+    const written = await readFile(join(seriesDir, "showcase.json"), "utf8");
+
+    const second = await run(["showcase", "--series", seriesDir]);
+    expect(second.code).toBe(0);
+    expect(await readFile(join(seriesDir, "showcase.json"), "utf8")).toBe(written);
+    // The same choice, printed in the same order: nothing here reads a clock.
+    expect(second.out).toEqual(first.out);
+  }, 120_000);
+
+  it("names a directory that holds no series", async () => {
+    const result = await run(["showcase", "--series", join(dir, "series", "nothing")]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("is not there, so there is no series to report");
+  });
+
+  it("names a missing --series", async () => {
+    const result = await run(["showcase"]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.err[0]).toContain("--series is required");
   });
 });
