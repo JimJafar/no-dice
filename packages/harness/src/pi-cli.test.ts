@@ -2,9 +2,10 @@
  * The Pi build a match runs on.
  *
  * A match is only comparable with another match if it ran on the same Pi, and
- * the Pi on `PATH` is not a build anyone pinned: the one on this machine is
- * 0.87.1, which has no MCP support at all, so a seat started through it would
- * be handed no game tools and would still start without complaint. These tests
+ * the Pi on `PATH` is not a build anyone pinned: it is whatever a machine has
+ * installed, and one from before 1.0 has no MCP support at all, so a seat
+ * started through it would be handed no game tools and would still start
+ * without complaint. These tests
  * hold the two things brief §6.3 asks for — an exact version in the harness's
  * dependencies, and a path to the copy that dependency installed — and then
  * prove the build is what it claims to be by asking it: `--version` has to

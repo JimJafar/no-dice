@@ -8,9 +8,10 @@
  * installed. Everything in the Pi milestone spawns `node <path> …` with that
  * path, and nothing runs `pi`.
  *
- * The `pi` on `PATH` is not a usable substitute: the one on this machine is
- * 0.87.1, which predates Pi's MCP support entirely, so a seat started through
- * it would have no game tools to call and would still start cleanly. Resolving
+ * The `pi` on `PATH` is not a usable substitute: it is whatever a machine has
+ * installed, and a Pi from before 1.0 has no MCP support at all, so a seat
+ * started through one would have no game tools to call and would still start
+ * cleanly. Resolving
  * through the dependency instead makes the version a match reports the version
  * the lockfile pins, and makes a checkout that installed a different Pi a
  * visibly different match.

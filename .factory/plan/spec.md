@@ -44,10 +44,9 @@ Salient-specific code stays inside `games/salient`; no general game framework in
 - The prototype in `salient/docs/reference/` is behaviour to port, not code to ship.
   `node salient/docs/reference/replay-check.js salient/docs/golden/*.json` passes today and
   is a gate: it pins the numbers the new engine must reproduce.
-- The installed `pi` is **0.87.1, which has no MCP support**. `@earendil-works/pi-coding-agent`
-  `1.0.2` is on the npm registry and was checked in this workspace, so milestone 03 pins it as
-  a dependency of `packages/harness` and spawns `node <pkg>/dist/cli.js`, never `pi` from
-  `PATH`. What
+- The `pi` on `PATH` is whatever a machine has installed, and a Pi before 1.0 has no MCP
+  support. So `packages/harness` depends on `@earendil-works/pi-coding-agent` `1.0.2` at an
+  exact version and spawns `node <pkg>/dist/cli.js`, never `pi` from `PATH`. What
   1.0.2 confirmed: `pi mcp list --json` reads `mcp.json` from a relocated
   `PI_CODING_AGENT_DIR` and substitutes `${SALIENT_TOKEN}` from the child's environment; with
   `exposure: "direct"`, `--no-builtin-tools` and brief §6.3's `settings.json`, the tool list in
