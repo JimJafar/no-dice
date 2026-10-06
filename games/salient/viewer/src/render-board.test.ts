@@ -213,7 +213,7 @@ describe("renderBoard under fog", () => {
     }
   });
 
-  it("shows a hidden hex its terrain and a ? for the count the seat cannot know", () => {
+  it("draws a hidden hex on the fog background, under its own label", () => {
     const drawn = hexes(fogFrame(11, "B"));
     for (const label of MOCKUP_HIDDEN_B) {
       const hex = drawn.get(label)!;
@@ -225,12 +225,35 @@ describe("renderBoard under fog", () => {
       // Nothing on it repeats a number the log holds about it.
       expect(marks(hex).text, label).not.toMatch(/\d/);
     }
+  });
 
-    // The mock-up's three question marks: A's Base, and the two Nodes on A's
-    // half. Their symbols stay, because a Base and a Node are terrain.
-    expect(drawn.get("B6")!.querySelector(".bs")?.textContent).toBe("?");
-    for (const label of ["D6", "D9"]) {
-      expect(drawn.get(label)!.querySelector(".nd b")?.textContent, label).toBe("?");
+  it("marks a hidden hex only where the spectator frame has a number to hide", () => {
+    // The mock-up's key limits the symbol: "Hidden Base or Node". So the `?` is
+    // a substitution for a number, not a label for "hidden" — and a plain hex
+    // the spectator frame shows no count for shows no count under fog either.
+    // The mock-up draws 24 such hexes and 3 with a `?`; this pins all 27.
+    const fog = fogView(log, 11, "B");
+    const hidden = log.map.filter((hex) => fog.hidden.has(hex.id) && hex.terrain !== "blocked");
+    expect(hidden.map((hex) => hex.id)).toEqual(MOCKUP_HIDDEN_B);
+    expect(hidden.filter((hex) => hex.terrain === "plain")).toHaveLength(24);
+    expect(hidden.filter((hex) => hex.terrain === "base" || hex.terrain === "node"))
+      .toHaveLength(3);
+
+    const drawn = hexes(fogFrame(11, "B"));
+    for (const hex of hidden) {
+      const el = drawn.get(hex.id)!;
+      if (hex.terrain === "base" || hex.terrain === "node") {
+        const symbol = hex.terrain === "base" ? "bs" : "nd";
+        expect(marks(el), `${hex.id} marks`).toEqual({ text: "?", symbols: [symbol] });
+        // The `?` sits inside the terrain's own symbol, where the number was.
+        expect(el.querySelector(hex.terrain === "base" ? ".bs" : ".nd b")?.textContent, hex.id).toBe("?");
+      } else {
+        // Nothing but the label: no symbol of any kind, and no text either. The
+        // fog hatch is what says this seat does not know who stands here.
+        expect(marks(el), `${hex.id} marks`).toEqual({ text: "", symbols: [] });
+        expect(el.querySelector(".bs, .nd, .ct"), `${hex.id} grew a mark`).toBeNull();
+        expect(el.textContent?.trim(), `${hex.id} says more than its label`).toBe(hex.id);
+      }
     }
   });
 

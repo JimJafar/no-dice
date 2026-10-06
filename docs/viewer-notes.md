@@ -132,6 +132,25 @@ and the chart — so the comparison does not have to be repeated by eye next tim
   Nodes of A's that B cannot see, and both Bases and all 7 Nodes still on the
   board.
 
+**The fog frame's `?`: the mock-up's rule, not the plan's.** The plan's
+`viewer-fog` criterion says "every hidden hex shows its terrain and a `?`
+instead of a troop count", which reads as a `?` on all 27. The mock-up is
+narrower and its key spells the narrower rule out — "Hidden Base or Node"
+beside the `?` swatch — with markup to match: of its 27 hidden hexes, 24 carry
+only their label and exactly 3 carry a `?`, A's Base `B6` and A's two Nodes on
+that half, `D6` and `D9`. The page follows the mock-up, because the mock-up is
+what the brief's fourth done-means holds the viewer to and the criterion is the
+looser of the two. The rule the symbol follows is a substitution, not a label:
+where the spectator frame shows a number, the fog frame shows `?` in the same
+symbol; a plain hex with no troops in the spectator frame shows nothing there
+under fog either, and the fog hatch — a background of its own, not a team
+hatch — is what says "this seat does not know who stands here". Putting a `?` on
+all 24 would claim a troop count where the frame has no count to hide, and would
+move the page away from the mock-up for nothing. `render-board.test.ts` pins the
+mark of every non-blocked hidden hex of that frame — no mark element and no
+text beyond the label on the 24, `?` inside the Base circle and inside the Node
+diamond on the 3 — so the decision outlives the argument that settled it.
+
 **What did not, and why.**
 
 - The intent and prediction sentences. The mock-up's are hand-written for the
