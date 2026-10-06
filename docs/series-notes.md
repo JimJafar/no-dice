@@ -55,7 +55,11 @@ not end the run: `series.json` records `stop_reason: "max_pairs"` with
 `stopped_early: false`, which is the pair limit being reached, i.e. the series
 playing the length it was asked for. The adaptive stop could not have fired at
 this length either: the Wilson interval test starts at `MIN_TEST_PAIRS = 10` pairs
-(`packages/runner/src/series-stop.ts`) and this series was five.
+(`packages/runner/src/series-stop.ts`) and this series was five. Read that record
+with one caveat: its `state.pairs_played` is **3** even though all five planned
+pairs were attempted, because a pair counts only once both its matches have a log
+and two of them were voided (section 5); `matches_failed: 2` beside it is what
+says so.
 
 ## 3. Concurrency 1, and what it did to the clock
 
@@ -98,9 +102,12 @@ The report's per-model table says how the model seat lost them, and it is worth
 reading before anyone concludes the model was outplayed: of its 200 turns, **53
 ended as passes** — 34 `timeout` (the 300 s cap above), 18 `provider_error` (a Pi
 agent loop that failed after Pi's own retries), 1 `no_submission` — and 17
-submissions were rejected by the server. Seven turns compacted, with context
-peaking at 85,963 tokens of the 131,072 window, so compaction fired below the
-114,688 threshold §7 worked out for this window.
+submissions were rejected by the server. Seven turns compacted, with the largest
+per-turn `context_tokens` in the logs 85,963 of the 131,072 window — which is not
+the figure Pi compares against its 114,688 threshold: `context_tokens` is the
+conversation sampled at the end of a turn, while Pi's threshold check runs
+mid-turn over the pending tool results, so those seven turns are not evidence of
+a threshold bypassed.
 
 ## 5. The matches that went missing: 2 of 10
 
@@ -113,20 +120,24 @@ from the first Marvin attempt:
 | 313966722 | B | 7 | `submit_orders` |
 
 not `mcp__salient__submit_orders`, which is the name the harness gives it and the
-name each of those seats had been using correctly — 15 and 11 times respectively —
+name each of those seats had been using correctly — 7 and 5 times respectively —
 before the slip. Pi answered `Tool submit_orders not found`, the harness saw a
 tool name outside the seven, and `MatchVoided` left no log; the series recorded
 the match as failed and the report keeps it out of the win rate under "Missing
-matches". Two slips in the 530 tool calls the ten attempted matches made — 471
-over the eight that were counted, 59 over the two that were not — but two of ten
-matches lost: at 150 matches that is a lot of the series.
+matches". Two slips in the 516 tool calls the ten attempted matches made — 471
+over the eight that were counted, 45 over the two that were not (24 and 21, the
+bad call being the last of each) — but two of ten matches lost: at 150 matches
+that is a lot of the series.
 
 **Nothing was changed to fix this mid-series.** The prompt
-(`games/salient/prompts/player-system.md`) still never names the seven tools, and
-the rules and the harness are untouched, because a series whose matches were
-played under two different prompts is not one series. The two voided matches have
-no log on disk, so the next run of the same command plays them again — that is
-the honest way to find out whether they were bad luck.
+(`games/salient/prompts/player-system.md`) does name the seven tools, but only by
+their bare names — `get_rules`, `get_state`, scout, simulate, `read_notes`,
+`write_notes`, `submit_orders` — and never gives the `mcp__salient__` prefix the
+harness registers them under, which is the name a call has to carry to be inside
+the seven. The rules and the harness are untouched either way, because a series
+whose matches were played under two different prompts is not one series. The two
+voided matches have no log on disk, so the next run of the same command plays
+them again — that is the honest way to find out whether they were bad luck.
 
 ## 6. Resuming it, and extending it
 
