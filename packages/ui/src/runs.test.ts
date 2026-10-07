@@ -418,6 +418,7 @@ describe("GET /api/run", () => {
       startedAt: null,
       endedAt: null,
       exitCode: null,
+      counters: null,
     });
 
     const posted = await send(port, "/api/run", "POST", {});

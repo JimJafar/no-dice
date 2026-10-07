@@ -3,15 +3,21 @@
  * `/api/state` puts in them.
  *
  * Nothing here decides what a run is, what a provider costs or
- * what a leaderboard row holds — those are the start, results and leaderboard
- * tasks' own modules, which will draw into these same sections. What is drawn
- * now is only what the console has said about itself: the seats a run can be
- * started with, the providers the registry names, the two roots the
- * console reads, and whether a run is in flight.
+ * what a leaderboard row holds — those are the progress, start, results and
+ * leaderboard tasks' own modules, which draw into these same sections. What is
+ * drawn now is only what the console has said about itself: the seats a run can be
+ * started with, the providers the registry names, and the two roots the
+ * console reads.
+ *
+ * The progress section is the one section this file leaves standing empty: a run's
+ * own lines and counters come from `/api/run`, which the page reads on its own
+ * once a second, and a line invented here from `/api/state` would be a second,
+ * staler account of the same run.
  *
  * A section is kept as it is in `index.html` apart from what stands under its
  * heading, which is replaced whole on every render: a state that no longer holds
- * a provider must not leave the last one's row on the page.
+ * a provider must not leave the last one's row on the page. The caller puts back
+ * what it owns — the progress section, for one.
  */
 import type { ProviderOption, UiState } from "./state.ts";
 
@@ -43,8 +49,12 @@ export const frameSections = (root: ParentNode): FrameSections => ({
   leaderboard: section(root, "leaderboard"),
 });
 
-/** Everything under a section's heading, taken back out before it is redrawn. */
-const clear = (el: HTMLElement): void => {
+/**
+ * Everything under a section's heading, taken back out before it is redrawn.
+ * Exported because the progress section is drawn by `progress.ts` from `/api/run`
+ * and needs the same rule: the heading is the page's, the rest is ours.
+ */
+export const clear = (el: HTMLElement): void => {
   for (const child of [...el.children]) {
     if (child.tagName !== "H2") child.remove();
   }
@@ -76,11 +86,6 @@ const renderSeats = (el: HTMLElement, state: UiState): void => {
     paragraph("seats", "Seats a run can be started with — the pickers the start form builds will list these."),
     list("seat-options", [...state.bots, ...state.providers.map((provider) => provider.name)]),
   );
-};
-
-/** Whether anything is running. The run manager's task draws the lines themselves. */
-const renderRun = (el: HTMLElement, running: unknown): void => {
-  el.append(paragraph("run", running === null ? "No run in flight." : "A run is in flight."));
 };
 
 /** A path, as a path. */
@@ -126,14 +131,14 @@ const renderProviders = (el: HTMLElement, providers: readonly ProviderOption[]):
 };
 
 /**
- * The frame, as the console's state describes it. The leaderboard section
- * is left standing empty: it has nothing to say until a series has
+ * The frame, as the console's state describes it. The progress section is left
+ * empty for `progress.ts` to fill from `/api/run`, and the leaderboard section is
+ * left standing empty as well: it has nothing to say until a series has
  * been counted, and an invented row would be a row the results page contradicts.
  */
 export const renderFrame = (sections: FrameSections, state: UiState): void => {
   for (const el of Object.values(sections)) clear(el);
   renderSeats(sections.start, state);
-  renderRun(sections.progress, state.running);
   renderRoots(sections.results, state);
   renderProviders(sections.providers, state.providers);
 };

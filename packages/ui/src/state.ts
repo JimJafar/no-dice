@@ -38,9 +38,9 @@ export interface UiState {
   readonly matchesRoot: string;
   /**
    * The run in flight, and `null` when there is none. The run slot answers for
-   * itself at `/api/run`, with its lines and its paths; this stays `null` until
-   * the page reads that route rather than being told, which is what the
-   * start-page task replaces.
+   * itself at `/api/run`, with its lines and its counters, and the page reads
+   * that route while it says `running`; a copy of it here would be a
+   * second, staler account of the same run.
    */
   readonly running: unknown;
 }

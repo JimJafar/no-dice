@@ -67,13 +67,14 @@ describe("renderFrame", () => {
     expect(itemsOf(root, "seat-options")).toEqual(["bot:random", "bot:greedy", "marvin", "openai"]);
   });
 
-  it("says that nothing is running, and that something is, without inventing a line for a run it cannot see", () => {
+  it("leaves the progress section to the run's own module, rather than inventing a line for a run it cannot see", () => {
     const { sections, root } = frame();
     renderFrame(sections, STATE);
-    expect(textOf(root, "progress")).toContain("No run in flight.");
-
     renderFrame(sections, { ...STATE, running: { state: "running" } });
-    expect(textOf(root, "progress")).toContain("A run is in flight.");
+
+    // `/api/state` does not carry a run: `/api/run` does, and the page reads that
+    // once a second. A line drawn here would be a second, staler account of it.
+    expect(root.querySelector("#progress")?.children).toHaveLength(1);
   });
 
   it("states the two roots the console reads", () => {

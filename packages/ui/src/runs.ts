@@ -25,6 +25,14 @@
  * spec and name the form can send goes through `parseArgs`, and what the page
  * can ask for is what the terminal accepts.
  *
+ * **The snapshot is asked for, not kept.** Its lines are what the run has
+ * printed so far, and its counters are read out of the series' own `series.json`
+ * at the moment the page asked (`./progress.ts`) rather than remembered from an
+ * earlier one. That is what lets a page polling once a second watch the pair lines
+ * move per pair and the counters move at the batch boundaries the runner writes
+ * at, and it is why a run that has finished still answers with its last lines and
+ * its final figures instead of being cleared.
+ *
  * **Two paths are the slot's to fix, not the CLI's to default.** A run started
  * at the terminal puts its output under the current directory; a run
  * started from the page has to put it under the roots the server was given, or
@@ -48,6 +56,8 @@ import { defaultOutName, parseArgs, seatSlug } from "@no-dice/runner/args";
 import type { MatchCommand, SeatArg, SeriesCommand } from "@no-dice/runner/args";
 import { runCli } from "@no-dice/runner/cli";
 
+import { readRunCounters } from "./progress.ts";
+import type { RunCounters } from "./progress.ts";
 import type { UiRoots } from "./state.ts";
 
 /** Which command a start asks for. The two the console can play. */
@@ -74,6 +84,13 @@ export interface RunSnapshot {
   endedAt: string | null;
   /** `runCli`'s exit code: 0 for a run that played what it was asked to. */
   exitCode: number | null;
+  /**
+   * What the series' own `series.json` says about the run, read as the snapshot is
+   * asked for — so the counters are the series' own figures rather than a reading
+   * of its lines. `null` for a match, which has no record, and for a series that
+   * has not written one yet.
+   */
+  counters: RunCounters | null;
 }
 
 /** Why a start was refused, so the route can answer with the right status. */
@@ -155,6 +172,7 @@ const IDLE: RunSnapshot = {
   startedAt: null,
   endedAt: null,
   exitCode: null,
+  counters: null,
 };
 
 /** A value the form sent for a field, as the flag's value, or `null` for "not given". */
@@ -232,6 +250,12 @@ export function createRunSlot(options: RunSlotOptions): RunSlot {
 
   let current: ActiveRun | null = null;
 
+  /**
+   * The run as the page reads it. The counters are read here rather than kept:
+   * `series.json` is the series' own account of how far it has got, rewritten
+   * atomically at every batch boundary, and a snapshot that quoted a copy of it
+   * taken at the start would be a snapshot that never moved.
+   */
   const snapshotOf = (run: ActiveRun | null): RunSnapshot =>
     run === null
       ? { ...IDLE, lines: [] }
@@ -243,6 +267,7 @@ export function createRunSlot(options: RunSlotOptions): RunSlot {
           startedAt: run.startedAt,
           endedAt: run.endedAt,
           exitCode: run.exitCode,
+          counters: run.kind === "series" && run.dir !== null ? readRunCounters(run.dir) : null,
         };
 
   /**

@@ -28,7 +28,10 @@ export interface UiState {
   readonly seriesRoot: string;
   /** The directory finished match logs are listed from. */
   readonly matchesRoot: string;
-  /** The run in flight, and `null` when there is none. Its shape is the run manager's. */
+  /**
+   * The run in flight as `/api/state` mentions it, which is `null`: the run
+   * answers for itself at `/api/run`, and `progress.ts` reads that route.
+   */
   readonly running: unknown;
 }
 
