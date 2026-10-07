@@ -72,15 +72,20 @@ pnpm --filter @no-dice/salient-viewer dev
 ```
 
 The line under the score bar then names the pairing, the win rate with its 95%
-interval, the pairs played, the reason the run stopped, and that the match on
-screen is the one the series picked. The two files arrive separately, so the line
-also says when they disagree: a log from another match of that series is named by
-its seed next to the seed the series picked, rather than claimed as the choice.
-With no sidecar the header keeps the sentence that says a match log holds one
-match, and with a sidecar the viewer cannot read, the page says what is wrong with
-it in one line and draws the board anyway — a broken series line does not blank a
-match. `src/series-line.test.ts` pins each of these, including the page mounted from
-`index.html` with `?log=` and `?series=` answered out of memory.
+interval, the pairs played, the reason the run stopped, and where the match on
+screen sits in that series. The seed is the handle the two files share, and it
+names a *pair* rather than a match — one seed played twice with the seats swapped,
+whose two logs sit side by side in the series directory — so the claim is made on
+the seed *and* on who held each seat, which the sidecar writes as
+`match.players`. A log that is the twin of the picked match is named as the other
+match of that pair; a log of another seed, or of other players, is named by its
+seed next to the one the series picked. Nothing is claimed about a match the
+sidecar did not pick. With no sidecar the header keeps a one-line sentence saying
+how to get the line, and with a sidecar the viewer cannot read, the page says what
+is wrong with it in one line and draws the board anyway — a broken series line
+does not blank a match. `src/series-line.test.ts` pins each of these, including
+the page mounted from `index.html` with `?log=` and `?series=` answered out of
+memory.
 
 The sidecar's shape is declared in `src/series.ts` rather than imported from the
 package that writes it, for the same reason the viewer does not import the engine:
@@ -212,7 +217,17 @@ diamond on the 3 — so the decision outlives the argument that settled it.
   [A wins] to [B wins]` against the pairing, its win rate with its 95%
   interval, its pairs and its stop reason, which is what a series of seat-swapped
   pairs actually measures. The page has no match index to quote — the log it
-  holds is one file, and the series it came from is a separate one.
+  holds is one file, and the series it came from is a separate one. The mock-up's
+  line is one line and this one is longer: at the mock-up's 15 px it wraps to two
+  inside the header row, which the mock-up fixes at 104 px and which already holds
+  the counter, the bar and the summary. That row is the frame's one tight spot:
+  the 1080 px frame has no spare height to give it, which is why these rows
+  are 12 px apart instead of the mock-up's 24 at all — the note at the top of
+  `viewer.css` counts the three rows the mock-up does not have and says the 629 px
+  board box would be pushed out of the frame. A header that grows takes the
+  difference out of that board box rather than out of spare height. The
+  placeholder is kept to one line for that reason; a series line that carries five
+  facts cannot be.
 - The verdict tag: not drawn, so the prediction stands on its own.
 - The headline: the mock-up's "A takes the centre Node, 5 against 3, and cuts
   off five of B's hexes" against what `headline()` generates for the same turn,

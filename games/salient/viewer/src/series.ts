@@ -24,7 +24,7 @@
  * cannot disagree with them.
  */
 import { seatSchema, z } from "@no-dice/log";
-import type { MatchLog } from "@no-dice/log";
+import type { MatchLog, PlayerHeader, Seat } from "@no-dice/log";
 
 /** The sidecar's format tag, as the stats package writes it. */
 export const SHOWCASE_FORMAT = "salient-showcase/1";
@@ -57,6 +57,13 @@ const matchSchema = z.object({
   seed: z.number().int(),
   /** Which seat model X played in this match of the pair. */
   x_seat: seatSchema,
+  /**
+   * Who held each seat of the picked match, in the labels the report writes.
+   * The seed names a pair and not a match, so these are the only thing
+   * that tells the picked match from its twin — the same seed played with the
+   * seats swapped, whose log sits beside it in the series directory.
+   */
+  players: z.object({ A: z.string(), B: z.string() }),
 });
 
 /** The part of `showcase.json` the viewer reads. */
@@ -91,20 +98,54 @@ function winRateText(series: Showcase["series"]): string {
 }
 
 /**
+ * The label the sidecar writes for one of the log's seats: the model name a `pi`
+ * seat carries — `<provider>/<id>`, as the log writes it — and a bot's name under
+ * the `bot:` prefix the report puts on one. The viewer's own `seatName`
+ * (`header.ts`) has no prefix, because it names a seat to whoever is
+ * watching rather than recording which kind it is; the two forms have to be
+ * squared before a sidecar's seats can be compared with a log's.
+ */
+const labelOf = (player: PlayerHeader): string =>
+  player.kind === "bot" ? `bot:${player.bot}` : player.model;
+
+/** The log on the screen, labelled the way the sidecar labels its match. */
+function labelsOf(log: MatchLog): Record<Seat, string> {
+  return { A: labelOf(log.players.A), B: labelOf(log.players.B) };
+}
+
+/**
  * The sentence that puts the match on the screen in the series.
  *
- * The seed is the only handle the two have in common, and it names a pair rather
- * than a match — a pair is the same seed played twice with the seats swapped —
- * so the seat X played is said with it. A log from anywhere else in the series,
- * or from another series, is named as one rather than claimed as the choice.
+ * The seed is the handle the two files have in common, and it names a pair
+ * rather than a match: a pair is one seed played twice with the seats swapped,
+ * so a series directory holds `572152369-marvin-greedy.json` and
+ * `572152369-greedy-marvin.json` side by side. Only the seats tell the two
+ * apart, and the sidecar's `match.players` are the only place its own seats are
+ * written down — `match.x_seat` says where X sat in the match the series picked,
+ * which says nothing about the match on the screen until the two are compared.
+ * So the claim is made on seed *and* seats, and anything else is reported as
+ * what each file says rather than claimed as the choice.
  */
 function pickedText(showcase: Showcase, log: MatchLog): string {
   if (showcase.match === null) return "The series counted no match, so it picked none.";
-  const { seed, x_seat: xSeat } = showcase.match;
+  const { seed, x_seat: pickedSeat, players } = showcase.match;
+  const here = labelsOf(log);
+  const picked = `The series picked seed ${String(seed)}, with ${showcase.series.x} in seat ${pickedSeat}`;
   if (seed !== log.seed) {
-    return `The series picked seed ${String(seed)}; this log is seed ${String(log.seed)}.`;
+    return `${picked}; this log is seed ${String(log.seed)}.`;
   }
-  return `This is the match the series picked: seed ${String(seed)}, with ${showcase.series.x} in seat ${xSeat}.`;
+  if (here.A === players.A && here.B === players.B) {
+    return (
+      `This is the match the series picked: seed ${String(seed)}, ` +
+      `with ${showcase.series.x} in seat ${pickedSeat}.`
+    );
+  }
+  if (here.A === players.B && here.B === players.A) {
+    // The twin: the other match of the same pair, which is the usual way to be
+    // holding the wrong file out of a series directory.
+    return `${picked}; this log is the other match of that pair, its seats swapped.`;
+  }
+  return `${picked}; this log has that seed and other players.`;
 }
 
 /**

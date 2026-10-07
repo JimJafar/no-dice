@@ -12,9 +12,10 @@ import { generateMap, DEFAULT_CONFIG, boardCells, hexKey, score } from "@no-dice
 import type { Hex, HexKey } from "@no-dice/salient-engine";
 import { matchLogSchema as publishedMatchLogSchema } from "@no-dice/log";
 import { describe, expect, it } from "vitest";
+import { z as zodItself } from "zod";
 import type { ZodIssue } from "zod";
 
-import { cellsFor, cellsSchema, matchLogSchema } from "./log.ts";
+import { cellsFor, cellsSchema, matchLogSchema, seatSchema, z } from "./log.ts";
 import type { Cell } from "./log.ts";
 
 /**
@@ -256,6 +257,27 @@ describe("cellsFor", () => {
     // F5 and F6 belong to A but are cut from B6 by the blocked hex at E6; the
     // wedge from B6 to D6 is supplied, and so is B's Base.
     expect(cutOff).toEqual(["F5:1:1", "F6:1:1"]);
+  });
+});
+
+describe("the zod this module hands out", () => {
+  it("hands out the very zod its own schemas are built with", () => {
+    // The replay viewer declares a schema of its own for the sidecar format it
+    // reads, and reaches zod through this module because it lets itself exactly
+    // one package specifier — the rule its own `module-graph.test.ts` enforces.
+    // So the re-export is load-bearing for a package on the other side of the
+    // workspace, and this is what says so: dropping it, or replacing it
+    // with a hand-picked subset of zod, fails here.
+    expect(z).toBe(zodItself);
+    const schema = z.object({ seed: z.number().int(), seat: seatSchema });
+    expect(schema.safeParse({ seed: 135, seat: "A" }).success).toBe(true);
+    const rejected = schema.safeParse({ seed: 1.5, seat: "C" });
+    expect(rejected.success).toBe(false);
+    // Field paths, which is what a reader turns into the one line it shows.
+    expect(rejected.success ? [] : rejected.error.issues.map((issue) => issue.path.join("."))).toEqual([
+      "seed",
+      "seat",
+    ]);
   });
 });
 

@@ -22,6 +22,10 @@ import { z } from "zod";
  * specifier — this module, which is what stops it reaching the engine — and
  * still has to declare a schema of its own for the sidecar format it reads.
  * Going through here keeps that rule, and keeps one copy of zod in its bundle.
+ *
+ * This is public surface, not a convenience: `games/salient/viewer/src/series.ts`
+ * builds its schema with it, and `log.test.ts` pins the re-export so a tidy-up
+ * here cannot break the viewer from the other side of the workspace.
  */
 export { z } from "zod";
 

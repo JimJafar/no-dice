@@ -9,13 +9,22 @@
  * it, which is the whole point of `module-graph.test.ts`. The fields the header
  * never looks at (`selection`, `ranked`, a candidate's `excitement`) are here
  * anyway, because the file the viewer reads carries them and the viewer has to
- * read past them.
+ * read past them. The labels are the producer's too: a bot seat under its `bot:`
+ * prefix, in the pairing and in the match alike, which is what makes the seats
+ * of the picked match comparable with the seats of the log.
  *
- * A broken sidecar is checked from two sides: the message it produces names what
- * is wrong with it, and the page — mounted from `index.html` and driven through
- * `main.ts`, with `?log=` and `?series=` answered out of memory — still draws the
- * board while that message is on screen. The series line is a line about the
- * board, not part of the board.
+ * A seed names a pair and not a match, so the picked match is claimed on its
+ * seats as well as its seed: the twin of it — the same seed with the seats
+ * swapped, whose log sits beside it in the series directory — is the easy mistake
+ * to make, and the line about it is what says so here.
+ *
+ * A broken sidecar is checked from two sides: the message it produces names
+ * what is wrong with it, and the page — mounted from `index.html` and driven
+ * through `main.ts`, with `?log=` and `?series=` answered out of memory — still
+ * draws the board while that message is on screen. The series line is a line
+ * about the board, not part of the board, and it belongs to the board that is
+ * actually up: a load that fails on its log leaves the line that goes with the
+ * match still on screen.
  */
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
@@ -35,17 +44,20 @@ const log = matchLogSchema.parse(golden01);
 
 /**
  * The sidecar `no-dice showcase` would write for a series golden-01's log came
- * from: model X as `raider`, ten counted matches won nine, five pairs, the run
- * stopped by its pair limit, and this match — seed 135, X in seat A — picked.
+ * from: model X as the bot seat `raider`, ten counted matches won nine, five
+ * pairs, the run stopped by its pair limit, and this match — seed 135, X in seat
+ * A, `raider` and `striker` in the seats the log itself names — picked. The
+ * labels are the ones the stats package writes: a bot seat under its `bot:`
+ * prefix, in the pairing and in the match alike.
  */
 const SIDECAR = {
   format: "salient-showcase/1",
   series: {
     dir: "series/marvin-subagent-vs-greedy",
-    x: "raider",
-    opponent: "striker",
-    winner: "raider",
-    line: "raider vs striker — win rate 90.0% (95% 59.6% – 98.2%) over 10 counted matches, 5 pairs, stopped on max_pairs",
+    x: "bot:raider",
+    opponent: "bot:striker",
+    winner: "bot:raider",
+    line: "bot:raider vs bot:striker — win rate 90.0% (95% 59.6% – 98.2%) over 10 counted matches, 5 pairs, stopped on max_pairs",
     win_rate: { wins: 9, losses: 1, draws: 0, n: 10, successes: 9, rate: 0.9 },
     interval: { low: 0.596, high: 0.982 },
     confidence: 0.95,
@@ -58,15 +70,15 @@ const SIDECAR = {
   },
   selection: {
     basis: "series_winner",
-    winner: { label: "raider", side: "x", interval: { low: 0.596, high: 0.982 } },
+    winner: { label: "bot:raider", side: "x", interval: { low: 0.596, high: 0.982 } },
     margins: { count: 9, low: 4, high: 8, kept: 3, widened: false },
-    note: "raider won the series: win rate 90.0%, 95% interval 59.6% – 98.2%, clear of 50%",
+    note: "bot:raider won the series: win rate 90.0%, 95% interval 59.6% – 98.2%, clear of 50%",
   },
   match: {
     path: "series/marvin-subagent-vs-greedy/matches/135-a-b.json",
     seed: 135,
     x_seat: "A",
-    players: { A: "raider", B: "striker" },
+    players: { A: "bot:raider", B: "bot:striker" },
     result: { type: "time", winner: "A", turn: 25, score: { A: 49, B: 41 }, margin: 8 },
     margin: 8,
     excitement: { score: 22, lead_changes: 4, largest_swing: 6, final_change_turn: 12 },
@@ -200,15 +212,15 @@ describe("parseShowcase", () => {
     expect(parseShowcase(SIDECAR_TEXT)).toEqual({
       format: "salient-showcase/1",
       series: {
-        x: "raider",
-        opponent: "striker",
+        x: "bot:raider",
+        opponent: "bot:striker",
         win_rate: { n: 10, rate: 0.9 },
         interval: { low: 0.596, high: 0.982 },
         confidence: 0.95,
         pairs: 5,
         stop_reason: "max_pairs",
       },
-      match: { seed: 135, x_seat: "A" },
+      match: { seed: 135, x_seat: "A", players: { A: "bot:raider", B: "bot:striker" } },
     });
   });
 
@@ -227,8 +239,10 @@ describe("parseShowcase", () => {
     expect(messageOf(sidecarWith({ series: undefined }))).toMatch(/series: /);
     expect(messageOf(seriesWith({ pairs: "five" }))).toMatch(/series\.pairs/);
     expect(messageOf(seriesWith({ stop_reason: "" }))).toMatch(/series\.stop_reason/);
-    // A match the series picked names a whole-numbered seed and one of two seats.
+    // A match the series picked names a whole-numbered seed, one of two seats,
+    // and who held each of them — the seats are what tell it from its twin.
     expect(messageOf(sidecarWith({ match: { seed: 135, x_seat: "C" } }))).toMatch(/match\.x_seat/);
+    expect(messageOf(sidecarWith({ match: { seed: 135, x_seat: "A" } }))).toMatch(/match\.players/);
   });
 
   it("lists a few problems and says how many more there are", () => {
@@ -260,8 +274,8 @@ describe("parseShowcase", () => {
 describe("seriesLineOf", () => {
   it("names the pairing, the win rate with its interval, the pairs and the stop", () => {
     expect(seriesLineOf(parseShowcase(SIDECAR_TEXT), log)).toBe(
-      "raider vs striker — win rate 90.0% (95% 59.6% – 98.2%) over 10 counted matches, " +
-        "5 pairs, stopped on max_pairs. This is the match the series picked: seed 135, with raider in seat A.",
+      "bot:raider vs bot:striker — win rate 90.0% (95% 59.6% – 98.2%) over 10 counted matches, " +
+        "5 pairs, stopped on max_pairs. This is the match the series picked: seed 135, with bot:raider in seat A.",
     );
   });
 
@@ -280,7 +294,7 @@ describe("seriesLineOf", () => {
       log,
     );
     expect(line).toBe(
-      "raider vs striker — win rate — over no counted match, 0 pairs, stopped on max_pairs. " +
+      "bot:raider vs bot:striker — win rate — over no counted match, 0 pairs, stopped on max_pairs. " +
         "The series counted no match, so it picked none.",
     );
   });
@@ -288,8 +302,63 @@ describe("seriesLineOf", () => {
   it("says when the log on screen is not the match the series picked", () => {
     // The two arrive separately, so this is the page telling the viewer so rather
     // than claiming a match the sidecar never named.
-    const line = seriesLineOf(parseShowcase(sidecarWith({ match: { seed: 7, x_seat: "B" } })), log);
-    expect(line).toContain("The series picked seed 7; this log is seed 135.");
+    const line = seriesLineOf(
+      parseShowcase(sidecarWith({ match: { ...SIDECAR.match, seed: 7, x_seat: "B" } })),
+      log,
+    );
+    expect(line).toContain("The series picked seed 7, with bot:raider in seat B; this log is seed 135.");
+  });
+
+  it("names the twin when the log is the other match of the picked pair", () => {
+    // A seed names a pair, not a match: one seed played twice with the seats
+    // swapped, and a series directory holds both logs side by side. The seed
+    // alone would claim this log is the one that was picked, and the seat the
+    // sidecar names would be a lie about the match on the board.
+    const twin = sidecarWith({
+      match: { ...SIDECAR.match, x_seat: "B", players: { A: "bot:striker", B: "bot:raider" } },
+    });
+    const line = seriesLineOf(parseShowcase(twin), log);
+    expect(line).toContain(
+      "The series picked seed 135, with bot:raider in seat B; " +
+        "this log is the other match of that pair, its seats swapped.",
+    );
+    expect(line).not.toContain("This is the match the series picked");
+  });
+
+  it("says a log that shares the seed but not the seats is not the picked match", () => {
+    // The same seed out of some other series: neither seat of it holds either
+    // player, so it is neither the picked match nor its twin.
+    const other = sidecarWith({
+      match: { ...SIDECAR.match, players: { A: "bot:greedy", B: "bot:random" } },
+    });
+    expect(seriesLineOf(parseShowcase(other), log)).toContain(
+      "The series picked seed 135, with bot:raider in seat A; this log has that seed and other players.",
+    );
+  });
+
+  it("compares a model seat by the label the log itself carries", () => {
+    // A bot seat is `bot:<name>` in both files and a model seat `<provider>/<id>`
+    // in both, while the viewer's own seat names drop the prefix — so the
+    // comparison is made on the log's labels, not on what the header shows.
+    const modelLog = matchLogSchema.parse({
+      ...structuredClone(golden01),
+      players: {
+        A: { kind: "pi", model: "anthropic/claude-opus-4-1", thinking: "off", context_window: 200000 },
+        B: { kind: "pi", model: "openai/gpt-5", thinking: "off", context_window: 200000 },
+      },
+    });
+    const line = seriesLineOf(
+      parseShowcase(
+        sidecarWith({
+          series: { ...SIDECAR.series, x: "anthropic/claude-opus-4-1", opponent: "openai/gpt-5" },
+          match: { ...SIDECAR.match, players: { A: "anthropic/claude-opus-4-1", B: "openai/gpt-5" } },
+        }),
+      ),
+      modelLog,
+    );
+    expect(line).toContain(
+      "This is the match the series picked: seed 135, with anthropic/claude-opus-4-1 in seat A.",
+    );
   });
 });
 
@@ -353,7 +422,8 @@ describe("the page with a sidecar beside its log", () => {
    * are there once the log has been read, parsed and rendered.
    */
   async function open(search: string): Promise<void> {
-    (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL(`http://localhost:5173/${search}`);
+    const win = window as unknown as { happyDOM: { setURL(url: string): void } };
+    win.happyDOM.setURL(`http://localhost:5173/${search}`);
     vi.resetModules();
     await import("./main.ts");
     for (let i = 0; i < 20 && document.querySelector("#board .hx") === null; i += 1) {
@@ -373,8 +443,8 @@ describe("the page with a sidecar beside its log", () => {
     await open(`?log=${LOG_URL}&series=${SIDECAR_URL}`);
 
     expect(document.querySelector(".series")?.textContent).toBe(
-      "raider vs striker — win rate 90.0% (95% 59.6% – 98.2%) over 10 counted matches, " +
-        "5 pairs, stopped on max_pairs. This is the match the series picked: seed 135, with raider in seat A.",
+      "bot:raider vs bot:striker — win rate 90.0% (95% 59.6% – 98.2%) over 10 counted matches, " +
+        "5 pairs, stopped on max_pairs. This is the match the series picked: seed 135, with bot:raider in seat A.",
     );
     // The series line says nothing about the match itself: the board, the counter
     // and the two scores are still the log's, at its last turn.
@@ -417,5 +487,45 @@ describe("the page with a sidecar beside its log", () => {
     expect(status?.textContent).toContain("the series sidecar is not JSON");
     expect(status?.classList.contains("bad")).toBe(true);
     expect(document.querySelectorAll("#board .hx")).toHaveLength(91);
+  });
+
+  /** Hand the page a drop of these files, which is how two picked files reach it. */
+  function drop(files: readonly { readonly name: string; readonly text: () => Promise<string> }[]): void {
+    const event = new Event("drop");
+    Object.defineProperty(event, "dataTransfer", { value: { files } });
+    document.querySelector("#frame")?.dispatchEvent(event);
+  }
+
+  /** Wait for the page's one line to say `said`, which is how a second load is followed. */
+  async function statusSays(said: string): Promise<void> {
+    for (let i = 0; i < 20 && !(document.querySelector("#status")?.textContent ?? "").includes(said); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(document.querySelector("#status")?.textContent).toContain(said);
+  }
+
+  it("keeps the series line that belongs to the board when a later load fails on its log", async () => {
+    mountPage();
+    serve({ [LOG_URL]: JSON.stringify(golden01), [SIDECAR_URL]: SIDECAR_TEXT });
+    await open(`?log=${LOG_URL}&series=${SIDECAR_URL}`);
+    const line = document.querySelector(".series")?.textContent;
+    expect(line).toContain("This is the match the series picked");
+
+    // A drop of another match and its sidecar, where the log is unreadable and
+    // the sidecar names a different pairing. The board stays as it was, so the
+    // line under it has to stay as it was too: that line belongs to the log on
+    // the board, and this log never arrived.
+    drop([
+      { name: "broken.json", text: async () => "{ not a log" },
+      {
+        name: "showcase.json",
+        text: async () => sidecarWith({ series: { ...SIDECAR.series, x: "bot:other", opponent: "bot:nobody" } }),
+      },
+    ]);
+    await statusSays("the log is not JSON");
+
+    expect(document.querySelector(".series")?.textContent).toBe(line);
+    expect(document.querySelectorAll("#board .hx")).toHaveLength(91);
+    expect(document.querySelector(".counter")?.textContent).toBe("TURN 25 OF 25");
   });
 });

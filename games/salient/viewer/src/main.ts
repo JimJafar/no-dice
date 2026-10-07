@@ -199,27 +199,29 @@ function showLog(next: MatchLog): void {
   controls = mountTurnControls(turnsBar, frameHandlers(frames, redraw));
 }
 
+/** What reading a sidecar comes to: the series, and the reason it is not there. */
+interface SeriesOutcome {
+  readonly showcase: Showcase | null;
+  readonly problem: string | null;
+}
+
 /**
- * The series the match came from, read from whatever arrived beside it, and left
- * in `series` for the header. A sidecar nothing can read is returned as the one
- * line that says so, and takes the header's placeholder with it — the series line
- * is a line about the board, and a board missing it is still the match.
+ * The series the match came from, as the sidecar beside it describes it: the
+ * series to put in the header, or the one line saying what is wrong with the
+ * file that was meant to say it.
  *
- * The sidecar the page was opened with is not carried over a load that names
- * none: a viewer who picks a second log without its sidecar gets the placeholder,
- * rather than a series line that belongs to the file they picked last time.
+ * Neither half is left on the page here. `load` decides when the pair of them
+ * lands, because the line the header shows belongs to the log on the board: a
+ * sidecar read for a log that then failed to parse belongs to nothing.
  */
-async function readSeries(source: SeriesSource): Promise<string | null> {
-  if (source.kind === "none") {
-    series = null;
-    return null;
-  }
+async function readSeries(source: SeriesSource): Promise<SeriesOutcome> {
+  if (source.kind === "none") return { showcase: null, problem: null };
   try {
-    series = parseShowcase(await readSeriesSource(source));
-    return null;
+    return { showcase: parseShowcase(await readSeriesSource(source)), problem: null };
   } catch (error) {
-    series = null;
-    return `${messageOf(error)} — the match is shown without its series line`;
+    // The series line is a line about the board, and a board missing it is still
+    // the match.
+    return { showcase: null, problem: `${messageOf(error)} — the match is shown without its series line` };
   }
 }
 
@@ -234,10 +236,18 @@ const toggle = mountViewToggle(toggleBar, (next) => {
  * says which series it came from. The two arrive together — a multi-file pick or
  * a drop carries both — and the sidecar is read first and on its own, so that
  * nothing in its failure reaches the board.
+ *
+ * What it read is put on the page only once the log's own outcome is known. The
+ * series line belongs to the match on the board, so a load that fails on the log
+ * — or a drop that carried a sidecar and no log at all, which leaves the board as
+ * it was — leaves the line that goes with that board where it was too. A load
+ * that names no sidecar at all takes the line back to the placeholder: a viewer
+ * who picks a second log without its sidecar is not shown the series of the log
+ * they picked last time.
  */
 async function load(search: string, files: readonly LogFile[]): Promise<void> {
   const logSource = pickLogSource(search, files);
-  const seriesProblem = await readSeries(pickSeriesSource(search, files));
+  const sidecar = await readSeries(pickSeriesSource(search, files));
 
   if (logSource.kind !== "none") {
     const from = logSource.kind === "file" ? logSource.file.name : logSource.url;
@@ -250,7 +260,8 @@ async function load(search: string, files: readonly LogFile[]): Promise<void> {
     }
   }
 
-  statusLine(seriesProblem);
+  series = sidecar.showcase;
+  statusLine(sidecar.problem);
   redraw();
 }
 
