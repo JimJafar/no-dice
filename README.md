@@ -31,8 +31,8 @@ or `--max-pairs` (default 75) is reached. It prints one line per pair as it goes
 and writes `series/<name>/matches/<seed>-<seat-map>.json` for every match,
 `series.json` for its record and `report.md` for the report. Running the same
 command again plays nothing whose log is already on disk. `--max-cost <usd>` and
-`--max-tokens <n>` bound what a run may spend, `--concurrency <n>` how many pairs
-are in flight at once (default 1), `--seed-base <n>` what the seed list is drawn
+`--max-tokens <n>` bound what a run may spend, `--concurrency <n>` how many matches
+are played at once (default 1, so a pair's two matches play one after the other), `--seed-base <n>` what the seed list is drawn
 from, and `--name <name>` or `--dir <path>` where the series goes.
 
 `stats` prints the win-rate report and rewrites `report.md`. `evidence` counts the

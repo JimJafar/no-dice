@@ -36,15 +36,12 @@
  * token totals there, and whether the series stopped short of `--max-pairs`.
  *
  * `--concurrency <n>` is brief §6.5's "run several matches at once, limited by
- * provider rate limits", and it bounds **pairs**, not matches: the pool keeps at
- * most `n` pairs in flight, and the two matches of a pair are played together,
- * since they are the same seed with the seats swapped and share nothing but the
- * seed. So `n` pairs is up to `2n` matches and `4n` Pi seats, which is why the
- * default is 1 — every seat is a child process with a home and an MCP connection
- * of its own, and no provider's rate limit has been measured yet
- * (`docs/pi-harness-notes.md` §7 measured one match at 19 minutes and 4.59M
- * tokens, which makes a 150-match series about 48 hours end to end at 1). The
- * pool is emptied at every batch boundary, so a pair is never split across one
+ * provider rate limits", and it bounds **matches**: at most `n` are being played
+ * at once. Pairs are what the pool schedules — at most `n` in flight — and a
+ * pair's two matches take a match slot each, so at 1 they are played one after
+ * the other. That is what a one-request-at-a-time server needs: two seats of the
+ * same model played together queue behind each other and evict each other's
+ * cached conversation on every call. The pool is emptied at every batch boundary, so a pair is never split across one
  * and the stopping rules are asked at exactly the same points however the batch
  * was scheduled. The record is written once a batch has all of its matches in, so
  * a stop in the middle of one still leaves a complete record, and the pairs it
@@ -120,9 +117,7 @@ export interface RunSeriesOptions {
   /** What the seed list is drawn from, `--seed-base`. */
   seedBase?: number;
   /**
-   * Brief §6.5's concurrency: how many **pairs** are in flight at once, default
-   * 1. A pair's two matches always run together, so this is `2n` matches and up
-   * to `4n` Pi seats at `n`.
+   * Brief §6.5's concurrency: how many **matches** are played at once, default 1.
    */
   concurrency?: number;
   /** How a match is played. Defaults to the real `runMatch`. */
@@ -388,6 +383,26 @@ const mapPool = async <T, R>(
 };
 
 /**
+ * A limit of `n` tasks at once: `slot(task)` runs `task` when one of the `n`
+ * slots is free, in the order they asked.
+ */
+const slots = (n: number): (<R>(task: () => Promise<R>) => Promise<R>) => {
+  let free = n;
+  const waiting: (() => void)[] = [];
+  return async (task) => {
+    if (free > 0) free--;
+    else await new Promise<void>((go) => waiting.push(go));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next === undefined) free++;
+      else next();
+    }
+  };
+};
+
+/**
  * Play a series: plan it, play what the plan says is missing, and record every
  * pair after every batch of 5.
  *
@@ -430,6 +445,9 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
     B: seatSpec(match.seats.B),
   });
 
+  /** The match slots: `--concurrency` matches are played at once, however many pairs are in flight. */
+  const slot = slots(concurrency);
+
   /** One match: read its log if it has one, otherwise play it. */
   const recordOf = async (match: PlannedMatch): Promise<SeriesMatchRecord> => {
     if (match.played) {
@@ -437,12 +455,14 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
       return playedRecord(match, await readLog(match.out));
     }
     try {
-      const { log } = await playMatch({
-        out: match.out,
-        seed: match.seed,
-        seats: seatsOf(match),
-        matchDir: match.matchDir,
-      });
+      const { log } = await slot(() =>
+        playMatch({
+          out: match.out,
+          seed: match.seed,
+          seats: seatsOf(match),
+          matchDir: match.matchDir,
+        }),
+      );
       played++;
       return playedRecord(match, log);
     } catch (error) {
@@ -457,9 +477,9 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
   /**
    * One pair: its two matches together, and its record entry once both are in.
    *
-   * The two matches of a pair are the same seed with the seats swapped, so they
-   * share nothing but the seed and are played together — which is what makes a
-   * pair, and not a match, the unit `--concurrency` bounds. A match that throws
+   * The two matches of a pair are the same seed with the seats swapped, and each
+   * waits for a match slot, so they are played together only when `--concurrency`
+   * leaves room for both. A match that throws
    * is caught by `recordOf`, so one failing match never takes its partner, or its
    * batch, down with it.
    */

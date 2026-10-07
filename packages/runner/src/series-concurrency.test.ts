@@ -1,6 +1,6 @@
 /**
- * Brief §6.5's concurrency knob: `--concurrency <n>`, a bounded pool over whole
- * pairs, default 1.
+ * Brief §6.5's concurrency knob: `--concurrency <n>`, how many matches are played
+ * at once, default 1.
  *
  * A 150-match series played one pair at a time is about 48 hours of seat time
  * (`docs/pi-harness-notes.md` §7), so the pool is what makes a real series
@@ -8,9 +8,9 @@
  * true when more than one pair is in flight is exactly what was true at 1, and
  * these tests are written against that rather than against the pool's internals:
  *
- * - **The pool is over pairs.** A pair's two matches run together — they are the
- *   same seed with the seats swapped and share nothing but the seed — and
- *   `--concurrency` says how many pairs run at once. The events a scripted
+ * - **The limit is on matches.** `--concurrency` says how many matches are played
+ *   at once, so at 1 a pair's two matches — the same seed with the seats swapped —
+ *   are played one after the other. The events a scripted
  *   `playMatch` records when each match starts and finishes say how many were
  *   ever in flight at once, and the same series at 1 and at 2 leaves the same
  *   logs and the same record.
@@ -181,8 +181,8 @@ const failedMatch = (match: SeriesMatchRecord): Extract<SeriesMatchRecord, { sta
   return match;
 };
 
-describe("the pool is over whole pairs", () => {
-  it("plays two pairs at a time under --concurrency 2 and one at a time by default", async () => {
+describe("the limit is on matches", () => {
+  it("plays two matches at a time under --concurrency 2 and one at a time by default", async () => {
     const atOne = await seriesAt("pool-one");
     const atTwo = await seriesAt("pool-two");
     const eventsOne: MatchEvent[] = [];
@@ -210,15 +210,12 @@ describe("the pool is over whole pairs", () => {
       playMatch: timed(eventsTwo, callsTwo, (call) => ({ ...WIN, winner: call.seat })),
     });
 
-    // Never more pairs in flight than the operator asked for, and never one pair
-    // at a time when two were asked for.
+    // Never more matches in flight than the operator asked for, and never one at a
+    // time when two were asked for. At 1 a pair's two matches take turns, which is
+    // what a one-request-at-a-time server needs.
+    expect(maxMatchesInFlight(eventsOne)).toBe(1);
+    expect(maxMatchesInFlight(eventsTwo)).toBe(2);
     expect(maxPairsInFlight(eventsOne)).toBe(1);
-    expect(maxPairsInFlight(eventsTwo)).toBe(2);
-    // The two matches of a pair run together, so a pool of one pair is already
-    // two matches, and a pool of two is four — which is why the default stays 1:
-    // every one of those matches seats a Pi process of its own.
-    expect(maxMatchesInFlight(eventsOne)).toBe(2);
-    expect(maxMatchesInFlight(eventsTwo)).toBe(4);
 
     // Concurrency changes when the matches were played, not what the series is.
     expect(callsTwo).toHaveLength(callsOne.length);
@@ -253,7 +250,7 @@ describe("the pool is over whole pairs", () => {
       })),
     });
 
-    expect(maxPairsInFlight(events)).toBe(3);
+    expect(maxMatchesInFlight(events)).toBe(3);
     expect(calls).toHaveLength(24);
     const record = await readRecord(seriesDir);
     expect(record.state).toEqual({
@@ -345,7 +342,7 @@ describe("the stopping rules are unmoved by concurrency", () => {
     // The same 20 matches and no more: the test is asked at the boundary, and a
     // pair is never split across one, so the pool cannot have played into the
     // next batch or stopped short of the boundary.
-    expect(maxPairsInFlight(eventsThree)).toBe(3);
+    expect(maxMatchesInFlight(eventsThree)).toBe(3);
     expect(callsOne).toHaveLength(20);
     expect(callsThree).toHaveLength(20);
 
@@ -431,7 +428,7 @@ describe("a match that throws under concurrency", () => {
 
     // Every match of both batches was asked for: the throw took nothing down with
     // it, not the match it was played beside and not the batch after.
-    expect(maxPairsInFlight(events)).toBe(2);
+    expect(maxMatchesInFlight(events)).toBe(2);
     expect(calls).toHaveLength(14);
     expect(run.failed).toBe(1);
     expect(run.played).toBe(13);

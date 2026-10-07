@@ -135,7 +135,7 @@ export interface SeriesCommand {
   maxCostUsd: number | null;
   /** `--max-tokens <n>`: the ceiling that binds on unpriced hardware. */
   maxTokens: number | null;
-  /** `--concurrency <n>`: pairs in flight at once, default 1. */
+  /** `--concurrency <n>`: matches played at once, default 1. */
   concurrency: number | null;
   /** `--seed-base <n>`: what the seed list is drawn from on its first run. */
   seedBase: number | null;
