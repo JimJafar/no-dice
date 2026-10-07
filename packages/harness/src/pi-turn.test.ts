@@ -7,10 +7,9 @@
  * ran out of its time, or was stopped for spending its output-token budget; and
  * whether the provider answered at all after Pi's own retries. Each of those is
  * produced here by `StubModel` and read back off the turn the seat reports. The
- * two match-level failures are different in kind — a tool outside the seven, and
- * the Pi process gone from under the turn — and are reported by throwing
- * `MatchVoided` rather than by a turn record, because there is no turn to give a
- * reason to.
+ * match-level failure is different in kind — the Pi process gone from under the
+ * turn — and is reported by throwing `MatchVoided` rather than by a turn record,
+ * because there is no turn to give a reason to.
  *
  * What a seat reports and what the log says are not quite the same, and the
  * split is deliberate: a turn that ran out of its time is aborted by the runner,
@@ -33,11 +32,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
 import type { PiPlayerOptions } from "./pi-player.ts";
-import { MatchVoided } from "./player.ts";
 import type { PlayerContext, TurnOutcome } from "./player.ts";
 import {
   StubModel,
-  callsToolOutsideTheSeven,
   callsToolThenSubmits,
   neverSubmits,
   outgrowsTheWindow,
@@ -369,41 +366,30 @@ describe("a seat's turn outcomes", () => {
   );
 
   it(
-    "lets a seat that calls one of the seven by its bare name carry on, the call refused",
+    "refuses a tool the seat was not given, by any name, and lets the turn go on",
     async () => {
       const submit = { orders: [], intent: "The stub is holding still.", prediction: "The other seat moves east." };
       const stub = await startStub([
         { toolCalls: [{ name: "submit_orders", args: submit }] },
+        { toolCalls: [{ name: "mcpsalient_write_notes", args: { notes: "x" } }] },
+        { toolCalls: [{ name: "bash", args: { command: "cat /etc/passwd" } }] },
         ...callsToolThenSubmits("get_state"),
       ]);
       const { player } = await startSeat("A", stub);
 
       const outcome = await player.playTurn(turn);
 
+      // Pi's lock-down answers each "not found" and nothing outside the game ran;
+      // the calls are logged as refused, and a refused submit is not a submission.
       expect(outcome.submitted).toBe(true);
-      const [bare, ...rest] = outcome.toolCalls;
-      expect(bare).toMatchObject({ tool: "submit_orders", error: true });
-      expect(rest.map((call) => call.tool)).toEqual(["get_state", "submit_orders"]);
+      expect(outcome.toolCalls.slice(0, 3)).toMatchObject([
+        { tool: "submit_orders", error: true },
+        { tool: "mcpsalient_write_notes", error: true },
+        { tool: "bash", error: true },
+      ]);
+      expect(outcome.toolCalls.slice(3).map((call) => call.tool)).toEqual(["get_state", "submit_orders"]);
 
       nextTurn();
-    },
-    SEAT_TIMEOUT_MS,
-  );
-
-  it(
-    "voids the match when the seat calls a tool outside the seven",
-    async () => {
-      const stub = await startStub(callsToolOutsideTheSeven());
-      const { player } = await startSeat("B", stub);
-
-      // Not a pass: a seat that reached a tool it was never given has left the
-      // game, and the match it played cannot be reported as one that was played.
-      const voided = await player.playTurn(turn).then(
-        () => null,
-        (error: unknown) => error,
-      );
-      expect(voided).toBeInstanceOf(MatchVoided);
-      expect((voided as MatchVoided).reason).toBe("tool_surface");
     },
     SEAT_TIMEOUT_MS,
   );

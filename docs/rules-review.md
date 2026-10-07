@@ -325,7 +325,8 @@ play.
 changed `packages/harness/src/pi-player.ts` so that a call to one of the seven by its bare name —
 `submit_orders` for `mcp__salient__submit_orders`, which is what voided seeds 479473028 and
 313966722 — is logged as a refused call and the turn carries on, instead of voiding the match for
-`tool_surface`. A tool outside the seven still voids it. A re-run should not lose matches this way,
+`tool_surface`. The harness now voids on no tool name at all: Pi's lock-down refuses any tool the
+seat was not given, and the call is logged as refused. A re-run should not lose matches this way,
 so of the two confounders only turn latency is still owed.
 
 That fix has a cost for the recommendation below it: **a re-run is played under a different

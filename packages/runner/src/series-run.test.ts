@@ -361,7 +361,7 @@ describe("a match that throws", () => {
   it("leaves no log, is recorded as failed with its reason, and is played again", async () => {
     const seriesDir = await seriesAt("voided");
     const first: PlayCall[] = [];
-    const voided = new MatchVoided("tool_surface", "seat A reached outside the seven tools");
+    const voided = new MatchVoided("harness_crash", "seat A's Pi process exited");
 
     const run = await runSeries({
       dir: seriesDir,
@@ -385,7 +385,7 @@ describe("a match that throws", () => {
     expect(failed.path).toBe(voidedCall.out);
     // The reason a report prints: what the seat did, and the rule it broke.
     expect(failed.error).toBe(
-      "MatchVoided: seat A reached outside the seven tools (tool_surface)",
+      "MatchVoided: seat A's Pi process exited (harness_crash)",
     );
 
     // A voided match is never counted as one that was played: the pair it belongs

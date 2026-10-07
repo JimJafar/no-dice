@@ -476,7 +476,7 @@ describe("a log named without an extension", () => {
   }, SEAT_TIMEOUT_MS);
 });
 
-describe("a match voided by a seat that reached a tool outside the seven", () => {
+describe("a match voided by a seat whose Pi process died", () => {
   it("rejects, writes no log, and lets its own process go", async () => {
     const paths = pathsFor("voided");
     const scenario = fileURLToPath(new URL("./voided-match-scenario.ts", import.meta.url));

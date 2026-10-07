@@ -37,7 +37,6 @@ export {
   STUB_MODEL_ID,
   STUB_PROVIDER,
   callsToolThenSubmits,
-  callsToolOutsideTheSeven,
   neverSubmits,
   providerError,
   salientToolName,

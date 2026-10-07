@@ -641,18 +641,6 @@ export const callsToolThenSubmits = (tool: string, args: unknown = {}): StubRepl
 export const neverSubmits = (text = "I am not moving this turn."): StubReply[] => [{ text }];
 
 /**
- * A seat that calls a tool outside the seven.
- *
- * The default invents a Salient tool rather than reaching for `bash`: a model
- * that asked for `bash` would be reporting the lock-down failed, while an
- * invented tool is the case the harness has to catch whatever the cause.
- */
-export const callsToolOutsideTheSeven = (name = "mcp__salient__launch_nukes"): StubReply[] => [
-  { toolCalls: [{ name, args: {} }] },
-  { text: "That was the order I wanted." },
-];
-
-/**
  * A seat whose conversation outgrows the model's window inside one turn.
  *
  * Pi compacts when the conversation passes `contextWindow - reserveTokens`, and

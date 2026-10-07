@@ -33,9 +33,10 @@
  * that fails after Pi's own retries passes with `provider_error`, and output
  * tokens over the per-turn budget abort the seat and pass with `token_budget`.
  * A turn that runs out of its time is aborted by the runner, which is the one
- * that knows, and the runner says `timeout` on the way to the log. The two
- * match-level failures — a tool outside the seven, and the Pi process dying —
- * are not turns, and are thrown as `MatchVoided`.
+ * that knows, and the runner says `timeout` on the way to the log. The
+ * match-level failure — the Pi process dying — is not a turn, and is thrown as
+ * `MatchVoided`. A call to a tool the seat was not given is not a failure at
+ * all: Pi's lock-down refuses it, and the turn goes on.
  */
 import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -86,25 +87,6 @@ const TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
  */
 const SUBMIT_TOOL = "submit_orders";
 
-/**
- * The seven tools brief §6.3 locks a seat to, named as the log names them. The
- * seat is offered exactly these — `createSeatHome` turns off every built-in tool
- * and connects one MCP server — so a call to anything else is a seat that
- * reached outside the game, which voids the match however the call was answered.
- * One exception: one of the seven by its bare name (`submit_orders` for
- * `mcp__salient__submit_orders`). Pi has no such tool and answers "not found",
- * so nothing outside the game was reached; the call is a refused one, recorded
- * like any other, and the turn goes on.
- */
-const SALIENT_TOOLS = new Set([
-  "get_rules",
-  "get_state",
-  "scout",
-  "simulate",
-  "submit_orders",
-  "read_notes",
-  "write_notes",
-]);
 
 /** How a seat is driven. */
 export interface PiPlayerOptions {
@@ -417,14 +399,10 @@ export class PiPlayer implements Player {
 
     const toolCalls: ToolCallRecord[] = [];
     /** The calls Pi has started but not finished, keyed by its own call id. */
-    const open = new Map<string, { tool: string; args: unknown; at: number; misnamed: boolean }>();
-    /** Calls to one of the seven by its bare name, which never reached the game. */
-    const misnamed = new Set<ToolCallRecord>();
+    const open = new Map<string, { tool: string; args: unknown; at: number }>();
     let compacted = false;
     /** Why the turn is ending without orders, as far as this end can tell. */
     let passed: PassReason = "no_submission";
-    /** A tool the seat was not given, which voids the match. */
-    let outside: string | null = null;
     /** Output tokens the turn's answers have reported, against the budget. */
     let outputTokens = 0;
     let died = false;
@@ -443,20 +421,10 @@ export class PiPlayer implements Player {
       this.options.onEvent?.(event);
       switch (event.type) {
         case "tool_execution_start": {
-          const tool = stripPrefix(event.toolName);
-          const bare = !event.toolName.startsWith(TOOL_PREFIX) && SALIENT_TOOLS.has(event.toolName);
-          if (!bare && (!event.toolName.startsWith(TOOL_PREFIX) || !SALIENT_TOOLS.has(tool))) {
-            // Brief §6.3 voids the match over this, so there is no point letting
-            // the seat go on playing the turn.
-            outside ??= event.toolName;
-            this.stopTheSeat(client);
-          }
-          open.set(event.toolCallId, {
-            tool: event.toolName,
-            args: event.args,
-            at: performance.now(),
-            misnamed: bare,
-          });
+          // Pi's lock-down decides what a seat can reach: a name it was not
+          // given (`submit_orders`, `mcpsalient_write_notes`) is answered "not
+          // found", recorded as a refused call, and the turn goes on.
+          open.set(event.toolCallId, { tool: event.toolName, args: event.args, at: performance.now() });
           break;
         }
         case "tool_execution_end": {
@@ -469,11 +437,10 @@ export class PiPlayer implements Player {
             tool: stripPrefix(started?.tool ?? event.toolName),
             args: started?.args ?? {},
             result: answerOf(event.result),
-            error: event.isError || started?.misnamed === true,
+            error: event.isError,
             ms: Math.max(0, Math.round(at - (started?.at ?? at))),
           };
           toolCalls.push(record);
-          if (started?.misnamed === true) misnamed.add(record);
           break;
         }
         case "compaction_start":
@@ -490,7 +457,7 @@ export class PiPlayer implements Player {
           if (message.role !== "assistant") break;
           outputTokens += message.usage?.output ?? 0;
           const budget = this.options.outputTokenBudget ?? null;
-          if (budget !== null && outputTokens > budget && outside === null) {
+          if (budget !== null && outputTokens > budget) {
             passed = "token_budget";
             this.stopTheSeat(client);
           }
@@ -520,18 +487,13 @@ export class PiPlayer implements Player {
     }
 
     if (died) throw this.voided("harness_crash", "the seat's Pi process exited during the match");
-    if (outside !== null) {
-      throw this.voided(
-        "tool_surface",
-        `the seat called ${outside}, which is not one of the seven tools it was given`,
-      );
-    }
 
     const stats = await this.command("the session stats", () => client.getSessionStats());
     const previous = this.totals;
     this.totals = stats;
 
-    const submissions = toolCalls.filter((call) => call.tool === SUBMIT_TOOL && !misnamed.has(call));
+    // Only a call the game answered is a submission: a refused one never reached it.
+    const submissions = toolCalls.filter((call) => call.tool === SUBMIT_TOOL && submissionOf(call.result) !== null);
     const last = submissions.at(-1) ?? null;
     const refused = submissions.find((call) => submissionOf(call.result)?.accepted === false) ?? null;
     const verdict = last === null ? null : submissionOf(last.result);

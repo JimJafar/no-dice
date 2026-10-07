@@ -358,8 +358,7 @@ At the end of the match, close the process's stdin; Pi shuts down in an orderly 
 | Output tokens for the turn exceed the budget | Send `abort`, pass unless already submitted, reason `token_budget` |
 | Provider error after Pi's retries | Pass, reason `provider_error`; the series runner may void and replay the match |
 | The Pi process exits during the match | Void the match, reason `harness_crash` |
-| A tool outside the seven is called | Abort the match as invalid, reason `tool_surface` |
-| One of the seven is called by its bare name (`submit_orders` for `mcp__salient__submit_orders`) | Not a void: Pi answers that there is no such tool, the call is logged as refused, and the turn goes on |
+| A tool the seat was not given is called, by any name (`submit_orders`, `mcpsalient_write_notes`, `bash`) | Not a void: Pi's lock-down answers that there is no such tool, the call is logged as refused, and the turn goes on. It never reaches the server, so it does not count toward the tool-call cap |
 
 After a pass the player stays in the match and is prompted again next turn, with the failed turn still in its history. A voided match must be replayed from turn 1 on the same seed. Never retry a single turn, because the model would see the position twice.
 

@@ -414,7 +414,7 @@ describe("a match that throws under concurrency", () => {
 
     const failing: PlayMatch = timed(events, calls, (call) => {
       if (call.seed === broken.seed && call.seat === broken.seat) {
-        throw new MatchVoided("tool_surface", "seat A reached outside the seven tools");
+        throw new MatchVoided("harness_crash", "seat A's Pi process exited");
       }
       return { ...WIN, winner: call.seat };
     });
@@ -446,7 +446,7 @@ describe("a match that throws under concurrency", () => {
     expect(playedMatch(first).path).toBe(plan.pairs[1].matches[0].out);
     const failed = failedMatch(second);
     expect(failed.path).toBe(broken.out);
-    expect(failed.error).toBe("MatchVoided: seat A reached outside the seven tools (tool_surface)");
+    expect(failed.error).toBe("MatchVoided: seat A's Pi process exited (harness_crash)");
 
     // A failed match makes its pair unplayed, and the series still ran its length.
     expect(record.state).toEqual({

@@ -66,8 +66,11 @@ export type PassReason =
   | "harness_crash"
   | "tool_surface";
 
-/** Why a match is voided rather than played: the two match-level reasons above. */
-export type VoidReason = Extract<PassReason, "harness_crash" | "tool_surface">;
+/**
+ * Why a match is voided rather than played. `tool_surface` stays a reason a log
+ * can carry, from harnesses that voided on a refused tool name; none does now.
+ */
+export type VoidReason = Extract<PassReason, "harness_crash">;
 
 /**
  * A match-level failure: the seat's Pi process died, or the seat reached a tool

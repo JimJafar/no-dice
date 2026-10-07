@@ -34,7 +34,6 @@ import { createSeatHome, type SeatHome, type SeatId } from "./pi-home.ts";
 import {
   StubModel,
   callsToolThenSubmits,
-  callsToolOutsideTheSeven,
   neverSubmits,
   providerError,
   salientToolName,
@@ -736,14 +735,6 @@ describe("the script builders the milestone's cases need", () => {
     expect(script).toHaveLength(1);
     expect(script[0].toolCalls).toBeUndefined();
     expect(script[0].text).toBeTruthy();
-  });
-
-  it("calls a tool outside the seven", () => {
-    const called = toolsOf(callsToolOutsideTheSeven());
-
-    expect(called).toHaveLength(1);
-    expect(SEVEN).not.toContain(called[0]);
-    expect(called[0]).toMatch(/^mcp__salient__/);
   });
 
   it("sleeps past a deadline instead of answering", () => {
