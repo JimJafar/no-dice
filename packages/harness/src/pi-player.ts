@@ -259,9 +259,10 @@ const providerTurn = (
 /**
  * A seat played by one Pi session that lasts the match.
  *
- * `start` writes the seat's home and spawns the pinned CLI; `playTurn` prompts
- * once and reads that turn's events; `abort` ends the turn in flight and leaves
- * the session alone; `stop` lets the process go.
+ * `start` writes the seat's home, spawns the pinned CLI and reads the context
+ * window Pi resolved its model against; `playTurn` prompts once and reads that
+ * turn's events; `abort` ends the turn in flight and leaves the session alone;
+ * `stop` lets the process go.
  */
 export class PiPlayer implements Player {
   private readonly options: PiPlayerOptions;
@@ -277,6 +278,12 @@ export class PiPlayer implements Player {
   private totals: SessionStats | null = null;
   /** The bearer token the seat's connection was made with, for the whole match. */
   private token: string | null = null;
+  /**
+   * The context window Pi reported for the seat's model, read from the
+   * session stats while the seat was starting. `null` when the seat has not
+   * started, and when Pi gives its model no window at all.
+   */
+  private window: number | null = null;
   /**
    * Ends the turn in flight because the seat's process was found gone. Set while
    * a turn is being played, and called by `abort` when the command it sent was
@@ -372,6 +379,24 @@ export class PiPlayer implements Player {
     });
     this.client = client;
     await client.start();
+
+    // Pi knows the window of the model it resolved as soon as the session is up:
+    // `contextUsage` is in its stats before a turn has been played, and the
+    // window is a property of the model entry rather than of the conversation.
+    // Read it here, while the seat is idle, so the match's header has
+    // a window even when no seat ever settled a turn, and so nothing has to ask
+    // a seat that may be mid-turn — or starved and slow to answer — for one.
+    const stats = await this.command("the session stats", () => client.getSessionStats());
+    this.window = stats.contextUsage?.contextWindow ?? null;
+  }
+
+  /**
+   * The context window this seat's model is played with, as Pi reported it when
+   * the session started: what the log's header records for a model seat. `null`
+   * before the seat has started, and for a model Pi reports no window for.
+   */
+  contextWindow(): number | null {
+    return this.window;
   }
 
   /**

@@ -11,7 +11,8 @@
  * A real Pi process is spawned for each seat here, which is why every test
  * carries a timeout of its own: starting one takes seconds, not milliseconds.
  * The model is still `StubModel` on loopback, so no credential is needed and no
- * provider is called.
+ * provider is called. One test asks no turn at all: a seat names the context
+ * window its model is played with as soon as its session is up.
  */
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,9 +24,11 @@ import { MatchServer, startServer, type RunningServer } from "@no-dice/salient-s
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
+import type { PiPlayerOptions } from "./pi-player.ts";
 import type { ProviderTurn, TurnOutcome } from "./player.ts";
 import {
   STUB_MODEL_ID,
+  STUB_PROVIDER,
   StubModel,
   callsToolThenSubmits,
   salientToolName,
@@ -135,7 +138,11 @@ describe("a seat played by a headless Pi session", () => {
    * Seat `seat` at the table: its own directories, its own endpoint, and the
    * pinned Pi started against them.
    */
-  const startSeat = async (seat: Seat, stub: StubModel): Promise<PiPlayer> => {
+  const startSeat = async (
+    seat: Seat,
+    stub: StubModel,
+    options: Partial<PiPlayerOptions> = {},
+  ): Promise<PiPlayer> => {
     const matchDir = mkdtempSync(join(tmpdir(), "no-dice-pi-player-"));
     matchDirs.push(matchDir);
     const player = new PiPlayer({
@@ -147,6 +154,7 @@ describe("a seat played by a headless Pi session", () => {
       modelsJson: stubModelsJson(stub.baseUrl, { cost: COST }),
       // The seat reaches `StubModel` over loopback and nothing else.
       env: { PI_OFFLINE: "1" },
+      ...options,
     });
     players.push(player);
     await player.start({ serverUrl: running.url, token: tokens[seat] });
@@ -208,6 +216,50 @@ describe("a seat played by a headless Pi session", () => {
     },
     SEAT_TIMEOUT_MS,
   );
+
+  it(
+    "names the context window its model is played with before a turn has been played",
+    async () => {
+      // The window is a property of the model entry, and Pi resolves the model
+      // when the session starts, so a seat can say what window it is played with
+      // before any turn has settled. That is what lets a match in which no seat
+      // ever finished a turn — every turn aborted on its deadline — still carry
+      // the window in its header.
+      const stub = await startStub(callsToolThenSubmits("get_state"));
+      const player = await startSeat("A", stub, {
+        // The window the seat's own `models.json` declares, which is the one Pi
+        // resolves its model against and the one the seat has to name.
+        modelsJson: stubModelsJson(stub.baseUrl, { cost: COST, contextWindow: 40_000 }),
+      });
+
+      expect(player.contextWindow()).toBe(40_000);
+
+      // And it says the same after a turn as the turn's own stats report, so the
+      // two sources of the number cannot disagree.
+      const played = await player.playTurn(turn);
+      expect(providerOf(played).contextWindow).toBe(40_000);
+      expect(player.contextWindow()).toBe(40_000);
+
+      nextTurn();
+    },
+    SEAT_TIMEOUT_MS,
+  );
+
+  it("names no window for a seat whose session has not started", () => {
+    // Nothing is guessed here. A seat that has not started its Pi session has
+    // never been told a window, and says so; the log's header turns that into a
+    // refusal rather than a number no seat ran with.
+    const player = new PiPlayer({
+      seat: "A",
+      // Never used: this seat never starts, so it writes no home.
+      matchDir: join(tmpdir(), "no-dice-pi-player-unstarted"),
+      model: `${STUB_PROVIDER}/${STUB_MODEL_ID}`,
+      thinking: "off",
+      systemPrompt: PLAYER_SYSTEM,
+    });
+
+    expect(player.contextWindow()).toBeNull();
+  });
 
   it(
     "reports a turn's usage, cost and context as that turn's, not the session's running total",

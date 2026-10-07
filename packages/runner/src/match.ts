@@ -195,9 +195,10 @@ export interface RunMatchOptions {
   config?: Config;
   /**
    * Who plays each seat. A Pi seat's header records the context window Pi
-   * reported for its model, and only a played turn surfaces one: a Pi seat that
-   * never got a turn answered — every provider dead, its abort ignored too —
-   * fails the run at the header rather than writing a window no seat ran with.
+   * reported for its model, which the seat names as soon as its session is up;
+   * a Pi seat whose session never reported one — no model resolved, a model
+   * entry with no window in it — fails the run at the header rather than
+   * writing a window no seat ran with.
    */
   seats: Record<Seat, SeatSpec>;
   /** The clock `created` is taken from. Injectable so two runs can be compared. */
@@ -689,8 +690,10 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
 
   /**
    * The context window each seat's model was given, from Pi's own
-   * `contextUsage`. The log's header records it for a Pi seat, and the session
-   * stats that carry it arrive with the turns, so it is kept as they come in.
+   * `contextUsage`. The log's header records it for a Pi seat. A seat names its
+   * own window as soon as it has started, and the turns below are the fallback
+   * for a seat that could not say then, so a match in which no seat ever
+   * settled a turn is still loggable.
    */
   const windows: Record<Seat, number | null> = { A: null, B: null };
 
@@ -721,6 +724,13 @@ export async function runMatch(options: RunMatchOptions): Promise<MatchOutcome> 
       seated.A.player.start({ serverUrl, token: seated.A.token }),
       seated.B.player.start({ serverUrl, token: seated.B.token }),
     ]);
+
+    // Each seat names the window its model is played with, which a Pi seat knows
+    // from the moment its session is up and before a turn has been asked for it.
+    // A bot runs no provider and names nothing; its header carries no window.
+    for (const seat of ["A", "B"] as const) {
+      windows[seat] = seated[seat].player.contextWindow?.() ?? null;
+    }
 
     for (let turn = 1; turn <= config.turns && result === null; turn++) {
       matches.openTurn(matchId);

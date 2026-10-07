@@ -22,7 +22,7 @@
  * Every test here starts a Pi process, so every test carries a timeout of its
  * own; the model is a stub on loopback, so no credential is needed.
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -96,10 +96,15 @@ const sleep = (ms: number): Promise<void> =>
  *
  * Killing the child is the only honest way to test a seat whose process dies
  * mid-match, and a child is found from the outside by its parent — this test
- * process — and by the session directory only that seat was started with, since
- * a match file may have several seats alive at once.
+ * process — and by the working directory only that seat's child runs in, since
+ * a match may have several seats alive at once.
+ *
+ * The working directory, and not the command line: the Pi CLI rewrites its
+ * process title shortly after it starts, which erases the arguments the child
+ * was spawned with, and a seat that has answered one command since starting is
+ * past that point. The directory it was started in does not change.
  */
-const piChildPid = (sessionDir: string): number | null => {
+const piChildPid = (seatCwd: string): number | null => {
   let entries: string[];
   try {
     entries = readdirSync("/proc");
@@ -114,9 +119,7 @@ const piChildPid = (sessionDir: string): number | null => {
       const stat = readFileSync(`/proc/${entry}/stat`, "utf-8");
       const afterName = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
       if (Number(afterName[1]) !== process.pid) continue;
-      // The arguments are separated by NUL, which no path can appear across.
-      const cmdline = readFileSync(`/proc/${entry}/cmdline`, "utf-8");
-      if (cmdline.includes("--mode") && cmdline.includes(sessionDir)) return Number(entry);
+      if (readlinkSync(`/proc/${entry}/cwd`) === seatCwd) return Number(entry);
     } catch {
       // The process went away between the directory listing and the read.
     }
@@ -410,8 +413,9 @@ describe("a seat's turn outcomes", () => {
     async () => {
       const stub = await startStub(sleepsPastDeadline(20_000));
       const { player, ctx } = await startSeat("A", stub);
-      const pid = piChildPid(player.seatHome.sessionDir);
-      if (pid === null) throw new Error(`no Pi process was found for ${player.seatHome.sessionDir}`);
+      const pid = piChildPid(player.seatHome.cwd);
+      if (pid === null)
+        throw new Error(`no Pi process was found running in ${player.seatHome.cwd}`);
 
       const playing = player.playTurn(turn);
       // Let the turn get under way, then take the process away under it.

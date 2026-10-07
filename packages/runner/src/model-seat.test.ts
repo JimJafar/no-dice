@@ -351,17 +351,14 @@ describe("a Pi seat's own reason for passing a turn", () => {
  * that nothing arrived. `no_submission` is what the server alone would guess.
  *
  * The deadline has to land on a seat that is actually mid-turn, which is what
- * makes its size a measurement rather than a preference: an abort that
- * reaches a Pi still starting does not stop a turn, the aborted seat never
- * answers for itself within the runner's abort grace, and the match then cannot
- * be logged at all, because a Pi seat's header records the context window Pi
- * reported and this seat never reported one. A 1.5 s deadline did exactly that
- * on a 16-cpu box held at load average ~20 by cpu hogs: the starved seat's turn
- * had still not come back 10 s after the abort — the runner's abort grace — and
- * the run failed with "without Pi ever reporting a context window". 20 s is past
- * a starved Pi's start-up on that box, so the abort lands on a seat that is
- * playing, and the stub's reply is still held far past the deadline, so the only
- * thing that can end the turn is the runner's clock.
+ * makes its size a measurement rather than a preference: an abort that reaches a
+ * Pi still starting stops nothing, and the turn the test then records is one
+ * the seat never played. A 1.5 s deadline did exactly that on a 16-cpu box held
+ * at load average ~20 by cpu hogs, where a starved Pi had not started its turn
+ * 1.5 s in and had still not answered for it 10 s after the abort — the runner's
+ * abort grace. 20 s is past a starved Pi's start-up on that box, so the abort
+ * lands on a seat that is playing, and the stub's reply is still held far past
+ * the deadline, so the only thing that can end the turn is the runner's clock.
  */
 const TURN_DEADLINE_MS = 20_000;
 
@@ -389,10 +386,22 @@ describe("a Pi seat that runs past the runner's turn timeout", () => {
       // The turn cost the whole deadline, rather than the milliseconds a seat
       // that handed in nothing takes.
       expect(seat.wall_ms).toBeGreaterThanOrEqual(TURN_DEADLINE_MS);
+      // The header still names the window Pi reported for the seat's model. It
+      // comes from what the seat said when its session started, not from the turn
+      // the runner cut short: this seat never finished one, and a match that was
+      // played has to say what window it was played with.
+      const header = {
+        kind: "pi",
+        model: stub.modelRef,
+        thinking: "off",
+        context_window: CONTEXT_WINDOW,
+      } as const;
+      expect(log.players.A).toEqual(header);
       // The match was not voided by it: the log is on disk, and the Greedy seat
       // played its half of the turn the clock took from the model.
       const onDisk = matchLogSchema.parse(JSON.parse(readFileSync(paths.out, "utf8")) as unknown);
       expect(onDisk.turns).toHaveLength(1);
+      expect(onDisk.players.A).toEqual(header);
       expect(onDisk.turns[0].players.B.passed).toBeNull();
       expect(onDisk.turns[0].players.B.orders.length).toBeGreaterThan(0);
       expect(onDisk.result.type).toBe("time");

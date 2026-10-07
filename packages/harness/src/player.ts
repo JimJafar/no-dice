@@ -156,6 +156,16 @@ export interface Player {
   /** Play one turn: read the position, decide, submit. */
   playTurn(turn: number): Promise<TurnOutcome>;
   /**
+   * The context window the seat's model is played with, or `null` when the seat
+   * cannot say. The log's header records it for a model seat, and a match whose
+   * seats never finished a turn still needs one, so a player that runs a
+   * provider answers from what it learned while the seat was starting rather
+   * than by asking a seat that may be mid-turn or starved. Absent for a seat
+   * that runs no provider of its own, which is why the runner reads it as
+   * optional.
+   */
+  contextWindow?(): number | null;
+  /**
    * Stop what the seat is doing right now, and leave it in the match.
    *
    * Brief §6.3 aborts a turn that ran out of its time, spent its output-token
