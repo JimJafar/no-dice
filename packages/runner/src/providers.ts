@@ -122,8 +122,13 @@ export const providerRegistrySchema = z.record(z.string().min(1), providerEntryS
  * not `__proto__`, the one key that would not survive the round trip through the
  * registry, since assigning it sets a prototype instead of adding an entry, so
  * the file would say one thing and every reader another.
+ *
+ * Exported because the same question is asked of the provider half of a model a
+ * console is asked to check a credential for: a name that could not name an
+ * entry is not a seat either, and Pi would be handed it as
+ * `--provider <name>`.
  */
-const isProviderName = (name: string): boolean =>
+export const isProviderName = (name: string): boolean =>
   name !== "" &&
   name !== "." &&
   name !== ".." &&
@@ -206,15 +211,21 @@ export const providerRegistry = (): ProviderRegistry => {
 };
 
 /**
- * Re-read the registry at `path` and replace what this process holds with it.
+ * Re-read the registry at `path` and replace what this process holds with it —
+ * or take one that has already been read, which is what a write hands back: the
+ * registry as it left the file. The two are one read rather than two that a
+ * concurrent writer could pull apart, so a console cannot report an entry
+ * as seated while the process holds a registry without it.
  *
  * The one deliberate exception to reading once: a provider added through the
  * console has to be seatable by the next run this process starts, without a
  * restart. Nothing else asks for it, so a file edited mid-run still cannot
  * put one pair's two matches on two different context windows.
  */
-export const reloadProviders = (path: string = PROVIDERS_FILE): ProviderRegistry => {
-  registry = loadProviders(path);
+export const reloadProviders = (
+  source: string | ProviderRegistry = PROVIDERS_FILE,
+): ProviderRegistry => {
+  registry = typeof source === "string" ? loadProviders(source) : source;
   return registry;
 };
 

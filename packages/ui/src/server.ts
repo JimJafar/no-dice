@@ -125,6 +125,13 @@ export interface UiConfig {
    * reads at startup, so the two are never two different files.
    */
   providersFile: string;
+  /**
+   * Whether this console may write that file. `false` for a console handed a
+   * `registry` to read without being told which file it stands for:
+   * its read and its write would then be two different registries, and the write
+   * would land on the repo's own `providers.json`.
+   */
+  providersWritable: boolean;
 }
 
 /** What a console may be asked for. The command line's four flags, plus a test's. */
@@ -145,7 +152,8 @@ export interface UiOptions {
    * Which `providers.json` this console lists, adds to and seats runs on. The
    * runner's own committed registry by default; a test points it at a file of its
    * own, because writing the committed one from a test would be a test that
-   * edits the repo.
+   * edits the repo. A console that injects `registry` instead names no file, and
+   * such a console writes nothing: see `UiConfig.providersWritable`.
    */
   providersFile?: string;
   /**
@@ -198,6 +206,9 @@ const configOf = (options: UiOptions): UiConfig => {
     webRoot: resolve(cwd, options.webRoot ?? WEB_ROOT),
     viewerRoot: resolve(cwd, options.viewerRoot ?? VIEWER_ROOT),
     providersFile: resolve(cwd, options.providersFile ?? PROVIDERS_FILE),
+    // A file named on the command line, or the default one, is writable; a
+    // registry handed in without one is not. See `UiConfig.providersWritable`.
+    providersWritable: options.providersFile !== undefined || options.registry === undefined,
     cwd,
   };
 };
@@ -487,10 +498,9 @@ const route = async (
 
   // The provider routes. The read answers from the same injected source
   // `/api/state` does, so a `providers.json` that does not parse is the same one
-  // line there, and a test that points the console at a registry of its own
-  // points both routes at it. The two writes go through the same guard and the
-  // same body cap the run POSTs do: what they touch is the registry every run
-  // this console seats on, and the check runs a subprocess.
+  // line there. The two writes go through the same guard and the same body cap
+  // the run POSTs do: what they touch is the registry every run this console
+  // seats on, and the check runs a subprocess.
   if (path === PROVIDERS_PATH || path === PROVIDER_CHECK_PATH) {
     if (path === PROVIDERS_PATH && (method === "GET" || method === "HEAD")) {
       sendJson(response, 200, providerRows(registryOf()));
@@ -517,6 +527,33 @@ const route = async (
       // the question, not a console that failed to ask it, and what the page
       // shows is Pi's own reason.
       sendJson(response, 200, checked.auth);
+      return;
+    }
+
+    // A console handed a registry to read and no file for it is not going to
+    // write the repo's own registry because a test asked for a fixture: the read
+    // and the write have to be one registry, so the write is refused.
+    if (!config.providersWritable) {
+      sendJson(response, 500, {
+        error: "this console was given a provider registry to read and no file to write",
+      });
+      return;
+    }
+
+    // And not under a run in flight. The runner reads the registry once per
+    // process, and a series asks it again as each match starts (`seatsOf`), so
+    // an entry added now would change the window, the cap and the rates of the
+    // matches this run has still to play while its own record said one game —
+    // including a seat on a provider the registry did not name, which would gain
+    // a `models.json` halfway through. Nothing is awaited between this and the
+    // write, so no run can start in between.
+    const running = runs.snapshot();
+    if (running.state === "running") {
+      sendJson(response, 409, {
+        error:
+          `a run is in flight (${String(running.dir ?? running.out ?? "this console")}): ` +
+          "the provider registry is not edited under one, because a series seats each match as it starts",
+      });
       return;
     }
 

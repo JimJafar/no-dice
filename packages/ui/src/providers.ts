@@ -23,7 +23,13 @@
  * with it, so the next run this console starts seats on the entry the operator
  * just typed and `/api/state` names it in the seat picker without a restart.
  * The answer is the registry as it now stands on disk, re-read through the same
- * loader, rather than what the request claimed to have sent.
+ * loader, rather than what the request claimed to have sent. The write is
+ * refused while the console has a run in flight, and that rule is the runner's
+ * rather than one invented here: `providerRegistry()` is read once per process
+ * and a series asks it again as each match starts (`seatsOf`), so an entry added
+ * under a run in flight would change the window, the cap and the rates of the
+ * matches that run has yet to play while its record said one game. The route
+ * that refuses it lives in `server.ts`, which is where the run slot is.
  *
  * **The credential check opens no connection.** `POST /api/providers/check`
  * makes the exact call `packages/runner/src/cli.ts` makes before a run —
@@ -33,9 +39,12 @@
  * the registry and the environment, not a request to an endpoint, and it plays
  * no match. A check that answers "not ready" is answered with 200 and Pi's own
  * reason, because the check *was* made; only a request that asked for something
- * that is not a `<provider>/<id>` is a 400.
+ * that is not a `<provider>/<id>` is a 400 — and the provider half has to be a
+ * name the registry could hold, because `checkPiAuth` hands it to Pi as
+ * `--provider <name>` and a model like `--flag/x` would be a flag in Pi's parser
+ * rather than a provider.
  */
-import { addProvider, reloadProviders, seatModelsJson } from "@no-dice/runner/providers";
+import { addProvider, isProviderName, reloadProviders, seatModelsJson } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 import { checkPiAuth, providerOfModel } from "@no-dice/harness";
 import type { PiAuth } from "@no-dice/harness";
@@ -128,18 +137,20 @@ export const addProviderEntry = (payload: unknown, path: string): AddResult => {
   const asked = askedEntry(payload);
   if (!asked.ok) return asked;
 
+  let written: ProviderRegistry;
   try {
-    addProvider(asked.name, asked.entry, path);
+    written = addProvider(asked.name, asked.entry, path);
   } catch (error) {
     return { ok: false, error: lineOf(error) };
   }
 
-  // The file the page wrote has to be the file every run this process starts
-  // seats on, and nothing else re-reads a registry that is cached once per
-  // process. A console that wrote a registry the runner never read would be a
-  // console that lied about what a run was seated on. What comes back is that
-  // re-read, so the answer is the file rather than the request.
-  return { ok: true, registry: reloadProviders(path) };
+  // The registry the file the page wrote holds has to be the registry every run
+  // this process starts seats on, and nothing else re-reads a registry that is
+  // cached once per process. A console that wrote a registry the runner never
+  // read would be a console that lied about what a run was seated on. The object
+  // the write read back is what the cache is set to, so the answer and the seat
+  // picker are one read of the file rather than two that could disagree.
+  return { ok: true, registry: reloadProviders(written) };
 };
 
 /** What `POST /api/providers/check` answers: what Pi said, or one line. */
@@ -157,12 +168,23 @@ const askedModel = (payload: unknown): { ok: true; model: string } | ProviderRef
       error: "the credential check needs a model, typed as --a takes it: <provider>/<id>",
     };
   }
+  let provider: string;
   try {
     // The shape is the harness's rule, so the line a model without a provider
     // half gets is the line the CLI gives it rather than one invented here.
-    providerOfModel(given);
+    provider = providerOfModel(given);
   } catch (error) {
     return { ok: false, error: lineOf(error) };
+  }
+  // The name is the registry's own rule, plus one: `checkPiAuth` hands it to Pi
+  // as `--provider <name>`, so a name starting with `-` would be a flag in Pi's
+  // parser. No file can name an entry that way — `parseProviders` refuses it —
+  // so this refuses only a model typed at the page.
+  if (!isProviderName(provider) || provider.startsWith("-")) {
+    return {
+      ok: false,
+      error: `"${provider}" is not a provider a seat can address: one path segment that names an entry`,
+    };
   }
   return { ok: true, model: given };
 };

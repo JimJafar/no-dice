@@ -26,13 +26,13 @@
  * touches the committed `providers.json`, and every server listens on port 0 and
  * is closed at the end of its own test.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadProviders, seatModelsJson } from "@no-dice/runner/providers";
+import { loadProviders, PROVIDERS_FILE, seatModelsJson } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { HOST, startServer } from "./server.ts";
@@ -115,7 +115,6 @@ const send = (
 
 const get = (port: number, path: string, method = "GET"): Promise<Answer> =>
   send(port, path, method);
-
 const post = (
   port: number,
   path: string,
@@ -188,6 +187,36 @@ const consoleOn = async (file: string, options: UiOptions = {}): Promise<number>
 /** The rows a `GET /api/providers` answered with. */
 const rowsOf = (answer: Answer): ProviderRow[] => JSON.parse(answer.body) as ProviderRow[];
 
+/**
+ * The fields a row has, and no others — in the order the assertion sorts them.
+ * This is what "no key value" rests on: a value under any name at all would be a
+ * field, and a field added to `ProviderRow` fails here until it is argued for.
+ */
+const ROW_FIELDS = [
+  "api",
+  "apiKeyEnv",
+  "baseUrl",
+  "contextWindow",
+  "cost",
+  "maxTokens",
+  "name",
+  "reasoning",
+];
+
+/** The match a test starts when it needs a run in flight: two bots, 1.3 s. */
+const MATCH = { game: "salient", a: "bot:greedy", b: "bot:random", seed: 135 };
+
+/** Poll `/api/run` until the run the test started has stopped. */
+async function untilStopped(port: number, limitMs = 30_000): Promise<void> {
+  const deadline = Date.now() + limitMs;
+  for (;;) {
+    const state = (JSON.parse((await get(port, "/api/run")).body) as { state: string }).state;
+    if (state !== "running") return;
+    if (Date.now() > deadline) throw new Error(`the run was still running after ${String(limitMs)}ms`);
+    await new Promise((later) => setTimeout(later, 100));
+  }
+}
+
 describe("the provider list the console answers with", () => {
   it("answers each entry as the registry holds it, in the registry's order", () => {
     const registry = loadProviders(registryFile());
@@ -220,9 +249,16 @@ describe("the provider list the console answers with", () => {
     expect(answer.body).toContain('"contextWindow":131072');
     expect(answer.body).toContain('"maxTokens":8192');
     expect(answer.body).toContain('"cacheWrite":0');
-    // Nothing named like a credential, and nothing that is one: the
-    // route never reads `process.env[apiKeyEnv]`, so there is no
-    // value here to look for.
+    // The field set is closed, which is what "no key value" rests on: a value
+    // under any name at all would be a field, and the route never reads
+    // `process.env[apiKeyEnv]`, so there is no value here to look for.
+    expect(Object.keys(rowsOf(answer)[0] ?? {}).sort()).toEqual(ROW_FIELDS);
+    expect(Object.keys(rowsOf(answer)[0]?.cost ?? {}).sort()).toEqual([
+      "cacheRead",
+      "cacheWrite",
+      "input",
+      "output",
+    ]);
     expect(answer.body).not.toMatch(/"(api_?key|token|secret)[":]/i);
     expect(rowsOf(answer)).toHaveLength(2);
   });
@@ -381,6 +417,62 @@ describe("adding a provider through the console", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
+  it("refuses to edit the registry under a run in flight, and writes nothing", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    // The two roots go somewhere else, as every run-starting test sends them:
+    // a match played into `matches/` beside the repo is a match the results page
+    // would then list forever.
+    const home = tempDir("nd-ui-busy-");
+    const cwd = join(home, "repo");
+    mkdirSync(cwd, { recursive: true });
+    const port = await listen({
+      port: 0,
+      providersFile: file,
+      cwd,
+      seriesRoot: join(home, "elsewhere", "series"),
+      matchesRoot: join(home, "elsewhere", "matches"),
+    });
+
+    const started = await post(port, "/api/run/match", MATCH);
+    expect(started.status).toBe(202);
+
+    const posted = await post(port, "/api/providers", { name: "acme", entry: ACME });
+    expect(posted.status).toBe(409);
+    expect(JSON.parse(posted.body).error).toContain("a run is in flight");
+    expect(readFileSync(file, "utf8")).toBe(before);
+    // The registry the run in flight seats its next match from is the one it
+    // started with: the refusal is not only about the bytes on disk.
+    expect(providerRows(loadProviders(file)).some((row) => row.name === "acme")).toBe(false);
+    expect(seatModelsJson("acme/m1")).toBeNull();
+
+    // The same POST once the run has stopped: what was refused is the run in
+    // flight, not the route.
+    await untilStopped(port);
+    expect((await post(port, "/api/providers", { name: "acme", entry: ACME })).status).toBe(
+      200,
+    );
+    expect(readFileSync(file, "utf8")).toContain("ACME_API_KEY");
+  }, 60_000);
+
+  it("writes nothing when it was handed a registry to read and no file for it", async () => {
+    // The committed registry, byte for byte, before and after: a console whose
+    // read is an injected fixture has no file to write, and writing the repo's
+    // own would be a test that edits the repo.
+    const committed = readFileSync(PROVIDERS_FILE, "utf8");
+    const port = await listen({ port: 0, registry: () => loadProviders(registryFile()) });
+
+    const posted = await post(port, "/api/providers", { name: "acme", entry: ACME });
+    expect(posted.status).toBe(500);
+    expect(JSON.parse(posted.body).error).toContain("no file to write");
+    expect(readFileSync(PROVIDERS_FILE, "utf8")).toBe(committed);
+    // The read still answers from the fixture it was given.
+    expect(rowsOf(await get(port, "/api/providers")).map((row) => row.name)).toEqual([
+      KEYLESS,
+      KEYED,
+    ]);
+  });
+
   it("adds to a registry of its own and not to the committed one", () => {
     const file = registryFile();
     const added = addProviderEntry({ name: "acme", entry: ACME }, file);
@@ -428,6 +520,19 @@ describe("asking Pi about a seat's credential", () => {
     const answer = await post(port, "/api/providers/check", { model: "just-a-model" });
     expect(answer.status).toBe(400);
     expect(JSON.parse(answer.body).error).toContain('a Pi seat\'s model is "<provider>/<id>"');
+  });
+
+  it("refuses a provider half that is a flag rather than a name", async () => {
+    // `checkPiAuth` hands this to Pi as `--provider <name>`, so a name that
+    // starts with `-` would be an option in Pi's parser. It is refused before any
+    // subprocess is spawned.
+    const port = await consoleOn(registryFile());
+
+    for (const model of ["--provider/x", "./x", "__proto__/x"]) {
+      const answer = await post(port, "/api/providers/check", { model });
+      expect(answer.status).toBe(400);
+      expect(JSON.parse(answer.body).error).toContain("is not a provider a seat can address");
+    }
   });
 
   it("refuses a GET, and a POST from another page", async () => {

@@ -85,3 +85,17 @@ of them: they are decisions, they are what the log header, `--max-cost` and the
 cost column are read against, and a rerun under different ones is a different
 match. A provider the file does not list is left to Pi's built-in lookup, exactly
 as before. `packages/runner/src/providers.ts` says what each field decides.
+
+The management console (`packages/ui`) reads that file too, and is how an
+operator adds an entry from the page instead of by hand: `GET /api/providers`
+lists every entry with its endpoint and its key variable's *name* (never a
+value), `POST /api/providers` adds one through the same schema the file is read
+back with, and
+`POST /api/providers/check` asks Pi what it would say about seating a model
+before anyone tries. The console writes the file its `--providers <file>` flag
+names, which defaults to this one, and re-reads it at startup and after every
+entry it adds — so the runs a console starts seat on the registry it writes, and
+an entry typed at the page is seatable by the next run without a restart. It
+refuses to write while a run of its own is in flight, because a series seats each
+match as that match starts: an entry added halfway through a series would seat
+its later matches on different windows and rates while its record said one game.

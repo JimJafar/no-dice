@@ -412,6 +412,22 @@ describe("re-reading the registry in the same process", () => {
     });
   });
 
+  it("seats on the registry a write handed back, rather than on a second reading of the file", () => {
+    withReloaded({ marvin: MARVIN }, (path) => {
+      const written = addProvider("acme", ACME, path);
+      // The file moves under the process between the write and the reload. The
+      // registry the write read back is what the process seats on, so a console
+      // cannot answer with an entry the next run would not seat on — and one read
+      // of the file cannot disagree with another.
+      writeFileSync(path, `${JSON.stringify({ marvin: MARVIN }, null, 2)}\n`, "utf8");
+      reloadProviders(written);
+      expect(providerEntry("acme")).toEqual(ACME);
+      expect(seatModelsJson("acme/m1")).toMatchObject({
+        providers: { acme: { baseUrl: ACME.baseUrl, apiKey: "${ACME_API_KEY}" } },
+      });
+    });
+  });
+
   it("keeps one pair's two matches on one window when nothing asked for a reload", () => {
     withReloaded({ marvin: MARVIN, acme: { ...ACME, contextWindow: 1_000 } }, (path) => {
       expect(providerEntry("acme")?.contextWindow).toBe(1_000);
