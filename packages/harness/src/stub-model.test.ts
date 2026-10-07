@@ -291,6 +291,28 @@ describe("the stub endpoint", () => {
     expect(elapsed).toBeGreaterThanOrEqual(200);
   });
 
+  it("counts a delayed reply as in flight until it is written", async () => {
+    // A harness that aborts a seat mid-turn has to be able to say the turn ended
+    // while the model was still thinking. That is a fact about the stub, not a
+    // reading of a clock on a busy box, so the stub is asked directly.
+    const slow = await StubModel.start(sleepsPastDeadline(250));
+    const request = chat(slow, probeBody([]));
+    // The request lands on a later turn of the event loop; wait for it rather
+    // than sleeping for a guess, and stop waiting rather than hanging if it
+    // never arrives.
+    const until = Date.now() + 1_000;
+    while (slow.repliesInFlight === 0 && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(slow.repliesInFlight).toBe(1);
+
+    const answer = await request;
+    expect(answer.status).toBe(200);
+    // Written, so nothing is left in flight to hold a later assertion up.
+    expect(slow.repliesInFlight).toBe(0);
+    await slow.stop();
+  });
+
   it("answers a caller that asked for no stream with one JSON completion", async () => {
     const scripted = await StubModel.start([
       { text: "Holding.", toolCalls: [{ name: salientToolName("scout"), args: { hex: "F6" } }] },

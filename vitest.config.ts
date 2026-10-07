@@ -26,14 +26,17 @@ import { defineConfig } from "vitest/config";
 // against 81 s), because workers that are not thrashing do not spend their time
 // being scheduled. The cap is mitigation rather than a cure: on top of it, the
 // process-spawning files carry budgets of their own measured on a starved box,
-// and `pi-turn.test.ts` now bounds the seconds an aborted turn may take to come
-// back after measuring 24.5–25.1 s of teardown at load average ~24–35 and
-// 124.1 s at load ~50. With those budgets in place, re-measured at 1118 tests on
-// 6 workers: five runs of the whole suite pass with 16 cpu hogs on the box (load
-// average ~21–23) and two more with 32 hogs (load ~37–38); before the pi-turn
-// bound, 16 hogs failed three of seven runs in that one file. Nothing here
-// changes what any test asserts; it changes how many of them are asking for a
-// cpu at once.
+// and `pi-turn.test.ts` bounds the seconds an aborted turn may take to come back
+// after measuring 24.5–25.1 s of teardown at load average ~24–35, against the
+// 15 s it used to carry. With those budgets in place, re-measured at 1119 tests
+// on 6 workers: six runs of the whole suite pass with 16 cpu hogs on the box
+// (load average ~21–24); before that bound, 16 hogs failed three of seven runs
+// in that one file. Past that — 32 cpu hogs, load ~38 — the same file still
+// fails, and on an assertion rather than a budget: the aborted turn comes back
+// only after the stub's held reply lands, which says a Pi starved that far
+// settles an aborted turn when the provider request settles rather than when the
+// abort lands. Nothing here changes what any test asserts; it changes how many
+// of them are asking for a cpu at once.
 const MAX_WORKERS = Math.max(2, Math.floor(cpus().length * 0.4));
 
 export default defineConfig({

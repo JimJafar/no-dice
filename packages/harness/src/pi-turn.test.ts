@@ -53,24 +53,29 @@ const PLAYER_SYSTEM = join(import.meta.dirname, "../../../games/salient/prompts/
 /** A seat's turn means a Pi process: seconds to start, seconds to answer. */
 const SEAT_TIMEOUT_MS = 120_000;
 
-/** How long a turn is given before these tests abort it, against a 20s stub. */
+/**
+ * How long a turn is given before these tests abort it, against a stub that
+ * holds its reply far past that.
+ */
 const TURN_DEADLINE_MS = 3_000;
 
 /**
  * How long an aborted turn is allowed to take to come back.
  *
- * The bound is on the abort's teardown, not on beating the model's answer, and
- * that split is a measurement rather than a preference. With the stub holding
- * its reply for 120 s instead of 20, the aborted turn came back at 124.1 s in a
- * full-suite run on a 16-cpu box at load average ~50: a starved Pi settles an
- * aborted turn when the provider request settles, not when the abort lands. So a
- * bound under the delay the stub holds its reply for is a coin toss on a
- * busy box — this test's assertion at 15 s against the 20 s reply below
- * measured 24.5 s, 25.1 s and 24.5 s in three of seven full-suite runs at load
- * average ~24–35, and passed in the other four. 60 s is the reply plus the
- * seconds a starved child takes to come back for its turn, with room; what says
- * the turn was aborted rather than answered is `timedOut` and the pass the seat
- * reports below, not the clock.
+ * The assertion that says the abort ended the turn is not this bound but the one
+ * below it on `stub.repliesInFlight`: the stub holds the reply this turn waits
+ * on for 120 s, and the turn came back with that reply still unwritten. The
+ * bound is the backstop that says the turn came back at all, and 60 s is a
+ * measurement of how long a starved Pi takes to answer for a turn it was
+ * aborted out of: 24.5 s, 25.1 s and 24.5 s at load average ~24–35, against the
+ * 15 s this test used to carry. What it is not is a substitute for the in-flight
+ * check: on a box held at load average ~50 by 48 cpu hogs a run of this test
+ * with the same 120 s reply came back at 124.1 s, and at load ~38 with 32 cpu
+ * hogs the reply had already been written when the turn came back — a Pi
+ * starved that far settles an aborted turn when the provider request settles,
+ * not when the abort lands. That failure is the point of the assertion; the
+ * whole suite passes on this box up to load ~23 (16 cpu hogs) and this is where
+ * it stops being able to.
  */
 const ABORT_BOUND_MS = 60_000;
 
@@ -245,7 +250,14 @@ describe("a seat's turn outcomes", () => {
   it(
     "ends a turn that ran past its time with abort, and keeps the aborted turn in the seat's history",
     async () => {
-      const stub = await startStub(sleepsPastDeadline(20_000));
+      // The reply this turn waits on is held for 120 s, far past the bound
+      // below, so the turn cannot have been answered inside it; the second entry
+      // answers at once, so the turn after the aborted one is asserted rather
+      // than waited on.
+      const stub = await startStub([
+        ...sleepsPastDeadline(120_000),
+        { text: "Still working on it." },
+      ]);
       const { player, ctx } = await startSeat("B", stub);
       const firstTurn = turn;
 
@@ -254,8 +266,14 @@ describe("a seat's turn outcomes", () => {
       const took = performance.now() - started;
 
       expect(timedOut).toBe(true);
-      // The aborted turn comes back rather than hanging: the bound is the
-      // teardown of a starved Pi child, which is what `ABORT_BOUND_MS` measures.
+      // The turn came back while the model's answer was still unwritten, which is
+      // what says the abort ended it. A clock cannot say this: the seconds
+      // a starved Pi takes to answer for an aborted turn run from 3 s to 25 s
+      // depending on the load, and the reply it is racing is scripted to land at
+      // 120 s.
+      expect(stub.repliesInFlight).toBeGreaterThan(0);
+      // And it came back rather than hanging, inside the bound `ABORT_BOUND_MS`
+      // measures.
       expect(took).toBeLessThan(ABORT_BOUND_MS);
       // The seat reports a pass; the runner is the one that knows it was the
       // clock, and writes `timeout` on the way to the log.
@@ -277,7 +295,9 @@ describe("a seat's turn outcomes", () => {
       expect(JSON.stringify(stub.lastRequest?.body)).toContain(`Turn ${String(turn)} of 25.`);
       expect(second.passed).toBe("no_submission");
     },
-    SEAT_TIMEOUT_MS,
+    // Past the 120 s the stub holds its first reply for, so a settle that missed
+    // it fails the assertion above rather than this timeout.
+    SEAT_TIMEOUT_MS + 60_000,
   );
 
   it(

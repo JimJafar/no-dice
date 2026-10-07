@@ -200,6 +200,8 @@ export class StubModel {
   private scriptPosition = 0;
   private callSeq = 0;
   private stopped = false;
+  /** Requests taken whose scripted reply has not been written yet. */
+  private inFlight = 0;
   /** The waits a delayed reply is sitting in, so `stop` can cancel them. */
   private readonly waits = new Set<() => void>();
 
@@ -269,6 +271,19 @@ export class StubModel {
   /** How many requests it has answered. */
   get requestCount(): number {
     return this.requests.length;
+  }
+
+  /**
+   * How many requests it has taken but not answered yet.
+   *
+   * A delayed reply counts here for the whole of its delay, whether or not the
+   * client is still listening: the question this answers is whether the model
+   * had answered, not whether anyone was left to hear it. A harness that aborts
+   * a seat mid-turn uses it to say the turn ended while the model was still
+   * thinking, which is the one thing a wall clock cannot prove on a busy box.
+   */
+  get repliesInFlight(): number {
+    return this.inFlight;
   }
 
   /** The last request it answered, or `null` before the first. */
@@ -412,6 +427,7 @@ export class StubModel {
         .map((message) => (typeof message.content === "string" ? message.content : "")),
     };
     this.requests.push(request);
+    this.inFlight += 1;
 
     // A script that throws, or tool-call arguments that cannot be serialised, is
     // a bug in the test rather than in the seat. Answering with the message makes
@@ -432,6 +448,8 @@ export class StubModel {
           },
         });
       }
+    } finally {
+      this.inFlight -= 1;
     }
   }
 
