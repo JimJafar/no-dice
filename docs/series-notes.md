@@ -216,10 +216,10 @@ series as of the last completed batch.
 **Keeping a series across tasks takes a deliberate step.** The logs are
 gitignored on purpose — a real one is ~0.9–1.1 MB of tool results, section 7 — so
 a series that has to outlive the task that played it has to be copied somewhere
-tracked before that workspace goes. `series.json` and `report.md` are a few
-kilobytes between them, and `series.json` alone is enough to put a later run back
-on the same maps, though without the logs it replays the matches rather than
-skipping them. Failing that, the series is replayed: the same command at the same
+tracked before that workspace goes. `series.json`, `report.md` and `evidence.md`
+are a few kilobytes between them (§7 gives the two copy steps), and
+`series.json` alone is enough to put a later run back on the same maps, though
+without the logs it replays the matches rather than skipping them. Failing that, the series is replayed: the same command at the same
 `--seed-base` deals the same maps, and its figures are comparable with an
 earlier run's only while the harness rule and the prompt are the same (section 5
 says they are not here, and section 3 says the machine was not either).
@@ -227,7 +227,8 @@ says they are not here, and section 3 says the machine was not either).
 ## 7. What the repository keeps
 
 `series/` is gitignored and a real log is ~0.9–1.1 MB of tool results, so the
-logs and the seat homes are not committed. What is kept is the report, copied
+logs and the seat homes are not committed. What is kept is the report and the
+rules evidence, each copied by hand out of the series directory. The report went
 from `series/marvin-subagent-vs-greedy/report.md` into
 `reports/series/marvin-subagent-vs-greedy.md`; it carries absolute paths from
 the machine that played the series, which is what the generator writes, and those
@@ -248,6 +249,44 @@ line is the same one every time. The series directory is gone (§6), so nothing
 here regenerates over the kept report: it stays as it was generated, and only a
 fresh series — or `no-dice stats --series` on a series that is on disk — prints
 the seat.
+
+**The evidence file has to be copied the same way, and for run 1 it was not.**
+`no-dice evidence --series series/<name>` counts the five figures the rules' open
+questions are stated in — lead changes, hex flips per turn with the mean over
+turns 18-25, Node hand changes and whether any Node ping-ponged, captures of
+hexes that were neutral at the start of the turn, and each seat's re-scouts —
+over the same `series.json` and the same counted matches `stats` reports, and
+writes them to `series/<name>/evidence.md`: inside the gitignored directory, so
+it goes with the workspace exactly as the logs do. Run 1's report was copied and
+its evidence was not, and that — not the sample size — is why four of
+[`docs/rules-review.md`](rules-review.md)'s eight sections say `Left open`. So a
+finished series, and every resumed or extended run of one, ends with two copies
+rather than one:
+
+```bash
+no-dice stats    --series series/marvin-subagent-vs-greedy  # rewrites report.md
+no-dice evidence --series series/marvin-subagent-vs-greedy  # writes evidence.md
+cp series/marvin-subagent-vs-greedy/report.md    reports/series/marvin-subagent-vs-greedy.md
+cp series/marvin-subagent-vs-greedy/evidence.md reports/series/marvin-subagent-vs-greedy-evidence.md
+```
+
+Both copies are verbatim, and both name absolute paths on the machine that played
+the series, which is what the two generators write; the kept report has always
+carried them. The evidence copy is the only place these counters live: the logs
+they were counted out of are gitignored, so once the workspace is gone
+`no-dice evidence` cannot be run over them again.
+
+`reports/series/greedy-vs-random-evidence.md` is a kept copy of a five-pair
+`bot:greedy` against `bot:random` series played on this box — 5 pairs, 10
+matches, 10 counted, 0 missing — kept for one reason: so that the step above has
+been done at least once, and there is a kept file to point at, while the real
+series is played again (§6). Its figures are bot figures, and the file prints
+them against the rules' own bot figures: **1.67** hexes flipped a turn over
+turns 18-25 against the rules' 1 to 2.4 with the home bonus, and **0.00** lead
+changes a match against their 1.4 — Greedy is ahead from the opening in every
+one of those ten, so there is no lead to change. Only the evidence half of that
+series is kept: its win-rate report says nothing anyone needs, and the counters
+are the half that went missing last time.
 
 `.gitignore`'s series pattern is anchored to `/series/` for this to work at all:
 unanchored, `series/` matched `reports/series/` too and the report could not be

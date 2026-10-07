@@ -40,7 +40,13 @@ numbers `salient/docs/salient-rules-v0.md` leaves open — lead changes, largest
 single-turn swing, hex flips per turn band, captures of neutral hexes, Node hand
 changes and ping-pong, and how much each seat re-scouts — over the same
 `series.json` and the same counted matches, and writes them to
-`series/<name>/evidence.md`.
+`series/<name>/evidence.md`. That file is inside the gitignored series directory,
+so the copy that survives the run is `reports/series/<name>-evidence.md`, kept
+verbatim beside the kept `reports/series/<name>.md` copy of `report.md`; §7 of
+[`docs/series-notes.md`](docs/series-notes.md) gives both copy steps, and
+`reports/series/greedy-vs-random-evidence.md` is a kept copy of a finished
+five-pair bot series. Without that copy the counters are computed into a
+directory that is deleted with the workspace.
 
 `showcase` picks the one match of a finished series worth rendering, and writes
 `series/<name>/showcase.json`: the path of the match log, its excitement score and
