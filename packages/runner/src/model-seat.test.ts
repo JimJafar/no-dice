@@ -349,21 +349,35 @@ describe("a Pi seat's own reason for passing a turn", () => {
  * reason no seat reports, because the seat was stopped mid-turn: the stub is
  * holding its reply, the seat has made no call, and all the server can see is
  * that nothing arrived. `no_submission` is what the server alone would guess.
+ *
+ * The deadline has to land on a seat that is actually mid-turn, which is what
+ * makes its size a measurement rather than a preference: an abort that
+ * reaches a Pi still starting does not stop a turn, the aborted seat never
+ * answers for itself within the runner's abort grace, and the match then cannot
+ * be logged at all, because a Pi seat's header records the context window Pi
+ * reported and this seat never reported one. A 1.5 s deadline did exactly that
+ * on a 16-cpu box held at load average ~20 by cpu hogs: the starved seat's turn
+ * had still not come back 10 s after the abort — the runner's abort grace — and
+ * the run failed with "without Pi ever reporting a context window". 20 s is past
+ * a starved Pi's start-up on that box, so the abort lands on a seat that is
+ * playing, and the stub's reply is still held far past the deadline, so the only
+ * thing that can end the turn is the runner's clock.
  */
+const TURN_DEADLINE_MS = 20_000;
+
 describe("a Pi seat that runs past the runner's turn timeout", () => {
   it("passes its turn as a timeout, and the match is still played and logged", async () => {
     // Far longer than the deadline below, so the only thing that can end the
     // turn is the runner's clock.
-    const stub = await startStub(sleepsPastDeadline(60_000));
+    const stub = await startStub(sleepsPastDeadline(120_000));
     const paths = pathsFor("turn-timeout");
-    const turnTimeoutMs = 1_500;
     try {
       const { log } = await runMatch({
         out: paths.out,
         seed: 135,
         config: { ...DEFAULT_CONFIG, turns: 1 },
         seats: { A: stubSeat(stub), B: GREEDY },
-        turnTimeoutMs,
+        turnTimeoutMs: TURN_DEADLINE_MS,
         matchDir: paths.matchDir,
       });
       const seat = log.turns[0].players.A;
@@ -374,7 +388,7 @@ describe("a Pi seat that runs past the runner's turn timeout", () => {
       expect(seat.tool_calls).toEqual([]);
       // The turn cost the whole deadline, rather than the milliseconds a seat
       // that handed in nothing takes.
-      expect(seat.wall_ms).toBeGreaterThanOrEqual(turnTimeoutMs);
+      expect(seat.wall_ms).toBeGreaterThanOrEqual(TURN_DEADLINE_MS);
       // The match was not voided by it: the log is on disk, and the Greedy seat
       // played its half of the turn the clock took from the model.
       const onDisk = matchLogSchema.parse(JSON.parse(readFileSync(paths.out, "utf8")) as unknown);

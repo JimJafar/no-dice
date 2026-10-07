@@ -46,9 +46,9 @@ const SEEDS_PER_TEST = 25;
  * test's to decide. Measured on a 16-cpu box: 0.9–1.1 s a chunk with the box
  * idle, 1.4–2.3 s with it saturated by competing cpu hogs, and 5.1–10.5 s on a
  * box shared with other workspaces' suites — which is past vitest's 5 s default
- * and the reason this constant exists. 60 s is six times the worst of those and
- * still says a chunk that never finishes is broken rather than merely slow.
- * Nothing here changes what a chunk asserts.
+ * and the reason this constant exists. 60 s is nearly six times the worst of
+ * those and still says a chunk that never finishes is broken rather than merely
+ * slow. Nothing here changes what a chunk asserts.
  */
 const SEED_CHUNK_TIMEOUT_MS = 60_000;
 
