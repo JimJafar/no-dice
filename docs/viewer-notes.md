@@ -219,16 +219,32 @@ diamond on the 3 — so the decision outlives the argument that settled it.
   interval, its pairs and its stop reason, which is what a series of seat-swapped
   pairs actually measures. The page has no match index to quote — the log it
   holds is one file, and the series it came from is a separate one. The mock-up's
-  line is one line and this one is longer: at the mock-up's 15 px it wraps to two
-  inside the header row, which the mock-up fixes at 104 px and which already holds
-  the counter, the bar and the summary. That row is the frame's one tight spot:
-  the 1080 px frame has no spare height to give it, which is why these rows
-  are 12 px apart instead of the mock-up's 24 at all — the note at the top of
-  `viewer.css` counts the three rows the mock-up does not have and says the 629 px
-  board box would be pushed out of the frame. A header that grows takes the
-  difference out of that board box rather than out of spare height. The
-  placeholder is kept to one line for that reason; a series line that carries five
-  facts cannot be.
+  line is one line and this one is longer: two `provider/model` names wrap it to
+  three at the mock-up's 15 px in its 760 px centre column. **The header row is
+  `min-height:104px` rather than the mock-up's `height:104px`, and the frame pays
+  for the three lines.** The row is 142.4 px at that sentence — 18 px of counter,
+  20 px of bar, 20.4 px of summary, 3 × 18 px of series and 3 × 10 px of gap — and
+  the frame has 157.2 px for it: 1008 px inside the mock-up's 36 px of padding,
+  less the 28.8 px headline, the 33 px control row, the 112 px chart and 4 × 12 px
+  of gap. That leaves 643.8 px for the stage, which holds the 629 px board box with
+  14.8 px over. The height comes from the one part of the frame that is not the
+  mock-up's: the view toggle and the replay controls, which were two rows of the
+  page's own buttons and are now one row under the board — 45 px, a row and a gap,
+  of which the header spends 38.4 px. A fourth and a fifth line of series are still
+  inside the frame, absorbed by the 12 px gaps on either side of the stage, and
+  nothing past that, which is also why the sentence `series.ts` builds is no longer
+  than it is. The rows were not merged by taste. The three ways out that were
+  on the table are all worse: giving the series line a row of its own and shrinking
+  the board box puts a board that is not the mock-up's — its 705 × 629 px is the
+  mock-up's hex geometry at the mock-up's hex size — into a frame that is;
+  clamping `.series` to two lines and shortening the sentence until the seed clause
+  survives writes the line for the row rather than for the operator; and widening
+  `.centre` past the mock-up's 760 px, or dropping its 15 px, changes the mock-up's
+  type to pay for height the frame has anyway. Merging the two control rows costs
+  the page nothing it was not already showing. `scripts/viewer-frame-budget.test.mjs` adds the frame up from `viewer.css`
+  and `index.html` rather than from these numbers, so the arithmetic fails rather
+  than goes stale. The placeholder for a log with no sidecar stays at one line
+  because it has one sentence to say, not because the row cannot grow.
 - The verdict tag: not drawn, so the prediction stands on its own.
 - The headline: the mock-up's "A takes the centre Node, 5 against 3, and cuts
   off five of B's hexes" against what `headline()` generates for the same turn,
@@ -252,7 +268,8 @@ diamond on the 3 — so the decision outlives the argument that settled it.
   invented for the comparison.
 - The page's rows sit 12 px apart rather than the mock-up's 24. The mock-up stacks
   three rows in its 1080 px frame and leaves 72 px spare in the middle one; the
-  page stacks five — the view toggle, the headline and the replay controls are
-  extra — and at 24 px of gap the 629 px board box is pushed out of the frame.
-  Every row's own height, and everything inside every row, is still the mock-up's:
-  the 104 px header, the 705 × 629 px board and the 112 px chart are unchanged.
+  page stacks five — the headline and the one row of its own controls are extra —
+  and at 24 px of gap the 629 px board box is pushed out of the frame. Every row's
+  own height, and everything inside every row, is still the mock-up's: the 705 ×
+  629 px board and the 112 px chart are unchanged, and the 104 px header is a floor
+  the series line grows past (above).

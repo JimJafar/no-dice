@@ -3,11 +3,18 @@
    (salient/docs/salient-mockups.md, "Build notes"). */
 body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',system-ui,sans-serif;--team-a:#2c6fd1;--team-b:#e06f35}
 /* The mock-up's 1920 × 1080 box and its 36 px of padding. Its rows are 24 px
-   apart; these are 12 px apart, because the page has three rows the mock-up does
-   not — the view toggle, the replay controls and the headline — and the 72 px the
+   apart; these are 12 px apart, because the page has two rows the mock-up does
+   not — the headline, and the one row of its own controls — and the 72 px the
    mock-up leaves spare in its middle row does not cover them at 24 px: the 629 px
    board box would be pushed out of the frame. Every row's own height, and
-   everything inside every row, is still the mock-up's (docs/viewer-notes.md §4). */
+   everything inside every row, is still the mock-up's, with one exception: the
+   header row, whose 104 px is a floor rather than a height (see `.header`, and
+   docs/viewer-notes.md §4). At that floor the stage is left 682.2 px for a 629 px
+   board box, and the 53.2 px over is what the header row spends on the series
+   line. The view toggle and the replay controls share one row because they are the
+   only height in the frame that is not the mock-up's: one row of controls rather
+   than two is what pays for the header's growth. `scripts/viewer-frame-budget.test.mjs`
+   adds this box up from the numbers below, so the arithmetic cannot go stale. */
 .frame{width:1920px;height:1080px;box-sizing:border-box;padding:36px;display:flex;flex-direction:column;gap:12px;background:#12161c;color:#eef1f5}
 .frame.dropping{outline:4px dashed var(--team-a,#2c6fd1);outline-offset:-16px}
 .load[hidden]{display:none}
@@ -18,6 +25,15 @@ body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',syste
 .pick{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#232a33;border-radius:6px;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em}
 .hint{font-size:15px;line-height:1.3;color:#aab3bf}
 code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
+
+/* The page's own controls, in one row under the board: the view toggle and the
+   replay controls. The mock-up has neither, and the frame has no spare height for
+   two rows of them, while the header row needs what merging them frees (the note
+   on `.frame`). Both are the palette's own control in the same style, so one row
+   beside the other costs the page nothing it was not already showing. */
+.controls{display:flex;align-items:center;gap:24px;align-self:center}
+/* `hidden` until a log arrives, which an author `display` would otherwise win. */
+.controls[hidden]{display:none}
 
 /* The view toggle: the spectator frame, or one seat's fog. The mock-ups show no
    toggle — the fog frame is drawn as its own page — so this is the palette's
@@ -47,8 +63,23 @@ code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
    which styles this row inline — the one style the mock-up sets per frame, the
    flex of each bar segment, is set by render-header.ts instead, because it is a
    fact about the frame. `.seat-a` and `.seat-b` rather than `.a` and `.b`, which
-   the hexes below already use for their owner colours. */
-.header{display:flex;align-items:center;gap:32px;height:104px;flex:none}
+   the hexes below already use for their owner colours.
+
+   The mock-up fixes this row at 104 px and the page keeps that as a floor rather
+   than a height. The mock-up's series line is a bracketed placeholder of one
+   line; the real one is a sentence about a series — the pairing, its win rate and
+   interval, its pairs, its stop reason, and where the match on the screen sits in
+   it — and two `provider/model` names wrap it to three lines in the mock-up's
+   760 px centre column. A row fixed at 104 px leaves the third of those hanging
+   over the rows below. So the row is as tall as its content, and the frame pays
+   for three lines: 18 px of counter, 20 px of bar, 20.4 px of summary, 3 × 18 px
+   of series and 3 × 10 px of gap is 142.4 px, against the 157.2 px the frame has
+   for the row once the headline, the control row, the chart and the gaps between
+   them are counted (the note on `.frame`). A fourth and a fifth line of series are
+   still inside the frame — the 12 px gaps on either side of the stage absorb them —
+   and nothing past that, which is why the sentence `series.ts` builds is no longer
+   than it is. */
+.header{display:flex;align-items:center;gap:32px;min-height:104px;flex:none}
 /* `hidden` until a log arrives, which an author `display` would otherwise win. */
 .header[hidden]{display:none}
 .seat{flex:1;display:flex;align-items:center;justify-content:space-between;gap:24px}

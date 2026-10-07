@@ -63,6 +63,8 @@ const panelB = element<HTMLDivElement>("#panel-b");
 const turnsBar = element<HTMLDivElement>("#turns");
 const chart = element<HTMLDivElement>("#chart");
 const toggleBar = element<HTMLDivElement>("#view-toggle");
+/** The one row the page's own controls share: the view toggle and the replay controls. */
+const controlsRow = element<HTMLDivElement>("#controls");
 
 /**
  * What the page shows: the log it holds, the frame of it, whose eyes the board is
@@ -150,6 +152,7 @@ function redraw(): void {
   turnsBar.hidden = false;
   chart.hidden = false;
   toggleBar.hidden = false;
+  controlsRow.hidden = false;
   renderHeader(header, headerView(log, view.frame), series === null ? null : seriesLineOf(series, log));
   renderHeadline(headlineRow, headline(log, view.frame));
   renderBoard(board, boardView(log, view.board), fog, view);

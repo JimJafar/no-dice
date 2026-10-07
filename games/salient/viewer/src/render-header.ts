@@ -31,9 +31,10 @@ import type { HeaderView } from "./header.ts";
  * What the mock-up's series line becomes when no sidecar came with the log. A
  * `salient-log/1` log holds one match and no series, so the element says so and
  * names how to get the line, rather than leaving the mock-up's `[n] of [N]`
- * brackets as an unexplained gap. It is kept to one line on purpose: the header
- * row is the mock-up's fixed 104 px, and a sentence that wraps in it pushes the
- * board out of the frame (docs/viewer-notes.md §4).
+ * brackets as an unexplained gap. It is one line because it has one sentence to
+ * say; the row is not the limit. The mock-up's 104 px is a floor the series line
+ * can grow past, and a line that wraps takes the row taller rather than hanging
+ * over the rows below it (docs/viewer-notes.md §4).
  */
 const SERIES_LINE = "No series in this log: pick its showcase.json beside it, or open the page as ?series=<url>.";
 

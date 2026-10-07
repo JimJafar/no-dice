@@ -117,4 +117,19 @@ describe("renderHeader", () => {
     expect(el.querySelector(".score")?.textContent).toBe("1");
     expect(el.querySelector(".counter")?.textContent).toBe("TURN 0 OF 25");
   });
+
+  it("draws a whole series line about two provider/model pairings, seed clause and all", () => {
+    // The line a `salient-showcase/1` sidecar produces for a pair of model seats:
+    // two `provider/model` names, the win rate and its interval, the pairs, the
+    // stop, and the seed clause. None of it is left for CSS to clip: the row is as
+    // tall as the line needs, and `scripts/viewer-frame-budget.test.mjs`
+    // counts the height that takes out of the frame's 1080 px.
+    const line =
+      "anthropic/claude-opus-4-1 vs openai/gpt-5 — win rate 90.0% (95% 59.6% – 98.2%) " +
+      "over 10 counted matches, 5 pairs, stopped on max_pairs. This is the match the " +
+      "series picked: seed 572152369, with anthropic/claude-opus-4-1 in seat A.";
+    const el = document.createElement("div");
+    renderHeader(el, headerView(log, TURN_11), line);
+    expect(el.querySelector(".series")?.textContent).toBe(line);
+  });
 });
