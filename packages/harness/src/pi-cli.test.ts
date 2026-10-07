@@ -11,6 +11,12 @@
  * prove the build is what it claims to be by asking it: `--version` has to
  * match the pin, and `mcp list --json` has to answer, which is a command a
  * pre-1.0 Pi does not have.
+ *
+ * The three tests that ask the build itself — two `pi` processes and one import
+ * of the whole package — carry a timeout of their own, for the same reason the
+ * other Pi test files do: they cost a real process and a real module graph, so
+ * what they cost in wall clock is whatever the machine will spare. The two that
+ * only read files keep vitest's default.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
@@ -23,6 +29,17 @@ import { PI_PACKAGE, piCli } from "./pi-cli.ts";
 
 /** The version `packages/harness/package.json` pins, and every log header records. */
 const PINNED = "1.0.2";
+
+/**
+ * How long a test that starts the pinned `pi`, or imports it, may take.
+ *
+ * A `pi --version` process measures 1.3–1.9 s here, and the import of the
+ * package's root pulls in Pi's whole module graph; both are over vitest's 5 s
+ * default once other workspaces are sharing the box. 60 s is what
+ * `packages/ui/src/providers.test.ts` gives the same kind of probe, and a test
+ * that outlives this one is not slow so much as stuck.
+ */
+const PI_CLI_TIMEOUT_MS = 60_000;
 
 /** This workspace's root, which is where the pinned Pi has to have come from. */
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -87,7 +104,7 @@ describe("the pinned Pi build", () => {
     expect(reported).toBe(version);
     // The Pi on this machine's PATH would answer here with a 0.x.
     expect(reported.split(".")[0]).not.toBe("0");
-  });
+  }, PI_CLI_TIMEOUT_MS);
 
   it("has an mcp command, which a pre-1.0 Pi does not", () => {
     const run = runPi(["mcp", "list", "--json"]);
@@ -96,11 +113,11 @@ describe("the pinned Pi build", () => {
     // empty list. A Pi with no `mcp` command exits non-zero instead.
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout)).toEqual({ servers: [], errors: [] });
-  });
+  }, PI_CLI_TIMEOUT_MS);
 
   it("exports RpcClient from its package root, which PiPlayer imports", async () => {
     const pi = (await import(PI_PACKAGE)) as { RpcClient?: unknown };
 
     expect(typeof pi.RpcClient).toBe("function");
-  });
+  }, PI_CLI_TIMEOUT_MS);
 });

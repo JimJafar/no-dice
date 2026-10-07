@@ -9,8 +9,9 @@
  * candidates in board coordinates rather than in its own frame.
  *
  * The match is driven in-process — the server's `call` and the bots' decision
- * functions, with no socket and no harness between them — so 300 matches of up
- * to 25 turns fit inside the test timeout. Seeds 1 to 300, in chunks, so a bad
+ * functions, with no socket and no harness between them — so a chunk of 25
+ * matches of up to 25 turns costs cpu and nothing it waits for, and each chunk
+ * is given a timeout that fits that cost. Seeds 1 to 300, in chunks, so a bad
  * seed names itself instead of taking the whole run down with it.
  *
  * Both the mirror position and the scores are checked after every turn rather
@@ -31,12 +32,25 @@ import type { Bot, BotRules, BotState } from "./types.ts";
 const SEEDS = Array.from({ length: 300 }, (_, index) => index + 1);
 
 /**
- * How many seeds one `it` plays. A whole 300-match run takes about twelve
- * seconds, and vitest's default timeout is five a test, so the seeds are split
- * into chunks that each finish in a second or two rather than one test that has
- * to be given a longer timeout to survive a slower machine.
+ * How many seeds one `it` plays: a whole 300-match run is one test that names
+ * no seed when it fails, so the seeds are split into chunks that each report
+ * their own range.
  */
 const SEEDS_PER_TEST = 25;
+
+/**
+ * How long one chunk may take.
+ *
+ * A chunk is 25 matches of up to 25 turns of pure computation, so what it costs
+ * in wall clock is whatever cpu the machine will spare, and that is not this
+ * test's to decide. Measured on a 16-cpu box: 0.9–1.1 s a chunk with the box
+ * idle, 1.4–2.3 s with it saturated by competing cpu hogs, and 5.1–10.5 s on a
+ * box shared with other workspaces' suites — which is past vitest's 5 s default
+ * and the reason this constant exists. 60 s is six times the worst of those and
+ * still says a chunk that never finishes is broken rather than merely slow.
+ * Nothing here changes what a chunk asserts.
+ */
+const SEED_CHUNK_TIMEOUT_MS = 60_000;
 
 /** How many problems one test reports: a broken bot breaks every turn of every seed. */
 const REPORTED_PROBLEMS = 8;
@@ -153,6 +167,6 @@ describe("Greedy against Greedy", () => {
         problems,
         `${range}: ${shown.join("; ")}${more > 0 ? `; and ${String(more)} more` : ""}`,
       ).toEqual([]);
-    });
+    }, SEED_CHUNK_TIMEOUT_MS);
   }
 });
