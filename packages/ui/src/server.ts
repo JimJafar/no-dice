@@ -30,9 +30,11 @@
  * else about that run from the series' own record.
  *
  * What is already on disk is reachable through the same server. `/api/series`
- * and `/api/matches` list it (`./results.ts`), `/logs/<path>` serves the JSON a
- * listing names, and `/viewer/` serves the built replay viewer, which is what
- * opens one of those logs at
+ * and `/api/matches` list it (`./results.ts`), `/api/leaderboard` answers both
+ * leaderboard views over those same records in one call (`./leaderboard.ts`),
+ * `/logs/<path>` serves the JSON a listing names and the `report.md` a finished
+ * series wrote beside its record, and `/viewer/` serves the built replay viewer,
+ * which is what opens one of those logs at
  * `/viewer/?log=/logs/<series>/matches/<file>.json`. The viewer is a separate
  * app the console does not own, built by its own `vite build`, so the console
  * serves it and says what to build when nobody has. Everything else is the
@@ -71,6 +73,7 @@ import { PROVIDERS_FILE, providerRegistry, reloadProviders } from "@no-dice/runn
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
+import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
 import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
 import type { RunKind, RunSlot } from "./runs.ts";
@@ -589,6 +592,15 @@ const route = async (
 
   if (path === "/api/matches") {
     sendJson(response, 200, await matchRows(config));
+    return;
+  }
+
+  // Both leaderboard views over the same records: the per-pairing rows and the
+  // per-model rows pooled over them. One walk of the series root answers the
+  // whole thing — `./leaderboard.ts` says what that costs, and why the figures
+  // are the stats package's rather than a second account of them.
+  if (path === LEADERBOARD_PATH) {
+    sendJson(response, 200, await leaderboardRows(config, runs.inFlightSeries()));
     return;
   }
 

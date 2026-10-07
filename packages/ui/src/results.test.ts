@@ -243,6 +243,9 @@ describe("GET /api/series", () => {
     // say that rather than leave it blank.
     expect([row!.ceilingUsd, row!.ceilingTokens]).toEqual([null, null]);
     expect(row!.resumable).toBe(true);
+    // The report the CLI wrote beside that record, at the URL the `/logs/` route
+    // already reaches — which is what the leaderboard links a series by.
+    expect(row!.reportUrl).toBe("/logs/alpha/report.md");
 
     // The same figures the CLI prints. These are the lines
     // `renderSeriesReport` writes for this directory, built out of the row the

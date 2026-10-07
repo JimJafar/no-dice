@@ -10,7 +10,9 @@
  * this path be read".
  *
  * Nothing is streamed here: this file decides which file a request may have,
- * and `server.ts` writes it.
+ * and `server.ts` writes it. The content-type map covers every file the console
+ * serves that way — the built app's assets, the match logs under `/logs/`, and
+ * the `report.md` a finished series wrote beside its record.
  */
 import { realpathSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
@@ -23,6 +25,9 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  // A series' `report.md`, which the console serves under `/logs/` and the
+  // leaderboard links to: text a browser shows, rather than bytes it downloads.
+  ".md": "text/plain; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".woff2": "font/woff2",

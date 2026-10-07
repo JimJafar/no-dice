@@ -21,6 +21,14 @@
  * above. Anyone who grows a cache here should key it on each series' own
  * `series.json` mtime, not on a copy of the figures.
  *
+ * **The walk is one function, so a route never walks twice.** `seriesEntries`
+ * is the only thing here that reads the series root: it hands back each series'
+ * report, or the one line its record failed on, beside its name and directory.
+ * `seriesRows` maps that to the rows `/api/series` answers with, and
+ * `./leaderboard.ts` calls it once and pools the reports it got, so the
+ * leaderboard costs the same walk rather than a second one over the same
+ * megabyte logs.
+ *
  * **What is not listed, and says so.** Only what is under the roots the console
  * was given. A series started with `--dir` somewhere else is not under the root,
  * so it is not listed — and the page says that in as many words, because a series
@@ -47,6 +55,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 
 import { seatLabel, seriesReport } from "@no-dice/stats/series-report";
+import type { SeriesReport } from "@no-dice/stats/series-report";
 
 import { resolveStatic } from "./static.ts";
 import type { UiRoots } from "./state.ts";
@@ -104,6 +113,13 @@ export interface SeriesRow {
   name: string;
   /** The series directory, as an absolute path — what a resume posts back. */
   dir: string;
+  /**
+   * The report the CLI wrote for this series, served under `/logs/`. The runner
+   * writes `report.md` when a series finishes, so a series interrupted inside its
+   * first batch has no report to open yet; the link is there either way,
+   * and the console answers a report that is not there as a 404 in its own words.
+   */
+  reportUrl: string;
   /** The pairing, spelled as `--a` and `--b` spell it. */
   a: string;
   b: string;
@@ -137,23 +153,60 @@ export interface SeriesRow {
   resumable: boolean;
 }
 
+/** A directory under the root whose `series.json` this console could not report. */
+export interface UnreadableSeries {
+  name: string;
+  dir: string;
+  /** The one line the report failed on, which the page shows as it stands. */
+  error: string;
+}
+
 /** What `GET /api/series` answers. */
 export interface SeriesListing {
   seriesRoot: string;
   series: SeriesRow[];
   /** Directories under the root that hold a `series.json` this console could not report. */
-  unreadable: { name: string; dir: string; error: string }[];
+  unreadable: UnreadableSeries[];
+}
+
+/** One series under the root that this console could read. */
+export interface ReadableSeries {
+  /** The directory's own name, which is what `--name` gave it. */
+  name: string;
+  /** The series directory, as an absolute path. */
+  dir: string;
+  /** Whether the console offers it as a resume: its run is not in flight. */
+  resumable: boolean;
+  /** The report `no-dice stats --series <dir>` prints for it. */
+  report: SeriesReport;
+  error: null;
+}
+
+/** One series under the root whose record this console could not read. */
+export interface BrokenSeries {
+  name: string;
+  dir: string;
+  resumable: boolean;
+  report: null;
+  /** The one line the report failed on. */
+  error: string;
+}
+
+/** One series under the root, as the walk found it: its report, or the line it failed on. */
+export type SeriesEntry = ReadableSeries | BrokenSeries;
+
+/** What one walk of the series root found. */
+export interface SeriesWalk {
+  seriesRoot: string;
+  /** One entry per directory under the root that holds a `series.json`, in name order. */
+  entries: SeriesEntry[];
 }
 
 /** One series report, as a row. */
-const rowOf = (
-  name: string,
-  dir: string,
-  report: Awaited<ReturnType<typeof seriesReport>>,
-  inFlight: string | null,
-): SeriesRow => ({
+const rowOf = ({ name, dir, resumable, report }: ReadableSeries): SeriesRow => ({
   name,
   dir,
+  reportUrl: logUrlOf(`${name}/report.md`),
   a: seatLabel(report.x),
   b: seatLabel(report.opponent),
   maxPairs: report.maxPairs,
@@ -171,37 +224,67 @@ const rowOf = (
   confidence: report.result.confidence,
   ceilingUsd: report.stop.ceilingUsd ?? null,
   ceilingTokens: report.stop.ceilingTokens ?? null,
-  resumable: inFlight === null || resolve(inFlight) !== dir,
+  resumable,
 });
 
 /**
- * Every series under the root: every directory that holds a `series.json`, with
- * the figures `no-dice stats` prints for it.
+ * Every series under the root, read once: every directory that holds a
+ * `series.json`, with the report `no-dice stats` prints for it beside its name
+ * and directory — or with the one line that report failed on.
+ *
+ * This is the only walk of the series root in the console. `seriesRows` below
+ * turns it into the rows `/api/series` answers with, and `./leaderboard.ts`
+ * turns one call of it into both of its tables, so a route that wants the
+ * figures of every series on disk pays for one read of every match log and not
+ * two.
  *
  * `inFlight` is the series directory the console has a run in, if any; that one
  * is not offered as a resume, because a second run into the same directory would
  * be a second run of the same matches.
  */
-export const seriesRows = async (roots: UiRoots, inFlight: string | null): Promise<SeriesListing> => {
+export const seriesEntries = async (roots: UiRoots, inFlight: string | null): Promise<SeriesWalk> => {
   const seriesRoot = resolve(roots.seriesRoot);
-  const series: SeriesRow[] = [];
-  const unreadable: SeriesListing["unreadable"] = [];
+  const entries: SeriesEntry[] = [];
 
   for (const name of await subdirectories(seriesRoot)) {
     const dir = join(seriesRoot, name);
     if (!(await hasRecord(dir))) continue;
+    const resumable = inFlight === null || resolve(inFlight) !== dir;
     try {
-      series.push(rowOf(name, dir, await seriesReport(dir), inFlight));
+      entries.push({ name, dir, resumable, report: await seriesReport(dir), error: null });
     } catch (error) {
       // A record this console cannot read is still a series on disk, and the
       // operator has to be able to see that it is there and what is wrong with
       // it — a list that dropped it would read as a series that was never run.
-      unreadable.push({ name, dir, error: lineOf(error) });
+      entries.push({ name, dir, resumable, report: null, error: lineOf(error) });
     }
   }
 
-  return { seriesRoot, series, unreadable };
+  return { seriesRoot, entries };
 };
+
+/** The rows and the unreadable list, split out of one walk. */
+export const seriesListingOf = (walk: SeriesWalk): SeriesListing => {
+  const series: SeriesRow[] = [];
+  const unreadable: UnreadableSeries[] = [];
+  for (const entry of walk.entries) {
+    if (entry.report === null) unreadable.push({ name: entry.name, dir: entry.dir, error: entry.error });
+    else series.push(rowOf(entry));
+  }
+  return { seriesRoot: walk.seriesRoot, series, unreadable };
+};
+
+/**
+ * The reports one walk read, in the order it read them. A record that failed to
+ * read has no report to hand over, so it contributes nothing to whatever these
+ * are pooled into — and it is in `unreadable`, which is what says so.
+ */
+export const reportsOf = (walk: SeriesWalk): SeriesReport[] =>
+  walk.entries.flatMap((entry) => (entry.report === null ? [] : [entry.report]));
+
+/** `GET /api/series`: every series under the root, with the figures `no-dice stats` prints for it. */
+export const seriesRows = async (roots: UiRoots, inFlight: string | null): Promise<SeriesListing> =>
+  seriesListingOf(await seriesEntries(roots, inFlight));
 
 /** One finished match log, and where this console serves it. */
 export interface MatchRow {
