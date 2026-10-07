@@ -155,6 +155,15 @@ describe("the committed provider registry", () => {
     expect(providerEntry("anthropic")).toBeNull();
   });
 
+  it("has no entry for a name that is only inherited off Object.prototype", () => {
+    // A seat on `valueOf/x` is no seat at all, not an inherited member dressed up
+    // as an entry and handed to a run as a `models.json`.
+    for (const name of ["valueOf", "toString", "constructor"]) {
+      expect(providerEntry(name)).toBeNull();
+      expect(seatModelsJson(`${name}/m1`)).toBeNull();
+    }
+  });
+
   it("reads a registry from wherever it is kept, and refuses one that is malformed", () => {
     // The path is a parameter rather than a constant so a second checkout, or a
     // test, can point at its own file; the committed one is the default.
@@ -329,6 +338,28 @@ describe("adding a provider to the registry", () => {
         expect(readFileSync(path, "utf8")).toBe(before);
       });
     }
+  });
+
+  it('refuses "__proto__", the one name that would not survive the file it writes', () => {
+    // Assigning that key sets a prototype rather than adding an entry, so the file
+    // would carry an entry no reader could see — the opposite of the answer the
+    // caller is given.
+    withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+      const before = readFileSync(path, "utf8");
+      expect(() => addProvider("__proto__", ACME, path)).toThrow(/one path segment/);
+      expect(readFileSync(path, "utf8")).toBe(before);
+    });
+  });
+
+  it("refuses a file that names such a provider, rather than reading half of it", () => {
+    withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+      writeFileSync(
+        path,
+        `{"marvin": ${JSON.stringify(MARVIN)}, "__proto__": ${JSON.stringify(ACME)}}\n`,
+        "utf8",
+      );
+      expect(() => loadProviders(path)).toThrow(/__proto__/);
+    });
   });
 
   it("exports the schemas `parseProviders` parses with, so there is one field list", () => {

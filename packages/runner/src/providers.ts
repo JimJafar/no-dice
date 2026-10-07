@@ -37,7 +37,15 @@
  * the one deliberate exception to reading the registry once per process.
  */
 import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
@@ -108,6 +116,20 @@ export const providerEntrySchema = z
 /** The whole file: a map of provider names to entries, and nothing else. */
 export const providerRegistrySchema = z.record(z.string().min(1), providerEntrySchema);
 
+/**
+ * Whether `name` can name an entry: one path segment, because a seat is
+ * addressed as `<provider>/<id>` and `providerOf` splits on the first `/` — and
+ * not `__proto__`, the one key that would not survive the round trip through the
+ * registry, since assigning it sets a prototype instead of adding an entry, so
+ * the file would say one thing and every reader another.
+ */
+const isProviderName = (name: string): boolean =>
+  name !== "" &&
+  name !== "." &&
+  name !== ".." &&
+  !name.includes("/") &&
+  name !== "__proto__";
+
 /** Why a registry did not parse, one clause per problem, with the provider named. */
 const describeIssues = (
   issues: readonly { path: readonly PropertyKey[]; message: string }[],
@@ -124,16 +146,28 @@ const describeIssues = (
  * what a match's log says about its own window and cost.
  */
 export const parseProviders = (value: unknown, source: string): ProviderRegistry => {
+  const named =
+    typeof value === "object" && value !== null && !Array.isArray(value) ? Object.keys(value) : [];
+  const unaddressable = named.filter((name) => !isProviderName(name));
+  if (unaddressable.length > 0) {
+    throw new Error(
+      `${source} names a provider no seat can address: ${unaddressable
+        .map((name) => `"${name}"`)
+        .join(", ")}`,
+    );
+  }
   const parsed = providerRegistrySchema.safeParse(value);
   if (!parsed.success) {
     throw new Error(`${source} is not a provider registry: ${describeIssues(parsed.error.issues)}`);
   }
-  return Object.fromEntries(
-    Object.entries(parsed.data).map(([name, entry]) => [
-      name,
-      { ...entry, apiKeyEnv: entry.apiKeyEnv ?? null },
-    ]),
-  );
+  // Built on no prototype, so a lookup can never answer with something inherited
+  // off `Object.prototype`: a name the registry does not have is no entry at
+  // all, and a seat on it is left to Pi's own lookup.
+  const next: ProviderRegistry = Object.create(null);
+  for (const [name, entry] of Object.entries(parsed.data)) {
+    next[name] = { ...entry, apiKeyEnv: entry.apiKeyEnv ?? null };
+  }
+  return next;
 };
 
 /** Read and validate the registry at `path`. */
@@ -185,15 +219,14 @@ export const reloadProviders = (path: string = PROVIDERS_FILE): ProviderRegistry
 };
 
 /**
- * A provider name has to be one path segment: `providerOf` splits a seat's
- * `<provider>/<id>` on the first `/`, so a name carrying one — like `.` and
- * `..`, which are not names — makes an entry no command line can address.
+ * A provider name has to be one that `parseProviders` can hand back: see
+ * `isProviderName`.
  */
 const checkProviderName = (name: string): void => {
-  if (name === "" || name === "." || name === ".." || name.includes("/")) {
+  if (!isProviderName(name)) {
     throw new Error(
-      `"${name}" is not a provider name: it has to be one path segment, ` +
-        "because a seat is addressed as <provider>/<id>",
+      `"${name}" is not a provider name: it has to be one path segment that names an ` +
+        "entry rather than a prototype",
     );
   }
 };
@@ -201,16 +234,22 @@ const checkProviderName = (name: string): void => {
 /**
  * Write the registry in one step, the way `match.ts` writes a log and
  * `series-plan.ts` writes a series record: the text goes to a temp file named
- * `<path>.tmp-*` in the same directory, and one `renameSync` moves it over the
- * target, so the only file another process can ever read is a whole registry —
- * a registry cut in half by a crash seats the next match on nothing. It is written
- * as 2-space JSON with a trailing newline, so the file stays a `git diff` a person
- * can read.
+ * `<path>.tmp-*` in the same directory, is synced before the name appears, and one
+ * `renameSync` moves it over the target, so the only file another process can ever
+ * read is a whole registry — a registry cut in half seats the next match on
+ * nothing. It is written as 2-space JSON with a trailing newline, so the file
+ * stays a `git diff` a person can read.
  */
 const writeRegistry = (path: string, next: ProviderRegistry): void => {
   const tmp = `${path}.tmp-${randomUUID()}`;
   try {
-    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    const fd = openSync(tmp, "w");
+    try {
+      writeSync(fd, `${JSON.stringify(next, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, path);
   } catch (error) {
     try {
@@ -232,6 +271,10 @@ const writeRegistry = (path: string, next: ProviderRegistry): void => {
  * on changes that run's terms — and an entry the schema refuses, which includes
  * one carrying a key value. The entry is validated by the same schema that reads
  * the file back, so nothing a seat could misread gets in.
+ *
+ * One writer at a time is assumed: the read and the rename are one uninterrupted
+ * step inside this process, but a file someone else edits in between — a hand
+ * edit, a `git pull`, a second console — is overwritten without a word.
  */
 export const addProvider = (
   name: string,
@@ -257,9 +300,15 @@ export const addProvider = (
   return loadProviders(path);
 };
 
-/** The entry for one provider name, or `null` when the registry does not name it. */
-export const providerEntry = (name: string): ProviderEntry | null =>
-  providerRegistry()[name] ?? null;
+/**
+ * The entry for one provider name, or `null` when the registry does not name it.
+ * The name is asked of the registry's own keys, so a name that is only inherited
+ * — `valueOf`, `toString` — is no entry, and a seat on it is left to Pi.
+ */
+export const providerEntry = (name: string): ProviderEntry | null => {
+  const current = providerRegistry();
+  return Object.hasOwn(current, name) ? current[name] : null;
+};
 
 /**
  * The provider half of a `<provider>/<id>` model reference, or `null` for a
