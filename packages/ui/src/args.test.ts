@@ -5,6 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { PROVIDERS_FILE } from "@no-dice/runner/providers";
+
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
 
 /** The flags, or the one line the parser answered with. */
@@ -19,22 +21,41 @@ describe("parseUiFlags", () => {
       port: DEFAULT_PORT,
       seriesRoot: DEFAULT_SERIES_ROOT,
       matchesRoot: DEFAULT_MATCHES_ROOT,
+      providersFile: PROVIDERS_FILE,
     });
     expect(DEFAULT_PORT).toBe(8765);
     expect(DEFAULT_SERIES_ROOT).toBe("series");
     expect(DEFAULT_MATCHES_ROOT).toBe("matches");
+    // The registry defaults to the runner's own constant, so a console started
+    // with no flag writes the very file a terminal run seats its runs on.
+    expect(PROVIDERS_FILE.endsWith("providers.json")).toBe(true);
   });
 
   it("takes each flag, and leaves a path as it was given", () => {
     expect(
-      flagsOf(["--port", "8795", "--series-root", "/tmp/nd-ui/series", "--matches-root", "matches"]),
-    ).toEqual({ port: 8795, seriesRoot: "/tmp/nd-ui/series", matchesRoot: "matches" });
+      flagsOf([
+        "--port",
+        "8795",
+        "--series-root",
+        "/tmp/nd-ui/series",
+        "--matches-root",
+        "matches",
+        "--providers",
+        "/tmp/nd-ui/providers.json",
+      ]),
+    ).toEqual({
+      port: 8795,
+      seriesRoot: "/tmp/nd-ui/series",
+      matchesRoot: "matches",
+      providersFile: "/tmp/nd-ui/providers.json",
+    });
     // A relative root stays relative here; the server resolves it against its
     // own current directory, which is the only place that knows it.
     expect(flagsOf(["--series-root", "../elsewhere"])).toEqual({
       port: DEFAULT_PORT,
       seriesRoot: "../elsewhere",
       matchesRoot: DEFAULT_MATCHES_ROOT,
+      providersFile: PROVIDERS_FILE,
     });
   });
 
@@ -43,6 +64,7 @@ describe("parseUiFlags", () => {
       port: 0,
       seriesRoot: DEFAULT_SERIES_ROOT,
       matchesRoot: DEFAULT_MATCHES_ROOT,
+      providersFile: PROVIDERS_FILE,
     });
   });
 
@@ -63,6 +85,9 @@ describe("parseUiFlags", () => {
 
   it("names a flag given twice rather than taking the last one", () => {
     expect(flagsOf(["--port", "1", "--port", "2"])).toMatch(/--port given twice/);
+    expect(flagsOf(["--providers", "a.json", "--providers", "b.json"])).toMatch(
+      /--providers given twice/,
+    );
   });
 
   it("names a flag with no value, including one whose value looks like a flag", () => {
@@ -78,9 +103,13 @@ describe("parseUiFlags", () => {
 
   it("refuses a root named as nothing", () => {
     expect(flagsOf(["--matches-root", ""])).toMatch(/--matches-root needs a directory/);
+    expect(flagsOf(["--providers", ""])).toMatch(/--providers needs a file/);
   });
 
   it("gives the usage line a mistake at the terminal can be answered with", () => {
-    expect(USAGE).toBe("usage: no-dice-ui [--port <n>] [--series-root <dir>] [--matches-root <dir>]");
+    expect(USAGE).toBe(
+      "usage: no-dice-ui [--port <n>] [--series-root <dir>] [--matches-root <dir>] " +
+        "[--providers <file>]",
+    );
   });
 });

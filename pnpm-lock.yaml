@@ -137,6 +137,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@no-dice/harness':
+        specifier: workspace:*
+        version: link:../harness
       '@no-dice/log':
         specifier: workspace:*
         version: link:../log

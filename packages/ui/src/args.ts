@@ -1,5 +1,6 @@
 /**
- * The console's own command line: `--port`, `--series-root`, `--matches-root`.
+ * The console's own command line: `--port`, `--series-root`, `--matches-root`,
+ * `--providers`.
  *
  * This is a separate parser from `@no-dice/runner/args` on purpose. That one
  * parses the command lines that play a match, and it stays the one authority on
@@ -13,10 +14,14 @@
  * `--host` here would be an invitation to expose an unauthenticated run starter
  * on a network.
  *
- * Nothing here touches the filesystem: the two roots come back as they were
- * given, and the server resolves them against its own current directory, which
- * is the repo root for anyone who starts it the way the README says to.
+ * Nothing here touches the filesystem: the roots and the registry come back as
+ * they were given, and the server resolves them against its own current
+ * directory, which is the repo root for anyone who starts it the way the
+ * README says to. The one default that is not a relative path is the registry's,
+ * which is taken from the runner — the same constant the runner reads, so the
+ * file the page writes is the file a terminal run seats on by default.
  */
+import { PROVIDERS_FILE } from "@no-dice/runner/providers";
 
 /** The port the console listens on when the command line does not say. */
 export const DEFAULT_PORT = 8765;
@@ -28,7 +33,7 @@ export const DEFAULT_SERIES_ROOT = "series";
 export const DEFAULT_MATCHES_ROOT = "matches";
 
 /** The flags this command line takes, and no others. */
-const FLAGS = ["--port", "--series-root", "--matches-root"] as const;
+const FLAGS = ["--port", "--series-root", "--matches-root", "--providers"] as const;
 
 /** Where the console listens and what it reads, as the command line gave them. */
 export interface UiFlags {
@@ -38,13 +43,21 @@ export interface UiFlags {
   seriesRoot: string;
   /** The finished-match root, resolved the same way. */
   matchesRoot: string;
+  /**
+   * The provider registry the console lists, adds to and seats runs on, resolved
+   * the same way. It defaults to the runner's own, because a console writing a
+   * registry the runner never reads would be a console lying about what a run
+   * was seated on.
+   */
+  providersFile: string;
 }
 
 /** Parsing the console's command line: the flags, or one line naming what is wrong. */
 export type UiFlagsResult = { ok: true; flags: UiFlags } | { ok: false; error: string };
 
 /** The line a mistake at the terminal is answered with. */
-export const USAGE = "usage: no-dice-ui [--port <n>] [--series-root <dir>] [--matches-root <dir>]";
+export const USAGE =
+  "usage: no-dice-ui [--port <n>] [--series-root <dir>] [--matches-root <dir>] [--providers <file>]";
 
 /** A port the operating system will hear: `0` means any free one. */
 const portArg = (raw: string): number | string => {
@@ -58,6 +71,10 @@ const portArg = (raw: string): number | string => {
 /** A directory to read: named, and not named as nothing. */
 const dirArg = (flag: string, raw: string): string | null =>
   raw === "" ? `${flag} needs a directory` : null;
+
+/** A file to read and write: named, and not named as nothing. */
+const fileArg = (flag: string, raw: string): string | null =>
+  raw === "" ? `${flag} needs a file` : null;
 
 /**
  * Read the console's flags: one value each, none of them twice, and nothing
@@ -96,5 +113,9 @@ export function parseUiFlags(argv: readonly string[]): UiFlagsResult {
     if (problem !== null) return { ok: false, error: problem };
   }
 
-  return { ok: true, flags: { port, seriesRoot, matchesRoot } };
+  const providersFile = given.get("--providers") ?? PROVIDERS_FILE;
+  const registryProblem = fileArg("--providers", providersFile);
+  if (registryProblem !== null) return { ok: false, error: registryProblem };
+
+  return { ok: true, flags: { port, seriesRoot, matchesRoot, providersFile } };
 }

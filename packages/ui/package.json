@@ -14,6 +14,7 @@
     "build": "vite build web"
   },
   "dependencies": {
+    "@no-dice/harness": "workspace:*",
     "@no-dice/log": "workspace:*",
     "@no-dice/runner": "workspace:*",
     "@no-dice/stats": "workspace:*",

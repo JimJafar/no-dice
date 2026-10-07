@@ -14,8 +14,15 @@
  *
  * Two halves answer. `/api/state` says what a run may be seated on — the bots
  * and the providers the registry names, names and key-variable names only —
- * and the two roots the console reads. `/api/run` says what the run slot holds:
- * the run in flight, or the last one, with the lines it has printed. A run
+ * and the two roots the console reads. `/api/providers` says what the
+ * registry holds in full — endpoint, api, the *name* of the key variable,
+ * reasoning, the window, the token cap and the four rates — and a `POST` to it
+ * adds an entry through the runner's own schema and re-reads the registry,
+ * so the next run this process starts seats on it. `/api/providers/check` asks
+ * Pi what it would say about seating a model, which is the same question the
+ * CLI asks before a run and one that opens no connection.
+ * The run slot says what it holds: the run in flight, or the last one, with the
+ * lines it has printed. A run
  * is started by `POST /api/run/match` or `POST /api/run/series`, and it is
  * played in this process, so the request that started it is not what keeps it
  * alive; a series left half played by a server that was closed is resumed by
@@ -33,12 +40,15 @@
  * page saying to build it when nobody has.
  *
  * Nothing a request can do is allowed to end this process, because this process
- * is where a run in flight lives. A request line that cannot be read, a `Host`
- * that names somebody else's domain, a method with no route, a `web/dist` that
- * `vite build` is rewriting under us and a `providers.json` that does not parse
- * are each answered with one line the page can show — and a route that throws
- * anyway is caught at the bottom of `handle` rather than reaching Node, which
- * would take the process down over it.
+ * is where a run in flight lives. A request line that cannot be read, a
+ * `Host` that names somebody else's domain, a method with no route, a `web/dist`
+ * that `vite build` is rewriting under us and a `providers.json` that does not
+ * parse are each answered with one line the page can show — and a route that
+ * throws anyway is caught at the bottom of `handle` rather than reaching Node,
+ * which would take the process down over it. A `providers.json` that does not
+ * parse at *startup* is the one exception, and it stops the console from
+ * listening at all: a console that cannot read its own registry cannot say what
+ * a run would be seated on, let alone add to it.
  *
  * `startServer` is the whole server and returns the `http.Server` it has
  * listened, so a test can ask for port 0 and read the port back. This file is
@@ -57,13 +67,20 @@ import { createReadStream, realpathSync, statSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
-import { providerRegistry } from "@no-dice/runner/providers";
+import { PROVIDERS_FILE, providerRegistry, reloadProviders } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
 import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
 import type { RunKind, RunSlot } from "./runs.ts";
+import {
+  PROVIDERS_PATH,
+  PROVIDER_CHECK_PATH,
+  addProviderEntry,
+  checkCredential,
+  providerRows,
+} from "./providers.ts";
 import { contentTypeOf, resolveStatic } from "./static.ts";
 import { uiState } from "./state.ts";
 import type { UiRoots, UiState } from "./state.ts";
@@ -102,9 +119,15 @@ export interface UiConfig {
   viewerRoot: string;
   /** Where a run is played: what a relative `--out` or `--dir` is taken from. */
   cwd: string;
+  /**
+   * The provider registry this console lists, adds to and seats runs on. The
+   * file the `POST /api/providers` route writes, and the one `reloadProviders`
+   * reads at startup, so the two are never two different files.
+   */
+  providersFile: string;
 }
 
-/** What a console may be asked for. The command line's three flags, plus a test's three. */
+/** What a console may be asked for. The command line's four flags, plus a test's. */
 export interface UiOptions {
   /** The port to listen on; `0` asks for a free one, which is what a test uses. */
   port?: number;
@@ -119,8 +142,16 @@ export interface UiOptions {
   /** What a relative root is taken relative to — the repo root for a real run. */
   cwd?: string;
   /**
-   * Where the seat options come from. The process's own cached registry by
-   * default; a test points it at a file of its own, including a broken one.
+   * Which `providers.json` this console lists, adds to and seats runs on. The
+   * runner's own committed registry by default; a test points it at a file of its
+   * own, because writing the committed one from a test would be a test that
+   * edits the repo.
+   */
+  providersFile?: string;
+  /**
+   * Where the seat options come from. The process's own registry by default —
+   * the file `providersFile` names, read once at startup; see `startServer`; a
+   * test points it at a file of its own, including a broken one.
    */
   registry?: () => ProviderRegistry;
 }
@@ -166,6 +197,7 @@ const configOf = (options: UiOptions): UiConfig => {
     matchesRoot: resolve(cwd, options.matchesRoot ?? DEFAULT_MATCHES_ROOT),
     webRoot: resolve(cwd, options.webRoot ?? WEB_ROOT),
     viewerRoot: resolve(cwd, options.viewerRoot ?? VIEWER_ROOT),
+    providersFile: resolve(cwd, options.providersFile ?? PROVIDERS_FILE),
     cwd,
   };
 };
@@ -188,15 +220,16 @@ const sendJson = (
   response.end(text);
 };
 
-/** The largest run request this console will read. A form posts a few hundred bytes. */
+/** The largest request body this console will read. A form posts a few hundred bytes. */
 const MAX_BODY = 16 * 1024;
 
 /**
- * The JSON a run request carried, or one line saying why it did not. The body is
- * read here rather than by the route, because a run must not be started from a
- * payload that is still arriving — and a body of any size at all is a way to make
- * a console hold a request it will never answer. A body that cannot be read is a
- * bad request, not a console that failed, so the route answers it with the line.
+ * The JSON a write POST carried, or one line saying why it did not. The body is
+ * read here rather than by the route, because a run must not be started, and a
+ * registry must not be written, from a payload that is still arriving — and a
+ * body of any size at all is a way to make a console hold a request it will never
+ * answer. A body that cannot be read is a bad request, not a console that failed,
+ * so the route answers it with the line.
  */
 const readBody = async (request: IncomingMessage): Promise<unknown> => {
   const text = await new Promise<string>((answered, refused) => {
@@ -207,7 +240,7 @@ const readBody = async (request: IncomingMessage): Promise<unknown> => {
       // Refused rather than truncated, and the rest of the body is dropped on the
       // floor: the run is not started, and the console does not hold a request it
       // will never answer.
-      if (size > MAX_BODY) refused(new Error(`a run request has to fit in ${String(MAX_BODY)} bytes`));
+      if (size > MAX_BODY) refused(new Error(`a request body has to fit in ${String(MAX_BODY)} bytes`));
       else chunks.push(chunk);
     });
     request.on("end", () => void answered(Buffer.concat(chunks).toString("utf8")));
@@ -216,7 +249,7 @@ const readBody = async (request: IncomingMessage): Promise<unknown> => {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new Error("the run request body is not JSON");
+    throw new Error("the request body is not JSON");
   }
 };
 
@@ -352,6 +385,9 @@ const pathOf = (url: string | undefined): string | null => {
 /** Where the console's state comes from — the registry is a file this process does not own. */
 type StateOf = (roots: UiRoots) => UiState;
 
+/** Where the provider entries come from: the same injected source `/api/state` reads. */
+type RegistryOf = () => ProviderRegistry;
+
 /** The routes that start a run, and the command each one starts. */
 const RUN_POSTS: ReadonlyMap<string, RunKind> = new Map([
   ["/api/run/match", "match"],
@@ -364,9 +400,40 @@ const sendMethod = (response: ServerResponse, path: string, method: string, allo
   sendJson(response, 405, { error: `${method} is not a route of ${path}` }, { allow });
 };
 
+/** A POST that was refused before its body mattered; the answer has been sent. */
+type Posted = { ok: true; body: unknown } | { ok: false };
+
 /**
- * One request, routed. The reads answer out of the state, the run slot and the
- * two roots on disk; the run POSTs read their body and ask the slot for a run.
+ * The JSON a write POST carried, or `ok: false` when the request was refused on
+ * the way in. Every route that changes anything goes through here: the same
+ * `Origin` guard, so a page on another domain can neither start a run nor write
+ * the registry every run this console seats on, and the same size cap, so a body
+ * of any size at all cannot make a console hold a request it will never answer.
+ * `originLine` is the refusal in that route's own words, because the page shows
+ * it as it stands.
+ */
+const postedJson = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  originLine: string,
+): Promise<Posted> => {
+  if (!originIsOurs(request)) {
+    sendJson(response, 403, { error: originLine });
+    return { ok: false };
+  }
+  try {
+    return { ok: true, body: await readBody(request) };
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    return { ok: false };
+  }
+};
+
+/**
+ * One request, routed. The reads answer out of the state, the provider registry,
+ * the run slot and the two roots on disk; the write POSTs read their body and
+ * ask the run slot for a run, the registry for an entry, or Pi about a
+ * credential.
  * The route is `async` only because a body arrives over more than one event — a
  * started run is not awaited here, and a request that is answered while its run
  * has nineteen minutes to go is the whole design of this file.
@@ -374,6 +441,7 @@ const sendMethod = (response: ServerResponse, path: string, method: string, allo
 const route = async (
   config: UiConfig,
   stateOf: StateOf,
+  registryOf: RegistryOf,
   runs: RunSlot,
   path: string,
   method: string,
@@ -395,22 +463,14 @@ const route = async (
       sendMethod(response, path, method, "POST");
       return;
     }
-    if (!originIsOurs(request)) {
-      sendJson(response, 403, {
-        error: `"${String(request.headers.origin)}" is not a page this console starts runs for`,
-      });
-      return;
-    }
+    const posted = await postedJson(
+      request,
+      response,
+      `"${String(request.headers.origin)}" is not a page this console starts runs for`,
+    );
+    if (!posted.ok) return;
 
-    let body: unknown;
-    try {
-      body = await readBody(request);
-    } catch (error) {
-      sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
-      return;
-    }
-
-    const started = runs.start(kind, body);
+    const started = runs.start(kind, posted.body);
     if (!started.ok) {
       // `parseArgs`'s line for a run the CLI would refuse, and the slot's own
       // line for a run already in flight — both one line the page shows as it
@@ -422,6 +482,54 @@ const route = async (
     // Answered before the run has finished, and answered as the run slot
     // already sees it, so the page can start drawing from the answer.
     sendJson(response, 202, started.snapshot);
+    return;
+  }
+
+  // The provider routes. The read answers from the same injected source
+  // `/api/state` does, so a `providers.json` that does not parse is the same one
+  // line there, and a test that points the console at a registry of its own
+  // points both routes at it. The two writes go through the same guard and the
+  // same body cap the run POSTs do: what they touch is the registry every run
+  // this console seats on, and the check runs a subprocess.
+  if (path === PROVIDERS_PATH || path === PROVIDER_CHECK_PATH) {
+    if (path === PROVIDERS_PATH && (method === "GET" || method === "HEAD")) {
+      sendJson(response, 200, providerRows(registryOf()));
+      return;
+    }
+    if (method !== "POST") {
+      sendMethod(response, path, method, path === PROVIDERS_PATH ? "GET, HEAD, POST" : "POST");
+      return;
+    }
+    const posted = await postedJson(
+      request,
+      response,
+      `"${String(request.headers.origin)}" is not a page this console writes its provider registry from`,
+    );
+    if (!posted.ok) return;
+
+    if (path === PROVIDER_CHECK_PATH) {
+      const checked = await checkCredential(posted.body);
+      if (!checked.ok) {
+        sendJson(response, 400, { error: checked.error });
+        return;
+      }
+      // 200 whether or not the credential resolves: "not ready" is the answer to
+      // the question, not a console that failed to ask it, and what the page
+      // shows is Pi's own reason.
+      sendJson(response, 200, checked.auth);
+      return;
+    }
+
+    const added = addProviderEntry(posted.body, config.providersFile);
+    if (!added.ok) {
+      // The runner's own line, from its own schema: the field it refused is in
+      // the line, and the file on disk is byte-identical to what it was.
+      sendJson(response, 400, { error: added.error });
+      return;
+    }
+    // The registry as it now stands on disk, so the page redraws the list from
+    // what the file says rather than from what it posted.
+    sendJson(response, 200, providerRows(added.registry));
     return;
   }
 
@@ -497,6 +605,7 @@ const route = async (
 const handle = (
   config: UiConfig,
   stateOf: StateOf,
+  registryOf: RegistryOf,
   runs: RunSlot,
   request: IncomingMessage,
   response: ServerResponse,
@@ -526,7 +635,9 @@ const handle = (
   };
 
   try {
-    route(config, stateOf, runs, path, request.method ?? "GET", request, response).catch(failed);
+    route(config, stateOf, registryOf, runs, path, request.method ?? "GET", request, response).catch(
+      failed,
+    );
   } catch (error) {
     failed(error);
   }
@@ -539,17 +650,26 @@ const handle = (
  */
 export async function startServer(options: UiOptions = {}): Promise<Server> {
   const config = configOf(options);
+  // The registry this process seats runs on is made to be the file this console
+  // writes, before the first request can arrive: `providerRegistry()` caches the
+  // file once per process, so without this a `--providers` the operator named,
+  // the file `POST /api/providers` writes and the registry a run is seated on
+  // would be three different things. A file that does not parse stops the console
+  // here rather than serving a page that lists nothing.
+  reloadProviders(config.providersFile);
   // A source rather than a registry, so a broken `providers.json` throws inside a
   // request — where `handle` can answer it — rather than while this function is
-  // still being called. The default source is the process's own, which reads the
-  // file once and keeps it.
+  // still being called. The default source is the process's own, which is the
+  // reload above.
   const registryOf = options.registry ?? providerRegistry;
   const stateOf = (roots: UiRoots): UiState => uiState(roots, registryOf());
   // One slot per console, made here rather than at module scope: a test that
   // starts two consoles in one process must not have them refuse each
   // other's runs, and a console that is closed has no run to hand on.
   const runs = createRunSlot({ roots: config, cwd: config.cwd });
-  const server = createServer((request, response) => handle(config, stateOf, runs, request, response));
+  const server = createServer((request, response) =>
+    handle(config, stateOf, registryOf, runs, request, response),
+  );
 
   await new Promise<void>((listening, failed) => {
     server.once("error", failed);
@@ -606,6 +726,10 @@ if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
       console.log(`no-dice-ui on http://${HOST}:${String(portOf(server))}`);
       console.log(`series root: ${config.seriesRoot}`);
       console.log(`matches root: ${config.matchesRoot}`);
+      // Said because it is the file a `POST /api/providers` writes, and the one
+      // every run this process starts seats on — worth knowing when the
+      // operator is about to add a provider from the page.
+      console.log(`providers: ${config.providersFile}`);
       if (resolveStatic(config.webRoot, "/index.html") === null) {
         console.log(`the page is not built: "pnpm --filter @no-dice/ui build" builds it`);
       }
