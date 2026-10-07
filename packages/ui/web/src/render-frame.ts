@@ -6,13 +6,13 @@
  * what a leaderboard row holds — those are the progress, start, results and
  * leaderboard tasks' own modules, which draw into these same sections. What is
  * drawn now is only what the console has said about itself: the seats a run can be
- * started with, the providers the registry names, and the two roots the
- * console reads.
+ * started with, and the providers the registry names.
  *
- * The progress section is the one section this file leaves standing empty: a run's
- * own lines and counters come from `/api/run`, which the page reads on its own
- * once a second, and a line invented here from `/api/state` would be a second,
- * staler account of the same run.
+ * The progress section and the results section are the two this file leaves
+ * standing empty. A run's own lines and counters come from `/api/run`, which the
+ * page reads once a second, and the finished series and matches come from
+ * `/api/series` and `/api/matches`; a line invented here from `/api/state`
+ * would be a second, staler account of the same thing.
  *
  * A section is kept as it is in `index.html` apart from what stands under its
  * heading, which is replaced whole on every render: a state that no longer holds
@@ -88,26 +88,6 @@ const renderSeats = (el: HTMLElement, state: UiState): void => {
   );
 };
 
-/** A path, as a path. */
-const code = (text: string): HTMLElement => {
-  const el = document.createElement("code");
-  el.textContent = text;
-  return el;
-};
-
-/** Where the console looks for finished work. The results task lists what is there. */
-const renderRoots = (el: HTMLElement, state: UiState): void => {
-  const line = paragraph("roots", "");
-  line.append(
-    document.createTextNode("Series under "),
-    code(state.seriesRoot),
-    document.createTextNode(", matches under "),
-    code(state.matchesRoot),
-    document.createTextNode("."),
-  );
-  el.append(line);
-};
-
 /**
  * The providers, each with the name of the variable its key is read from — and
  * nothing else. An endpoint that checks no key says so, which is a fact about
@@ -132,13 +112,15 @@ const renderProviders = (el: HTMLElement, providers: readonly ProviderOption[]):
 
 /**
  * The frame, as the console's state describes it. The progress section is left
- * empty for `progress.ts` to fill from `/api/run`, and the leaderboard section is
- * left standing empty as well: it has nothing to say until a series has
- * been counted, and an invented row would be a row the results page contradicts.
+ * empty for `progress.ts` to fill from `/api/run`, and so is the results section,
+ * which `results.ts` fills from `/api/series` and `/api/matches` — the roots it
+ * names there are the roots those listings were taken from, so there is no second
+ * copy of them to keep in step. The leaderboard section is left standing empty as
+ * well: it has nothing to say until a series has been counted, and an invented row
+ * would be a row the results page contradicts.
  */
 export const renderFrame = (sections: FrameSections, state: UiState): void => {
   for (const el of Object.values(sections)) clear(el);
   renderSeats(sections.start, state);
-  renderRoots(sections.results, state);
   renderProviders(sections.providers, state.providers);
 };

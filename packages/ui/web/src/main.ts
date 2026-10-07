@@ -1,6 +1,6 @@
 /**
- * The console's entry point: the frame, the state that fills it, and the run it
- * watches while it plays.
+ * The console's entry point: the frame, the state that fills it, the run it
+ * watches while it plays, and the finished work it lists from disk.
  *
  * The page reads `/api/state` once when it opens and draws what it says. The run
  * in flight is a separate read on a separate clock: `/api/run` once a second while
@@ -9,14 +9,22 @@
  * granularity is a pair of matches — and it means a page that is closed, reloaded
  * or cut off changes nothing about the run, which lives in the server's process.
  *
- * The two reads draw into the same sections, so the order matters: `renderFrame`
+ * The listings are a third read, and the least often of the three: `/api/series`
+ * and `/api/matches` when the page opens, when a run it was watching ends, and when
+ * a resume is asked for. They are not polled, because a series takes hours
+ * and a page that re-read every match log once a second would be doing the stats
+ * package's work for no one.
+ *
+ * The three reads draw into the same sections, so the order matters: `renderFrame`
  * replaces everything under every heading, and the run it cannot see is put back
  * from the last snapshot the poller took.
  */
-import { getJson } from "./api.ts";
+import { getJson, postJson } from "./api.ts";
+import type { FetchJson } from "./api.ts";
 import { createRunPoller, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
+import { fetchResults, renderResults } from "./results.ts";
 import { parseState } from "./state.ts";
 
 /** The one line the frame has, which `index.html` owns. */
@@ -31,15 +39,64 @@ const say = (message: string, bad = false): void => {
   status.classList.toggle("bad", bad);
 };
 
+/** The console's own `fetch`, named once so every read goes through the same door. */
+const fetchJson: FetchJson = (path, init) => fetch(path, init);
+
+/**
+ * Read what the console has on disk and redraw the results section from it.
+ *
+ * The figures are the console's — `seriesReport`, the same report `no-dice stats`
+ * prints — and the page adds nothing to them but wording. A listing that could not
+ * be read leaves the section standing and says why on the status line: half a
+ * results section is worse than a whole one with a bad line under it.
+ */
+const refreshResults = async (): Promise<void> => {
+  try {
+    const results = await fetchResults(fetchJson);
+    renderResults(sections.results, results, (dir) => void resumeSeries(dir));
+    say(`${String(results.series.length)} series and ${String(results.matches.length)} matches listed.`);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), true);
+  }
+};
+
+/**
+ * Ask the console to finish a series. The directory is all that is sent: the
+ * pairing and the pair limit come from the series' own record, which is the only
+ * thing that knows what the interrupted run was running.
+ */
+const resumeSeries = async (dir: string): Promise<void> => {
+  try {
+    await postJson("/api/run/resume", { dir }, fetchJson);
+    say(`Resuming ${dir}.`);
+    void poller.run();
+    await refreshResults();
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), true);
+  }
+};
+
 /**
  * The run in flight, read once a second while it is running. The last
  * snapshot is kept so a redraw of the frame does not blank the progress section,
  * and a run that has finished keeps its lines on the page rather than losing them
  * to the next read.
  */
+let watching = false;
 const poller = createRunPoller({
-  fetchJson: (path, init) => fetch(path, init),
-  render: (run: RunSnapshot): void => void renderProgress(sections.progress, run),
+  fetchJson,
+  render: (run: RunSnapshot): void => {
+    void renderProgress(sections.progress, run);
+    // A run that has just stopped has left logs and a record on disk. The
+    // listings are read again at that moment and at no other, so the finished
+    // work appears without a reload and without polling the stats report.
+    if (run.state === "running") {
+      watching = true;
+    } else if (watching) {
+      watching = false;
+      void refreshResults();
+    }
+  },
   say,
 });
 
@@ -51,16 +108,16 @@ const poller = createRunPoller({
  */
 const refresh = async (): Promise<void> => {
   try {
-    const state = parseState(await getJson<unknown>("/api/state"));
+    const state = parseState(await getJson<unknown>("/api/state", fetchJson));
     renderFrame(sections, state);
     // The frame took back everything under every heading, so the run the
     // poller is watching goes straight back under the one it belongs to.
     renderProgress(sections.progress, poller.last());
-    say(`Series under ${state.seriesRoot}, matches under ${state.matchesRoot}.`);
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
   }
 };
 
 void refresh();
+void refreshResults();
 void poller.run();

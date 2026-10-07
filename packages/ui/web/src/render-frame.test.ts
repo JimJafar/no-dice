@@ -77,12 +77,14 @@ describe("renderFrame", () => {
     expect(root.querySelector("#progress")?.children).toHaveLength(1);
   });
 
-  it("states the two roots the console reads", () => {
+  it("leaves the results section to the module that reads the listings, rather than naming roots it cannot list", () => {
     const { sections, root } = frame();
     renderFrame(sections, STATE);
 
-    expect(textOf(root, "results")).toContain("/repo/series");
-    expect(textOf(root, "results")).toContain("/repo/matches");
+    // `/api/state` knows the two roots but not what stands in them. The roots
+    // belong on the page beside the listing they were taken from, which is
+    // `results.ts`'s, from `/api/series` and `/api/matches`.
+    expect(root.querySelector("#results")?.children).toHaveLength(1);
   });
 
   it("names each provider with the variable its key is read from, and says when it checks none", () => {

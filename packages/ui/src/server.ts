@@ -18,8 +18,19 @@
  * the run in flight, or the last one, with the lines it has printed. A run
  * is started by `POST /api/run/match` or `POST /api/run/series`, and it is
  * played in this process, so the request that started it is not what keeps it
- * alive. Everything else is the built browser app in `web/dist`, served
- * path-safely through `static.ts`, or a page saying to build it when nobody has.
+ * alive; a series left half played by a server that was closed is resumed by
+ * `POST /api/run/resume`, which names the series directory and takes everything
+ * else about that run from the series' own record.
+ *
+ * What is already on disk is reachable through the same server. `/api/series`
+ * and `/api/matches` list it (`./results.ts`), `/logs/<path>` serves the JSON a
+ * listing names, and `/viewer/` serves the built replay viewer, which is what
+ * opens one of those logs at
+ * `/viewer/?log=/logs/<series>/matches/<file>.json`. The viewer is a separate
+ * app the console does not own, built by its own `vite build`, so the console
+ * serves it and says what to build when nobody has. Everything else is the
+ * built browser app in `web/dist`, served path-safely through `static.ts`, or a
+ * page saying to build it when nobody has.
  *
  * Nothing a request can do is allowed to end this process, because this process
  * is where a run in flight lives. A request line that cannot be read, a `Host`
@@ -50,6 +61,7 @@ import { providerRegistry } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
+import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
 import type { RunKind, RunSlot } from "./runs.ts";
 import { contentTypeOf, resolveStatic } from "./static.ts";
@@ -70,12 +82,24 @@ const HOSTS = ["127.0.0.1", "localhost"] as const;
 /** Where the built browser app goes, beside this package: `packages/ui/web/dist`. */
 export const WEB_ROOT: string = fileURLToPath(new URL("../web/dist", import.meta.url));
 
+/**
+ * Where the built replay viewer goes: `games/salient/viewer/dist`. The console
+ * serves it at `/viewer/` so a match log it can already serve is openable in the
+ * viewer that is already written — one server, one origin, and no second port for
+ * the operator to start and then forget about.
+ */
+export const VIEWER_ROOT: string = fileURLToPath(
+  new URL("../../../games/salient/viewer/dist", import.meta.url),
+);
+
 /** What a console was told to serve, with every path absolute. */
 export interface UiConfig {
   port: number;
   seriesRoot: string;
   matchesRoot: string;
   webRoot: string;
+  /** Where the built replay viewer is, served under `/viewer/`. */
+  viewerRoot: string;
   /** Where a run is played: what a relative `--out` or `--dir` is taken from. */
   cwd: string;
 }
@@ -90,6 +114,8 @@ export interface UiOptions {
   matchesRoot?: string;
   /** Where the built app is. A test points it at a fixture, or at nothing. */
   webRoot?: string;
+  /** Where the built viewer is, the same way. */
+  viewerRoot?: string;
   /** What a relative root is taken relative to — the repo root for a real run. */
   cwd?: string;
   /**
@@ -112,6 +138,25 @@ const NOT_BUILT_PAGE = `<!doctype html>
 </html>
 `;
 
+/**
+ * The same page for the viewer, which is a different app with a different build.
+ * It names the Salient replay viewer in its own heading because the thing a
+ * reader wants to know at that moment is which of the two apps they have not
+ * built.
+ */
+const NOT_BUILT_VIEWER = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Salient replay viewer</title></head>
+<body>
+<h1>Salient replay viewer</h1>
+<p>The viewer has not been built, so there is nothing here to serve yet — it is the salient replay
+viewer, a Vite app of its own, and the console mounts its <code>dist</code> here.</p>
+<p>Build it with <code>pnpm --filter @no-dice/salient-viewer build</code> and reload this page.</p>
+<p>The match logs it would open are listed at <a href="/api/matches">/api/matches</a>.</p>
+</body>
+</html>
+`;
+
 /** The configuration a console runs on, with every path resolved. */
 const configOf = (options: UiOptions): UiConfig => {
   const cwd = options.cwd ?? process.cwd();
@@ -120,6 +165,7 @@ const configOf = (options: UiOptions): UiConfig => {
     seriesRoot: resolve(cwd, options.seriesRoot ?? DEFAULT_SERIES_ROOT),
     matchesRoot: resolve(cwd, options.matchesRoot ?? DEFAULT_MATCHES_ROOT),
     webRoot: resolve(cwd, options.webRoot ?? WEB_ROOT),
+    viewerRoot: resolve(cwd, options.viewerRoot ?? VIEWER_ROOT),
     cwd,
   };
 };
@@ -234,21 +280,38 @@ const sendFile = (path: string, head: boolean, response: ServerResponse): boolea
  * of `web/dist` is the 404 too, before anything is read.
  */
 const serveApp = (config: UiConfig, path: string, head: boolean, response: ServerResponse): void => {
+  serveBuilt(config.webRoot, path, NOT_BUILT_PAGE, head, response);
+};
+
+/**
+ * Serve one built app out of `root`. `path` is the request path *within* that
+ * app — `/` for the app's own index — and `notBuilt` is the page for a root
+ * nobody has built. Every built app this console serves goes through the same
+ * `resolveStatic`, so the refuses-to-escape rule is one rule and not one per
+ * mount point.
+ */
+const serveBuilt = (
+  root: string,
+  path: string,
+  notBuilt: string,
+  head: boolean,
+  response: ServerResponse,
+): void => {
   const notThere = (): void => {
     sendJson(response, 404, { error: `nothing to serve at ${path}` });
   };
 
   if (path === "/") {
-    const index = resolveStatic(config.webRoot, "/index.html");
+    const index = resolveStatic(root, "/index.html");
     if (index === null) {
-      sendHtml(response, 200, NOT_BUILT_PAGE);
+      sendHtml(response, 200, notBuilt);
       return;
     }
     if (!sendFile(index, head, response)) notThere();
     return;
   }
 
-  const file = resolveStatic(config.webRoot, path);
+  const file = resolveStatic(root, path);
   if (file === null || !sendFile(file, head, response)) {
     notThere();
   }
@@ -289,10 +352,11 @@ const pathOf = (url: string | undefined): string | null => {
 /** Where the console's state comes from — the registry is a file this process does not own. */
 type StateOf = (roots: UiRoots) => UiState;
 
-/** The two routes that start a run, and the command each one starts. */
+/** The routes that start a run, and the command each one starts. */
 const RUN_POSTS: ReadonlyMap<string, RunKind> = new Map([
   ["/api/run/match", "match"],
   ["/api/run/series", "series"],
+  ["/api/run/resume", "resume"],
 ]);
 
 /** A method a route does not take, said with the ones it does. */
@@ -301,11 +365,11 @@ const sendMethod = (response: ServerResponse, path: string, method: string, allo
 };
 
 /**
- * One request, routed. The reads answer out of the state and the run slot; the
- * two POSTs read their body and ask the slot for a run. The route is `async`
- * only because a body arrives over more than one event — a started run is not
- * awaited here, and a request that is answered while its run has
- * nineteen minutes to go is the whole design of this file.
+ * One request, routed. The reads answer out of the state, the run slot and the
+ * two roots on disk; the run POSTs read their body and ask the slot for a run.
+ * The route is `async` only because a body arrives over more than one event — a
+ * started run is not awaited here, and a request that is answered while its run
+ * has nineteen minutes to go is the whole design of this file.
  */
 const route = async (
   config: UiConfig,
@@ -370,8 +434,51 @@ const route = async (
     sendJson(response, 200, stateOf(config));
     return;
   }
+
+  // What is on disk. Both listings read their roots on every request, and
+  // `./results.ts` says what that costs and why it is still the right trade.
+  if (path === "/api/series") {
+    sendJson(response, 200, await seriesRows(config, runs.inFlightSeries()));
+    return;
+  }
+
+  if (path === "/api/matches") {
+    sendJson(response, 200, await matchRows(config));
+    return;
+  }
+
   if (path.startsWith("/api/")) {
     sendJson(response, 404, { error: `no route at ${path}` });
+    return;
+  }
+
+  // A match log the console listed, served as the JSON it is. The path is
+  // looked for under the series root and then under the matches root, and only
+  // there: `resolveStatic` refuses a climb out of both, percent-decoded or not,
+  // so `/logs/../../etc/passwd` and `/logs/%2e%2e/package.json` are answered the
+  // way any other path outside a root is.
+  if (path.startsWith(`${LOG_PREFIX}/`)) {
+    const file = logPathOf(config, path.slice(LOG_PREFIX.length + 1));
+    if (file === null || !sendFile(file, method === "HEAD", response)) {
+      sendJson(response, 404, { error: `no match log at ${path}` });
+      return;
+    }
+    return;
+  }
+
+  // The built replay viewer. `/viewer` without the trailing slash is redirected
+  // rather than served: the built `index.html` resolves its assets relative to
+  // the page (`base: "./"` in the viewer's `vite.config.ts`), so a page served
+  // at `/viewer` would ask for them at `/assets/...` and be answered from the
+  // console's own app root, where there is no such file. With the slash,
+  // `./assets/...` is `/viewer/assets/...`, which is where the built files are.
+  if (path === VIEWER_PREFIX) {
+    response.writeHead(302, { location: `${VIEWER_PREFIX}/`, "content-length": "0" });
+    response.end();
+    return;
+  }
+  if (path.startsWith(`${VIEWER_PREFIX}/`)) {
+    serveBuilt(config.viewerRoot, path.slice(VIEWER_PREFIX.length), NOT_BUILT_VIEWER, method === "HEAD", response);
     return;
   }
 
@@ -501,6 +608,9 @@ if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
       console.log(`matches root: ${config.matchesRoot}`);
       if (resolveStatic(config.webRoot, "/index.html") === null) {
         console.log(`the page is not built: "pnpm --filter @no-dice/ui build" builds it`);
+      }
+      if (resolveStatic(config.viewerRoot, "/index.html") === null) {
+        console.log(`the viewer is not built: "pnpm --filter @no-dice/salient-viewer build" builds it`);
       }
     } catch (error) {
       // A port already taken is the usual one, and it is said in one line rather

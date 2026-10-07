@@ -31,7 +31,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { parseArgs } from "@no-dice/runner/args";
 
 import { runArgvOf } from "./runs.ts";
-import type { RunKind, RunSnapshot } from "./runs.ts";
+import type { PlayableKind, RunSnapshot } from "./runs.ts";
 import { HOST, startServer } from "./server.ts";
 import type { UiOptions } from "./server.ts";
 
@@ -282,7 +282,7 @@ describe("one run at a time", () => {
 
 describe("a run the command line would refuse", () => {
   /** What is wrong, which route it is posted to, a fragment of the CLI's line, the payload. */
-  const refused: Array<[string, RunKind, string, Record<string, unknown>]> = [
+  const refused: Array<[string, PlayableKind, string, Record<string, unknown>]> = [
     [
       "a pair count that is not a whole number",
       "series",

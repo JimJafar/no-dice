@@ -49,6 +49,18 @@
  * page — or the client that posted — changes nothing; closing the *server* ends
  * the process, and the run with it. A series left half played is left on disk
  * half played, which is what the resume half of this milestone starts from.
+ *
+ * **A resume names a directory, not a run.** `POST /api/run/resume` carries the
+ * series directory and nothing else about the pairing: the seats and the pair
+ * limit come back out of that directory's own `series.json`, and the run is
+ * started with `--dir` pointed at the same place it was pointed at before. That
+ * is the whole of resume — `planSeries` reads the recorded seed list instead
+ * of drawing a new one, and skips every match whose log is already on disk — so
+ * what the slot has to get right is that it does not *replace* the record's
+ * pairing with something the page happens to have in a form field. The ceilings
+ * are the one thing a resume takes from the operator rather than from the record:
+ * the record's `stop` fields say what the last run was bounded by, the page shows
+ * them, and a resumed run that gives no ceiling has no ceiling.
  */
 import { basename, join, resolve } from "node:path";
 
@@ -56,12 +68,16 @@ import { defaultOutName, parseArgs, seatSlug } from "@no-dice/runner/args";
 import type { MatchCommand, SeatArg, SeriesCommand } from "@no-dice/runner/args";
 import { runCli } from "@no-dice/runner/cli";
 
+import { resumeRecordOf } from "./results.ts";
 import { readRunCounters } from "./progress.ts";
 import type { RunCounters } from "./progress.ts";
 import type { UiRoots } from "./state.ts";
 
-/** Which command a start asks for. The two the console can play. */
-export type RunKind = "match" | "series";
+/** Which command a start asks for: the two the console can play, and a resume. */
+export type RunKind = "match" | "series" | "resume";
+
+/** The runs a slot plays. A resume is played as a series, against its own directory. */
+export type PlayableKind = "match" | "series";
 
 /**
  * Where the run in the snapshot is. `idle` means this console has never started
@@ -110,6 +126,13 @@ export interface RunSlot {
   start: (kind: RunKind, payload: unknown) => StartResult;
   /** The run in flight, or the last one, or nothing. */
   snapshot: () => RunSnapshot;
+  /**
+   * The series directory a run is in right now, or `null`. Not the same question
+   * as `snapshot().dir`, which names the last run's directory long after that run
+   * has ended: a series is offered as resumable precisely once its run has
+   * stopped, and a listing that read the snapshot would keep refusing it.
+   */
+  inFlightSeries: () => string | null;
 }
 
 /** What a slot needs: the two roots a run writes under, and where it runs. */
@@ -135,7 +158,7 @@ type Flag = readonly [flag: string, value: string];
  * is what makes a payload that gives both come back as the CLI's own "`--name`
  * and `--dir` name the same series".
  */
-const FLAGS_OF: Record<RunKind, readonly Flag[]> = {
+const FLAGS_OF: Record<PlayableKind, readonly Flag[]> = {
   match: [
     ["game", "--game"],
     ["a", "--a"],
@@ -158,10 +181,17 @@ const FLAGS_OF: Record<RunKind, readonly Flag[]> = {
 };
 
 /** The flags a run's own path replaces: `--name`/`--dir` for a series, `--out` for a match. */
-const PATH_FLAGS: Record<RunKind, readonly string[]> = {
+const PATH_FLAGS: Record<PlayableKind, readonly string[]> = {
   match: ["--out"],
   series: ["--name", "--dir"],
 };
+
+/**
+ * The fields a resume body may carry. Everything about the run itself — the
+ * pairing, the pair limit, the seed list — is the record's to say; these are
+ * the ceilings the operator restates after reading what the last run had.
+ */
+const CEILING_FIELDS = ["maxCost", "maxTokens", "concurrency"] as const;
 
 /** The snapshot of a console that has never started a run. */
 const IDLE: RunSnapshot = {
@@ -186,13 +216,13 @@ const fieldOf = (body: Readonly<Record<string, unknown>>, field: string): string
 };
 
 /** The command line the payload asks for, in the order `parseArgs` reads it. */
-const argvOf = (kind: RunKind, flags: readonly Flag[]): string[] => [
+const argvOf = (kind: PlayableKind, flags: readonly Flag[]): string[] => [
   kind,
   ...flags.flatMap(([flag, value]) => [flag, value]),
 ];
 
 /** The flags a payload carries: one per field it gave, none for a field it left out. */
-const flagsOf = (kind: RunKind, body: Readonly<Record<string, unknown>>): Flag[] =>
+const flagsOf = (kind: PlayableKind, body: Readonly<Record<string, unknown>>): Flag[] =>
   FLAGS_OF[kind].flatMap(([field, flag]) => {
     const value = fieldOf(body, field);
     return value === null ? [] : [[flag, value] as Flag];
@@ -204,7 +234,7 @@ const flagsOf = (kind: RunKind, body: Readonly<Record<string, unknown>>): Flag[]
  * for a run the CLI would reject": hand this to `parseArgs` and what comes
  * back is the terminal's own line.
  */
-export const runArgvOf = (kind: RunKind, payload: Readonly<Record<string, unknown>>): string[] =>
+export const runArgvOf = (kind: PlayableKind, payload: Readonly<Record<string, unknown>>): string[] =>
   argvOf(kind, flagsOf(kind, payload));
 
 /** A seat as the operator named it, which is what a refusal has to name back. */
@@ -353,11 +383,44 @@ export function createRunSlot(options: RunSlotOptions): RunSlot {
     };
   };
 
-  const start = (kind: RunKind, payload: unknown): StartResult => {
-    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-      return { ok: false, problem: "payload", error: "a run needs a JSON object of fields to start from" };
+  /**
+   * The fields a resume is started with: the series directory the body named,
+   * that directory's own pairing and pair limit, and the ceilings the operator
+   * chose to restate. The game is the one this console runs — `series.json`
+   * does not record it, and `GAMES` has one entry.
+   */
+  const resumeFieldsOf = (
+    body: Readonly<Record<string, unknown>>,
+  ): { ok: true; fields: Record<string, unknown> } | { ok: false; error: string } => {
+    const given = fieldOf(body, "dir");
+    if (given === null) {
+      return { ok: false, error: "resuming a series needs the series directory in the body" };
     }
-    const body = payload as Readonly<Record<string, unknown>>;
+    const dir = resolve(cwd, given);
+
+    let record;
+    try {
+      record = resumeRecordOf(dir);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+
+    const ceilings: Record<string, unknown> = {};
+    for (const field of CEILING_FIELDS) ceilings[field] = body[field] ?? null;
+    return {
+      ok: true,
+      fields: {
+        game: "salient",
+        a: record.a,
+        b: record.b,
+        maxPairs: record.maxPairs,
+        dir,
+        ...ceilings,
+      },
+    };
+  };
+
+  const startRun = (kind: PlayableKind, body: Readonly<Record<string, unknown>>): StartResult => {
     const flags = flagsOf(kind, body);
 
     // The CLI's own answer, asked before the slot is: the wording is `parseArgs`'s
@@ -382,5 +445,29 @@ export function createRunSlot(options: RunSlotOptions): RunSlot {
     return { ok: true, snapshot: snapshotOf(run) };
   };
 
-  return { start, snapshot: (): RunSnapshot => snapshotOf(current) };
+  /**
+   * Start a run, or a resumed one. A resume is a series run whose fields the
+   * record writes rather than the form, so from here it is indistinguishable
+   * from one started from the form: same slot, same lines, same counters, the
+   * same `--dir` on disk.
+   */
+  const start = (kind: RunKind, payload: unknown): StartResult => {
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      return { ok: false, problem: "payload", error: "a run needs a JSON object of fields to start from" };
+    }
+    const body = payload as Readonly<Record<string, unknown>>;
+    if (kind === "resume") {
+      const resumed = resumeFieldsOf(body);
+      if (!resumed.ok) return { ok: false, problem: "payload", error: resumed.error };
+      return startRun("series", resumed.fields);
+    }
+    return startRun(kind, body);
+  };
+
+  return {
+    start,
+    snapshot: (): RunSnapshot => snapshotOf(current),
+    inFlightSeries: (): string | null =>
+      current !== null && current.state === "running" ? current.dir : null,
+  };
 }
