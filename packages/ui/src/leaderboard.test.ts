@@ -376,7 +376,10 @@ describe("GET /api/leaderboard", () => {
     expect(lb.series.map((each) => each.name)).toEqual(["delta", "gamma"]);
 
     // The reports in the order the walk reads them: by name.
-    const reports = [await seriesReport(join(at.seriesRoot, "delta")), await seriesReport(join(at.seriesRoot, "gamma"))];
+    const reports = [
+      await seriesReport(join(at.seriesRoot, "delta")),
+      await seriesReport(join(at.seriesRoot, "gamma")),
+    ];
     const dirs = reports.map((report) => report.dir);
 
     for (const label of ["bot:greedy", "bot:random"]) {
