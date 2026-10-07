@@ -397,7 +397,7 @@ describe("a Pi seat that runs past the runner's turn timeout", () => {
       expect(onDisk.turns[0].players.B.orders.length).toBeGreaterThan(0);
       expect(onDisk.result.type).toBe("time");
     } finally {
-      // The 60-second reply is still in flight; stopping the stub cancels it.
+      // The stub's held reply is still in flight; stopping the stub cancels it.
       await stub.stop();
     }
   }, SEAT_TIMEOUT_MS);

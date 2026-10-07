@@ -24,10 +24,16 @@ import { defineConfig } from "vitest/config";
 // 16-cpu box with an 8-cpu neighbour load running: 16 workers fail 7 of 1064
 // tests, 6 workers pass all 1064 — and in about the same wall clock (89 s
 // against 81 s), because workers that are not thrashing do not spend their time
-// being scheduled. Re-measured at 1118 tests with 14 cpu hogs holding the box at
-// load average ~20: three runs of the whole suite pass on 6 workers. Nothing
-// here changes what any test asserts; it changes how many of them are asking for
-// a cpu at once.
+// being scheduled. The cap is mitigation rather than a cure: on top of it, the
+// process-spawning files carry budgets of their own measured on a starved box,
+// and `pi-turn.test.ts` now bounds the seconds an aborted turn may take to come
+// back after measuring 24.5–25.1 s of teardown at load average ~24–35 and
+// 124.1 s at load ~50. With those budgets in place, re-measured at 1118 tests on
+// 6 workers: five runs of the whole suite pass with 16 cpu hogs on the box (load
+// average ~21–23) and two more with 32 hogs (load ~37–38); before the pi-turn
+// bound, 16 hogs failed three of seven runs in that one file. Nothing here
+// changes what any test asserts; it changes how many of them are asking for a
+// cpu at once.
 const MAX_WORKERS = Math.max(2, Math.floor(cpus().length * 0.4));
 
 export default defineConfig({
