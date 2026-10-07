@@ -21,9 +21,11 @@
  * Two more play a turn that passes for a reason only the seat can see — a
  * provider that kept refusing, a turn over its output budget — because the runner
  * carries the seat's reason to the log rather than guessing `no_submission`. One
- * plays a match voided by a seat that reached a tool outside the seven, in a
- * process of its own: the runner has to let go of everything it started when a
- * turn rejects, not only when it ends, and only a process can show that.
+ * plays the reason only the runner can see: its own deadline firing on a seat
+ * that is busy and has submitted nothing. One plays a match voided by a seat
+ * that reached a tool outside the seven, in a process of its own: the runner has
+ * to let go of everything it started when a turn rejects, not only when it ends,
+ * and only a process can show that.
  *
  * A Pi seat is seconds to start and seconds to prompt, so every test here carries
  * a timeout of its own.
@@ -40,6 +42,7 @@ import {
   piCli,
   providerError,
   salientToolName,
+  sleepsPastDeadline,
   stubModelsJson,
 } from "@no-dice/harness";
 import type { StubReply, StubRequest, StubScript, StubUsage } from "@no-dice/harness";
@@ -334,6 +337,53 @@ describe("a Pi seat's own reason for passing a turn", () => {
       expect(seat.tool_calls.map((call) => call.tool)).not.toContain("submit_orders");
       expect(seat.usage.output).toBeGreaterThan(1_000);
     } finally {
+      await stub.stop();
+    }
+  }, SEAT_TIMEOUT_MS);
+});
+
+/**
+ * The runner's own deadline, on a Pi seat that is busy and has not submitted.
+ *
+ * The two tests above hand the runner a reason the seat reported. This is the
+ * reason no seat reports, because the seat was stopped mid-turn: the stub is
+ * holding its reply, the seat has made no call, and all the server can see is
+ * that nothing arrived. `no_submission` is what the server alone would guess.
+ */
+describe("a Pi seat that runs past the runner's turn timeout", () => {
+  it("passes its turn as a timeout, and the match is still played and logged", async () => {
+    // Far longer than the deadline below, so the only thing that can end the
+    // turn is the runner's clock.
+    const stub = await startStub(sleepsPastDeadline(60_000));
+    const paths = pathsFor("turn-timeout");
+    const turnTimeoutMs = 1_500;
+    try {
+      const { log } = await runMatch({
+        out: paths.out,
+        seed: 135,
+        config: { ...DEFAULT_CONFIG, turns: 1 },
+        seats: { A: stubSeat(stub), B: GREEDY },
+        turnTimeoutMs,
+        matchDir: paths.matchDir,
+      });
+      const seat = log.turns[0].players.A;
+      // The runner's reason, not the server's guess: the seat was still playing
+      // when the deadline came, and the runner is the only one who knows that.
+      expect(seat.passed).toBe("timeout");
+      // It never reached a tool: the stub was asleep before it answered.
+      expect(seat.tool_calls).toEqual([]);
+      // The turn cost the whole deadline, rather than the milliseconds a seat
+      // that handed in nothing takes.
+      expect(seat.wall_ms).toBeGreaterThanOrEqual(turnTimeoutMs);
+      // The match was not voided by it: the log is on disk, and the Greedy seat
+      // played its half of the turn the clock took from the model.
+      const onDisk = matchLogSchema.parse(JSON.parse(readFileSync(paths.out, "utf8")) as unknown);
+      expect(onDisk.turns).toHaveLength(1);
+      expect(onDisk.turns[0].players.B.passed).toBeNull();
+      expect(onDisk.turns[0].players.B.orders.length).toBeGreaterThan(0);
+      expect(onDisk.result.type).toBe("time");
+    } finally {
+      // The 60-second reply is still in flight; stopping the stub cancels it.
       await stub.stop();
     }
   }, SEAT_TIMEOUT_MS);

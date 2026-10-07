@@ -153,6 +153,36 @@ logged was one of the seven. No turn of a 25-turn match drifted into Pi's own
 tools. This needs re-checking against a real model, which is the point of the
 next section.
 
+**The system prompt was one message: the player file, plus a `<cwd>` section Pi
+appends itself.** Every model request a stub seat made carried exactly one
+`system` message — the stub records every request body it answers, and
+`packages/harness/src/stub-model.test.ts` reads them back. The text is
+`games/salient/prompts/player-system.md` verbatim, then a blank line, then:
+
+```text
+<cwd>
+/tmp/no-dice-stub-seat-XXXX/cwd-A
+</cwd>
+```
+
+and nothing after it. That is not a second prompt. Pi takes the prompt it is
+handed through `--system-prompt` and appends its own working directory to it,
+the same way for both seats and for every request of a match; the seat is
+offered no other system text, and none of the repository's — no `AGENTS.md`, no
+built-in coding prompt — which is what `--no-builtin-tools --no-context-files
+--no-skills --no-prompt-templates` are there for.
+
+It matters because the series compares models on identical prompts: whatever Pi
+adds, it adds the same way to both seats, and the only way to know that stays
+true is to read the prompt off the request the stub recorded. The assertion that
+pins it is in `packages/harness/src/stub-model.test.ts`: one `system` message,
+and with the `<cwd>` section stripped its text **equals** the player file — not
+"contains two phrases of it", which is what let Pi append anything unnoticed.
+The player file ends in exactly one newline and Pi's separator is a blank line,
+so the recorded prompt has three newlines before `<cwd>`; stripping the section
+with the two of Pi's separator — and no more — leaves the file byte for byte,
+and nothing has to be normalised.
+
 ---
 
 ## 7. The first run against a real provider: Marvin, seed 135

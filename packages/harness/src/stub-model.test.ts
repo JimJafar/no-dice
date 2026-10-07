@@ -467,6 +467,22 @@ describe("a Pi seat played by the stub", () => {
     "utf-8",
   );
 
+  /**
+   * The `<cwd>` section Pi 1.0.2 appends to the system prompt it is handed, read
+   * off the recorded request body: the player file verbatim, then a blank line,
+   * then `<cwd>`, the seat's working directory on a line of its own, `</cwd>`,
+   * and nothing after it. Taking that section back out is what lets the test
+   * below say *equal* rather than *contains*.
+   *
+   * No newline normalising is needed, and the pattern has to be read with that
+   * in mind: the player file ends in exactly one newline and Pi's separator is a
+   * blank line, so the recorded prompt has three newlines between the last
+   * sentence and `<cwd>`. Stripping the section with the two newlines of Pi's
+   * separator — and no more — leaves the file's text byte for byte, its trailing
+   * newline included.
+   */
+  const piCwdSection = /\n\n<cwd>[\s\S]*?<\/cwd>\s*$/;
+
   let matches: MatchServer;
   let running: RunningServer;
   let matchId: string;
@@ -603,8 +619,18 @@ describe("a Pi seat played by the stub", () => {
         expect(request.body.model).toBe("stub-1");
         expect(request.toolNames.slice().sort()).toEqual(SEVEN.slice().sort());
         expect(request.systemPrompts).toHaveLength(1);
-        expect(request.systemPrompts[0]).toContain("You act only through the salient tools.");
-        expect(request.systemPrompts[0]).toContain("You have 12 tool calls a turn");
+        // One system message, and its content is the player prompt plus Pi's own
+        // `<cwd>` section and nothing else. `toContain` could not see what Pi put
+        // on the end, which is the thing that has to be pinned: the series
+        // compares models on identical prompts, so an extra sentence in front of
+        // or behind the player file is a change to the experiment.
+        expect(request.systemPrompts[0].replace(piCwdSection, "")).toBe(playerSystem);
+        // And what was stripped is Pi's own section, naming this seat's working
+        // directory — not text of the repository's that Pi found on the way in.
+        expect(request.systemPrompts[0].startsWith(playerSystem)).toBe(true);
+        expect(request.systemPrompts[0].slice(playerSystem.length)).toMatch(
+          /^\n\n<cwd>\n[^<>\n]+\n<\/cwd>$/,
+        );
       }
       expect(matches.turnRecord(matchId, 2).B.tool_calls.map((call) => call.tool)).toEqual([
         "scout",
