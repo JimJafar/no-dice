@@ -17,9 +17,11 @@
  * costs a player: a hex its owner is out of supply on is still on the board and
  * still scores nothing.
  *
- * The series line the mock-up shows is not here, because a log holds one match
- * and no series. `render-header.ts` says so in the element rather than leaving
- * the gap the mock-up's brackets stand for.
+ * The series line the mock-up shows is not in a log either, and it is not built
+ * here: a log holds one match, and the series comes from the
+ * `salient-showcase/1` sidecar `series.ts` reads and turns into that line. The
+ * header row is drawn with it when one was loaded and with a sentence saying
+ * there is none when one was not — `render-header.ts` owns which of the two.
  */
 import type { LogConfig, LogScore, MapHex, MatchLog, PlayerHeader, Seat } from "@no-dice/log";
 

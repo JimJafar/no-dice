@@ -1,17 +1,29 @@
 /**
- * The viewer's entry point: one `salient-log/1` log onto the page. This file
+ * The viewer's entry point: one `salient-log/1` log onto the page, and the
+ * `salient-showcase/1` sidecar that says which series it came from. This file
  * owns the frame, the three ways of handing the page a log — the picker, a drop
- * anywhere on the frame, and `?log=<url>` — and the line that says what went
- * wrong when the file is not one. It draws the board through `render-board.ts`,
- * the seat panels through `render-panels.ts`, the turn's headline through
- * `render-headline.ts`, the lead chart through `render-chart.ts`, and holds the
- * view mode the toggle asks for: the spectator frame by default, a seat's fog on
- * request. The frame index — step back, step forward, scrub, autoplay — is
- * `turns.ts`, and this file is the only place that owns a clock: it steps that
- * index from a timer, and the index never looks at one.
+ * anywhere on the frame, and `?log=<url>` — the same three for the sidecar,
+ * which arrives beside the match as `?series=<url>`, as a file picked with it,
+ * or in a drop that carries both, and the line that says what went wrong when a
+ * file is not one. It draws the board through `render-board.ts`, the seat panels
+ * through `render-panels.ts`, the turn's headline through `render-headline.ts`,
+ * the lead chart through `render-chart.ts`, and holds the view mode the toggle
+ * asks for: the spectator frame by default, a seat's fog on request. The frame
+ * index — step back, step forward, scrub, autoplay — is `turns.ts`, and this file
+ * is the only place that owns a clock: it steps that index from a timer, and the
+ * index never looks at one.
  */
-import { parseLog, pickLogSource, readLogSource } from "./load.ts";
-import type { LogSource } from "./load.ts";
+import {
+  parseLog,
+  parseShowcase,
+  pickLogSource,
+  pickSeriesSource,
+  readLogSource,
+  readSeriesSource,
+} from "./load.ts";
+import type { LogFile, SeriesSource } from "./load.ts";
+import { seriesLineOf } from "./series.ts";
+import type { Showcase } from "./series.ts";
 import { boardView } from "./board.ts";
 import { headerView } from "./header.ts";
 import { renderHeader } from "./render-header.ts";
@@ -53,15 +65,26 @@ const chart = element<HTMLDivElement>("#chart");
 const toggleBar = element<HTMLDivElement>("#view-toggle");
 
 /**
- * What the page shows: the log it holds, the frame of it, and whose eyes the
- * board is seen through. The mode is the board's only — the header shows what the
- * match scored whichever frame is up, and so do the panels, which describe what
- * each seat did rather than what that seat could see.
+ * What the page shows: the log it holds, the frame of it, whose eyes the board is
+ * seen through, and the series a sidecar says the match came from — `null` when
+ * none arrived, which is the header's placeholder line. The mode is the board's
+ * only — the header shows what the match scored whichever frame is up, and so do
+ * the panels, which describe what each seat did rather than what that seat could
+ * see.
  */
 let log: MatchLog | null = null;
 let frames: TurnFrames | null = null;
 let controls: TurnControls | null = null;
 let mode: BoardMode = DEFAULT_MODE;
+let series: Showcase | null = null;
+
+/**
+ * The line that names the log on screen — the facts that prove the page holds the
+ * log it was given. Kept, so that a sidecar's problem can be said after it rather
+ * than instead of it: the match is still what the page is about when the line
+ * about its series cannot be read.
+ */
+let logLine: string | null = null;
 
 /**
  * How long each step of a turn's animation is held: the four steps of brief
@@ -76,6 +99,24 @@ let timer: number | null = null;
 function say(message: string, bad = false): void {
   status.textContent = message;
   status.classList.toggle("bad", bad);
+}
+
+/** The message of anything that threw, since the page shows it as it stands. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The one line under `#status`: the line that names the log on screen, with a
+ * sidecar's problem named after it when the series line could not be read, and
+ * the invitation to hand the page a log while it holds none.
+ */
+function statusLine(problem: string | null): void {
+  if (problem !== null) {
+    say(logLine === null ? problem : `${logLine}. ${problem}`, true);
+    return;
+  }
+  say(logLine ?? "No log yet: choose a match log, drop one anywhere on this frame, or open the page as ?log=<url>.");
 }
 
 /**
@@ -109,7 +150,7 @@ function redraw(): void {
   turnsBar.hidden = false;
   chart.hidden = false;
   toggleBar.hidden = false;
-  renderHeader(header, headerView(log, view.frame));
+  renderHeader(header, headerView(log, view.frame), series === null ? null : seriesLineOf(series, log));
   renderHeadline(headlineRow, headline(log, view.frame));
   renderBoard(board, boardView(log, view.board), fog, view);
   const panels = panelsView(log, view.frame);
@@ -139,14 +180,15 @@ function keepTimer(playing: boolean): void {
 }
 
 /**
- * What a log that arrived shows: the board as the last turn the log holds left
- * it, and the line that names the log — the facts that prove the page holds the
- * log it was given. The frame index opens on that last turn, which is what the
- * match ended up as; the controls take the viewer back through it from there.
+ * What a log that arrived leaves the page holding: the log, the frame index on
+ * its last turn — which is what the match ended up as, and the controls take the
+ * viewer back through it from there — and the line that names it, the facts that
+ * prove the page holds the log it was given. `load` says that line and draws the
+ * frame, so a sidecar read with the log is in the header the first time it is.
  */
 function showLog(next: MatchLog): void {
   const winner = next.result.winner ?? "nobody";
-  say(`${next.format} · seed ${next.seed} · ${next.turns.length} turns · ${next.result.type} win for ${winner} on turn ${next.result.turn}`);
+  logLine = `${next.format} · seed ${next.seed} · ${next.turns.length} turns · ${next.result.type} win for ${winner} on turn ${next.result.turn}`;
   log = next;
   frames = turnFrames(next);
   // Remounted per log, since the slider spans the log: its maximum is the last
@@ -155,7 +197,30 @@ function showLog(next: MatchLog): void {
   // page, so the board, the header, the panels and the chart follow the index
   // rather than staying where they were.
   controls = mountTurnControls(turnsBar, frameHandlers(frames, redraw));
-  redraw();
+}
+
+/**
+ * The series the match came from, read from whatever arrived beside it, and left
+ * in `series` for the header. A sidecar nothing can read is returned as the one
+ * line that says so, and takes the header's placeholder with it — the series line
+ * is a line about the board, and a board missing it is still the match.
+ *
+ * The sidecar the page was opened with is not carried over a load that names
+ * none: a viewer who picks a second log without its sidecar gets the placeholder,
+ * rather than a series line that belongs to the file they picked last time.
+ */
+async function readSeries(source: SeriesSource): Promise<string | null> {
+  if (source.kind === "none") {
+    series = null;
+    return null;
+  }
+  try {
+    series = parseShowcase(await readSeriesSource(source));
+    return null;
+  } catch (error) {
+    series = null;
+    return `${messageOf(error)} — the match is shown without its series line`;
+  }
 }
 
 /** The three frames the page can show, and the mode each one asks for. */
@@ -164,23 +229,33 @@ const toggle = mountViewToggle(toggleBar, (next) => {
   redraw();
 });
 
-async function load(source: LogSource): Promise<void> {
-  if (source.kind === "none") {
-    say("No log yet: choose a match log, drop one anywhere on this frame, or open the page as ?log=<url>.");
-    return;
+/**
+ * Load what the page was just handed: the match to draw, and the sidecar that
+ * says which series it came from. The two arrive together — a multi-file pick or
+ * a drop carries both — and the sidecar is read first and on its own, so that
+ * nothing in its failure reaches the board.
+ */
+async function load(search: string, files: readonly LogFile[]): Promise<void> {
+  const logSource = pickLogSource(search, files);
+  const seriesProblem = await readSeries(pickSeriesSource(search, files));
+
+  if (logSource.kind !== "none") {
+    const from = logSource.kind === "file" ? logSource.file.name : logSource.url;
+    say(`Reading ${from}…`);
+    try {
+      showLog(parseLog(await readLogSource(logSource)));
+    } catch (error) {
+      say(messageOf(error), true);
+      return;
+    }
   }
 
-  const from = source.kind === "file" ? source.file.name : source.url;
-  say(`Reading ${from}…`);
-  try {
-    showLog(parseLog(await readLogSource(source)));
-  } catch (error) {
-    say(error instanceof Error ? error.message : String(error), true);
-  }
+  statusLine(seriesProblem);
+  redraw();
 }
 
 fileInput.addEventListener("change", () => {
-  void load(pickLogSource(window.location.search, [...(fileInput.files ?? [])]));
+  void load(window.location.search, [...(fileInput.files ?? [])]);
 });
 
 frame.addEventListener("dragover", (event) => {
@@ -198,7 +273,7 @@ frame.addEventListener("dragleave", (event) => {
 frame.addEventListener("drop", (event) => {
   event.preventDefault();
   frame.classList.remove("dropping");
-  void load(pickLogSource(window.location.search, [...(event.dataTransfer?.files ?? [])]));
+  void load(window.location.search, [...(event.dataTransfer?.files ?? [])]);
 });
 
-void load(pickLogSource(window.location.search, []));
+void load(window.location.search, []);

@@ -99,10 +99,13 @@ describe("renderHeader", () => {
     );
   });
 
-  it("says why the mock-up's series line is not there, rather than leaving a gap", () => {
+  it("says why the mock-up's series line is not there, and how to get one", () => {
+    // No sidecar was loaded, so the placeholder stands: a match log holds one
+    // match, and the series line comes from the showcase file beside it.
     const text = header(TURN_11).querySelector(".series")?.textContent ?? "";
     expect(text).toContain("No series in this log");
-    expect(text).toContain("milestone 06");
+    expect(text).toContain("showcase.json");
+    expect(text).toContain("?series=");
   });
 
   it("replaces the frame it is given, so a stepped header holds no score from the last", () => {

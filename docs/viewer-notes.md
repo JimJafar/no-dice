@@ -53,6 +53,43 @@ The viewer reads the log and nothing else. It never imports the engine, never
 calls the match server and never recomputes a turn; `src/module-graph.test.ts`
 fails if a module under `src` reaches anything but `@no-dice/log`.
 
+### The series line
+
+A `salient-log/1` log holds one match and no series, so the series arrives as a
+second file: the `showcase.json` that `no-dice showcase --series <dir>` writes
+beside a series' `series.json`. The page takes it the same three ways it takes a
+match — `?series=<url>`, a file picked alongside the log (the picker takes both
+at once), or a drop that carries both — and the operator's route is the middle
+one: open the viewer, pick the showcase log and its `showcase.json`, and the
+header names the series the match came from.
+
+```bash
+node packages/runner/src/cli.ts showcase --series series/marvin-subagent-vs-greedy
+pnpm --filter @no-dice/salient-viewer dev
+# …then pick `series/<name>/matches/572152369-marvin-subagent-greedy.json` and
+# `series/<name>/showcase.json` together, or serve the series directory and:
+#   http://localhost:5173/?log=/matches/572152369-marvin-subagent-greedy.json&series=/showcase.json
+```
+
+The line under the score bar then names the pairing, the win rate with its 95%
+interval, the pairs played, the reason the run stopped, and that the match on
+screen is the one the series picked. The two files arrive separately, so the line
+also says when they disagree: a log from another match of that series is named by
+its seed next to the seed the series picked, rather than claimed as the choice.
+With no sidecar the header keeps the sentence that says a match log holds one
+match, and with a sidecar the viewer cannot read, the page says what is wrong with
+it in one line and draws the board anyway — a broken series line does not blank a
+match. `src/series-line.test.ts` pins each of these, including the page mounted from
+`index.html` with `?log=` and `?series=` answered out of memory.
+
+The sidecar's shape is declared in `src/series.ts` rather than imported from the
+package that writes it, for the same reason the viewer does not import the engine:
+it reads the fields the header shows and ignores the ranking written beside them,
+so a producer that adds a field cannot break the page. The header's line is built
+out of those fields rather than copied out of the sidecar's own one-line summary,
+because the header's sentence has to name the match on screen as well, and a line
+built from the figures cannot disagree with them.
+
 ## 2. Where the fixtures come from
 
 `scripts/golden-to-log.mjs` writes them. The five matches under
@@ -87,14 +124,22 @@ timings are all driven by those fields, not by the fixture.
 
 | Left out | Why |
 | --- | --- |
-| The series line | A `salient-log/1` log holds one match and no series. The header says so in a sentence rather than leaving the mock-up's `Match [n] of [N]` brackets as an unexplained gap. |
-| Showcase selection | Milestone 06. Which matches a series shows, and in what order, is not decided, so the viewer has no list of logs to choose from. |
 | The "Called it" / "Missed" verdict tag | How predictions are scored is undecided (`salient/docs/salient-mockups.md`, "What is placeholder"). The panel shows the prediction and no judgement of it. |
 | Live streaming of a match in progress | Brief §3, out of scope for v0. The viewer loads a finished log file. |
 | Video export of a replay | Brief §3, out of scope for v0. The frame keeps the mock-up's 1920 × 1080 geometry so a recording is still possible, but nothing records it. |
 | A calibrated win-probability bar, own-orientation boards, more than two players, a web UI for launching matches | Brief §3, out of scope for v0. |
 | The mock-up's six-symbol key beside the board | The symbols are on the board itself, and the chart carries its own two-line legend. A legend for the board is not in the plan's tasks. |
 | A context meter on a bot seat | Not a missing feature: a bot seat keeps no conversation and has no window to measure against, so the panel draws no meter rather than one reading zero. |
+
+**The series line is not left out any more, and neither is showcase selection.**
+Both were deferred to milestone 06 and both are in: `no-dice showcase` picks the
+one match of a finished series worth rendering and writes the `showcase.json`
+that says so, and the viewer reads that file beside the log — section 1's
+"The series line" is the operator's route. What the viewer deliberately does *not*
+do is choose: it has no list of logs to pick from, no `series.json` to walk and no
+opinion about which match of a series is the interesting one. It renders the log
+it was handed and names the series that log came from, which is why the sidecar's
+shape is declared in `src/series.ts` and its ranking fields are read past.
 
 Nothing the mock-up draws above or beside the board is missing from the page now.
 The headline was the last of them: `src/headline.ts` builds the turn's sentence
@@ -163,8 +208,11 @@ diamond on the 3 — so the decision outlives the argument that settled it.
   "The log holds no tool calls for this turn." The scripted bots made none.
 - The seat names: `[Model A]` and `[Model B]` against `raider` and `striker`,
   which is what the fixture's `players` say.
-- The series line: the mock-up's brackets against the sentence that says a match
-  log holds no series.
+- The series line: the mock-up's `Match [n] of [N] in the series. Series so far:
+  [A wins] to [B wins]` against the pairing, its win rate with its 95%
+  interval, its pairs and its stop reason, which is what a series of seat-swapped
+  pairs actually measures. The page has no match index to quote — the log it
+  holds is one file, and the series it came from is a separate one.
 - The verdict tag: not drawn, so the prediction stands on its own.
 - The headline: the mock-up's "A takes the centre Node, 5 against 3, and cuts
   off five of B's hexes" against what `headline()` generates for the same turn,

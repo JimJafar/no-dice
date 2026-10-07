@@ -16,6 +16,15 @@
  */
 import { z } from "zod";
 
+/**
+ * The zod these schemas are built with, handed to the one reader that may not
+ * name a second package. The replay viewer lets itself exactly one package
+ * specifier — this module, which is what stops it reaching the engine — and
+ * still has to declare a schema of its own for the sidecar format it reads.
+ * Going through here keeps that rule, and keeps one copy of zod in its bundle.
+ */
+export { z } from "zod";
+
 /** A seat in a match. The log names seats the way the engine does. */
 export const seatSchema = z.enum(["A", "B"]);
 export type Seat = z.infer<typeof seatSchema>;

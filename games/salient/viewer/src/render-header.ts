@@ -15,6 +15,11 @@
  * the fog toggle a comparison of what a seat can see rather than a second set of
  * facts about the match.
  *
+ * The series line is the one part of the row that is not in the log, because a
+ * log holds one match. It arrives beside the log, as the `salient-showcase/1`
+ * sidecar `series.ts` reads, and is handed to `renderHeader` as a line of its
+ * own: the series a match came from is the same at turn 0 as at turn 25.
+ *
  * The frame is replaced whole on every render, so a stepped header shows exactly
  * the scores the log gives for that frame with nothing left from the last.
  */
@@ -23,12 +28,14 @@ import type { Seat } from "@no-dice/log";
 import type { HeaderView } from "./header.ts";
 
 /**
- * What the mock-up's series line becomes. A `salient-log/1` log holds one match
- * and no series, and showcase selection is milestone 06, so the element says so
- * rather than leaving the mock-up's `[n] of [N]` brackets as an unexplained gap.
+ * What the mock-up's series line becomes when no sidecar came with the log. A
+ * `salient-log/1` log holds one match and no series, so the element says so and
+ * names how to get the line, rather than leaving the mock-up's `[n] of [N]`
+ * brackets as an unexplained gap.
  */
 const SERIES_LINE =
-  "No series in this log: a match log holds one match, and series results come with showcase selection (milestone 06).";
+  "No series in this log: a match log holds one match. Pick its showcase.json beside it, " +
+  "or open the page as ?series=<url>, and the header names the series the match came from.";
 
 /** One seat's half of the header: its name, and its score in the big numerals. */
 function seatElement(seat: Seat, name: string, score: number): HTMLElement {
@@ -94,8 +101,13 @@ function barElement(view: HeaderView): HTMLElement {
  * Draw `view` into `container`, replacing whatever header was there before. The
  * container is the row itself, so the page owns where the header sits and this
  * file owns only what is in it.
+ *
+ * `series` is the line the sidecar gives the match — model X against its
+ * opponent, the win rate with its interval, the pairs and the stop — or `null`
+ * when no sidecar came with the log, which leaves the placeholder in place of it
+ * rather than a gap.
  */
-export function renderHeader(container: HTMLElement, view: HeaderView): void {
+export function renderHeader(container: HTMLElement, view: HeaderView, series: string | null = null): void {
   const centre = document.createElement("div");
   centre.className = "centre";
 
@@ -107,11 +119,11 @@ export function renderHeader(container: HTMLElement, view: HeaderView): void {
   summary.className = "summary";
   summary.textContent = view.summary;
 
-  const series = document.createElement("div");
-  series.className = "series";
-  series.textContent = SERIES_LINE;
+  const seriesEl = document.createElement("div");
+  seriesEl.className = "series";
+  seriesEl.textContent = series ?? SERIES_LINE;
 
-  centre.append(counter, barElement(view), summary, series);
+  centre.append(counter, barElement(view), summary, seriesEl);
   container.classList.add("header");
   container.replaceChildren(
     seatElement("A", view.names.A, view.score.A),
