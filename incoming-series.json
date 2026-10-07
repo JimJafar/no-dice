@@ -1,0 +1,250 @@
+{
+  "seed_base": 0,
+  "max_pairs": 5,
+  "seeds": [
+    572152369,
+    708123,
+    479473028,
+    313966722,
+    1003578858
+  ],
+  "pairing": {
+    "a": {
+      "kind": "model",
+      "provider": "deepseek",
+      "model": "deepseek-flash"
+    },
+    "b": {
+      "kind": "bot",
+      "bot": "greedy"
+    }
+  },
+  "pairs": [
+    {
+      "seed": 572152369,
+      "matches": [
+        {
+          "seat": "A",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/572152369-deepseek-deepseek-flash-greedy.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "A",
+            "margin": 32
+          },
+          "cost_usd": 0.3362704679999998,
+          "tokens": {
+            "input": 63387,
+            "output": 170618,
+            "cache_read": 18752128,
+            "cache_write": 0,
+            "total": 18986133
+          }
+        },
+        {
+          "seat": "B",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/572152369-greedy-deepseek-deepseek-flash.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "B",
+            "margin": 3
+          },
+          "cost_usd": 0.34000952399999973,
+          "tokens": {
+            "input": 54859,
+            "output": 202031,
+            "cache_read": 13519104,
+            "cache_write": 0,
+            "total": 13775994
+          }
+        }
+      ]
+    },
+    {
+      "seed": 708123,
+      "matches": [
+        {
+          "seat": "A",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/708123-deepseek-deepseek-flash-greedy.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "A",
+            "margin": 3
+          },
+          "cost_usd": 0.38152102800000004,
+          "tokens": {
+            "input": 62919,
+            "output": 214991,
+            "cache_read": 17442688,
+            "cache_write": 0,
+            "total": 17720598
+          }
+        },
+        {
+          "seat": "B",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/708123-greedy-deepseek-deepseek-flash.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "A",
+            "margin": 2
+          },
+          "cost_usd": 0.37169662799999986,
+          "tokens": {
+            "input": 61919,
+            "output": 195518,
+            "cache_read": 19749888,
+            "cache_write": 0,
+            "total": 20007325
+          }
+        }
+      ]
+    },
+    {
+      "seed": 479473028,
+      "matches": [
+        {
+          "seat": "A",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/479473028-deepseek-deepseek-flash-greedy.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "B",
+            "margin": 8
+          },
+          "cost_usd": 0.2947382280000001,
+          "tokens": {
+            "input": 54647,
+            "output": 166084,
+            "cache_read": 13173888,
+            "cache_write": 0,
+            "total": 13394619
+          }
+        },
+        {
+          "seat": "B",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/479473028-greedy-deepseek-deepseek-flash.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "B",
+            "margin": 20
+          },
+          "cost_usd": 0.2974902119999998,
+          "tokens": {
+            "input": 52807,
+            "output": 169981,
+            "cache_read": 12945152,
+            "cache_write": 0,
+            "total": 13167940
+          }
+        }
+      ]
+    },
+    {
+      "seed": 313966722,
+      "matches": [
+        {
+          "seat": "A",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/313966722-deepseek-deepseek-flash-greedy.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "A",
+            "margin": 3
+          },
+          "cost_usd": 0.24946041600000002,
+          "tokens": {
+            "input": 55444,
+            "output": 143359,
+            "cache_read": 10132736,
+            "cache_write": 0,
+            "total": 10331539
+          }
+        },
+        {
+          "seat": "B",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/313966722-greedy-deepseek-deepseek-flash.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "B",
+            "margin": 5
+          },
+          "cost_usd": 0.25932951600000004,
+          "tokens": {
+            "input": 55101,
+            "output": 150933,
+            "cache_read": 10279936,
+            "cache_write": 0,
+            "total": 10485970
+          }
+        }
+      ]
+    },
+    {
+      "seed": 1003578858,
+      "matches": [
+        {
+          "seat": "A",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/1003578858-deepseek-deepseek-flash-greedy.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "A",
+            "margin": 12
+          },
+          "cost_usd": 0.3589922039999999,
+          "tokens": {
+            "input": 51321,
+            "output": 207304,
+            "cache_read": 15805184,
+            "cache_write": 0,
+            "total": 16063809
+          }
+        },
+        {
+          "seat": "B",
+          "path": "/home/jim/code/no-dice/series/deepseek-flash-vs-greedy/matches/1003578858-greedy-deepseek-deepseek-flash.json",
+          "status": "played",
+          "result": {
+            "type": "time",
+            "winner": "A",
+            "margin": 15
+          },
+          "cost_usd": 0.26449469999999997,
+          "tokens": {
+            "input": 55957,
+            "output": 139271,
+            "cache_read": 13430400,
+            "cache_write": 0,
+            "total": 13625628
+          }
+        }
+      ]
+    }
+  ],
+  "state": {
+    "pairs_played": 5,
+    "matches_played": 10,
+    "matches_failed": 0,
+    "stop_reason": "max_pairs",
+    "stopped_early": false
+  },
+  "stop": {
+    "reason": "max_pairs",
+    "totals": {
+      "cost_usd": 3.1540029239999994,
+      "tokens": {
+        "input": 568361,
+        "output": 1760090,
+        "cache_read": 145231104,
+        "cache_write": 0,
+        "total": 147559555
+      }
+    },
+    "test": null
+  }
+}
