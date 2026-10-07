@@ -65,28 +65,35 @@ Greedy's own row is the control: 408 tool calls at 2.04 a turn, **0** scouts, **
 **0** tool errors, **0** rejected submissions, **0** passes, **0** compaction turns — it runs no
 provider, so it has no context to lose.
 
-## The five counters, none of which survive the run
+## The five counters, none of them reachable from here
 
 The rules' questions are stated as counts — hex flips a turn, lead changes a match, Node hand
 changes, neutral captures, re-scouts. `packages/stats/src/rules-evidence.ts` computes all five
 from a match log alone, and `no-dice evidence --series <dir>` writes them to
-`series/<name>/evidence.md`. **Nothing of it survives in the repository.** `series/` is gitignored
-because a real log is 0.9–1.1 MB of tool results ([series-notes §7](series-notes.md)); the report
-was copied into `reports/series/` and the evidence file was not; and the directory the report
-header names —
+`series/<name>/evidence.md`. **Nothing of it is reachable from this workspace.** `series/` is
+gitignored because a real log is 0.9–1.1 MB of tool results
+([series-notes §7](series-notes.md)); the report was copied into `reports/series/` and the
+evidence file was not; and the directory the report header names —
 `/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy` —
-is absent from this workspace and was never committed. Jim confirmed that directory and its
-`matches/` were deleted with the workspace that played the series, so `no-dice evidence` has no
-logs left to read. Were those 8 logs ever found again, all five counters come out of them with no
-new matches played; short of that they have to be re-earned.
+is not on this box. Checked again on 7 October, after the outage that first made it look missing:
+`no-dice evidence --series series/marvin-subagent-vs-greedy` answers `series.json is not there, so
+there is no series to report`, and a search of the filesystem finds no `evidence.md`, no
+`series.json` and no match log named for any of the five seeds anywhere; the repository's history
+and its two dangling commits hold no evidence file either. Marvin answers `/v1/models` from here,
+so the endpoint is not the blocker — the logs are.
+
+**Whether those 8 logs are gone for good is Jim's to answer, and it decides how much of this
+review has to be re-earned.** If that directory is still somewhere reachable, `no-dice evidence`
+reads the five counters out of logs already played, in seconds, and four of the sections below
+fill in with no new matches at all. If it is not, they come from the re-run the closing section
+sets out.
 
 So the four sections that turn on those counts — Home bonus, Final-turn lunge, Centre Node
 ping-pong, No last-seen memory — carry the real-series numbers the report *does* hold, and are
 `Left open` on the counter itself rather than on the sample size. That is a different kind of
 open than "ten matches is not enough", and it needs no new code: `rules-evidence.ts` already
 computes all five, and `no-dice evidence` already writes them. What they need is logs that survive
-the run that made them — and since these ones do not, that means the re-run the closing section
-sets out.
+the run that made them — which is what the closing section is about.
 
 ---
 
@@ -340,7 +347,13 @@ the series would be replayed at its seeds.
 
 ## What would close the four open sections
 
-One run, and one change to what the repository keeps:
+First the cheap one, which the first look at this could not do because of a network outage: **if
+`series/marvin-subagent-vs-greedy/` and its `matches/` are still reachable anywhere**, then
+`no-dice evidence --series <that directory>` reads all five counters out of the 8 logs already
+played, and four of the sections above fill in with no new matches. The counters exist as code,
+the logs existed, and nothing copied the output somewhere that survives — that is the whole gap.
+
+Then the run, and one change to what the repository keeps:
 
 1. `no-dice series --game salient --a marvin/subagent --b bot:greedy --name
    marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 60000000 --concurrency 1` — the same
