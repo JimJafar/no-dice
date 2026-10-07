@@ -370,7 +370,7 @@ describe("a seat's turn outcomes", () => {
     async () => {
       const submit = { orders: [], intent: "The stub is holding still.", prediction: "The other seat moves east." };
       const stub = await startStub([
-        { toolCalls: [{ name: "submit_orders", args: submit }] },
+        { toolCalls: [{ name: "mcp__salient__submit_orders", args: submit }] },
         { toolCalls: [{ name: "mcpsalient_write_notes", args: { notes: "x" } }] },
         { toolCalls: [{ name: "bash", args: { command: "cat /etc/passwd" } }] },
         ...callsToolThenSubmits("get_state"),
@@ -383,7 +383,7 @@ describe("a seat's turn outcomes", () => {
       // the calls are logged as refused, and a refused submit is not a submission.
       expect(outcome.submitted).toBe(true);
       expect(outcome.toolCalls.slice(0, 3)).toMatchObject([
-        { tool: "submit_orders", error: true },
+        { tool: "mcp__salient__submit_orders", error: true },
         { tool: "mcpsalient_write_notes", error: true },
         { tool: "bash", error: true },
       ]);

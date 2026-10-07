@@ -7,7 +7,8 @@
  * spawned in RPC mode with the lock-down flags, one prompt per turn, the events
  * of that turn read back into tool calls, and the session stats turned into
  * what the turn cost. Nothing here knows the game: the tools are whatever the
- * seat's `mcp.json` connects it to, and the only name spelled out is the
+ * match's server lists, given to the seat by the `seat-tools.ts` extension under
+ * the server's own names, and the only name spelled out is the
  * submission tool, in order to say whether the seat submitted. Before the child
  * is spawned, the model's credential is checked with `pi auth check`: a run that
  * cannot pay for its model stops in one line, rather than playing 25 turns of
@@ -46,7 +47,7 @@ import type { JsonAgentSessionEvent, SessionStats } from "@earendil-works/pi-cod
 
 import { piCli } from "./pi-cli.ts";
 import { checkPiAuth } from "./pi-auth.ts";
-import { createSeatHome, MCP_SERVER_NAME, type SeatHome, type SeatId } from "./pi-home.ts";
+import { createSeatHome, type SeatHome, type SeatId } from "./pi-home.ts";
 import {
   MatchVoided,
   type PassReason,
@@ -58,6 +59,7 @@ import {
   type TurnOutcome,
   type VoidReason,
 } from "./player.ts";
+import { SEAT_TOOLS_EXTENSION } from "./seat-tools.ts";
 import { answerOf } from "./tool-answer.ts";
 
 /** The reasoning level a seat plays at, as brief §6.3's `--thinking` names it. */
@@ -69,18 +71,12 @@ export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "x
  */
 const DEFAULT_TURNS = 25;
 
-/** The file a seat's provider is named in, beside the `mcp.json` it is written into. */
+/** The file a seat's provider is named in, in the seat's config directory. */
 const MODELS_FILE = "models.json";
 
-/**
- * The prefix Pi puts on every tool of an MCP server, `mcp__<server>__`. The log
- * records the tools without it — `get_state`, not `mcp__salient__get_state` —
- * because the server a seat was connected to is already in the log's header.
- */
-const TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
 
 /**
- * The tool a submission goes through, once the prefix is off. It is named here
+ * The tool a submission goes through. It is named here
  * so the harness can say whether the seat submitted at all; what the orders
  * mean stays the game's business, and the server's answer is what the log
  * records.
@@ -176,10 +172,6 @@ const noteOf = (args: unknown, key: "intent" | "prediction"): string => {
   const value = (args as Record<string, unknown> | null)?.[key];
   return typeof value === "string" ? value : "";
 };
-
-/** A tool as the log names it: Pi's name, without the MCP server's prefix. */
-const stripPrefix = (tool: string): string =>
-  tool.startsWith(TOOL_PREFIX) ? tool.slice(TOOL_PREFIX.length) : tool;
 
 /**
  * Whether a failed command means the seat's Pi process is gone.
@@ -298,8 +290,8 @@ export class PiPlayer implements Player {
    *
    * The flags are brief §6.3's lock-down, and they are passed here rather than
    * left to the seat's settings so a match cannot be run with a flag missing.
-   * `--no-extensions` is deliberately absent: it would take away the built-in
-   * MCP extension, and with it the game tools. `--mode rpc` is prepended by
+   * `-e` loads `seat-tools.ts`, which gives the seat the match's tools under
+   * their own names. `--mode rpc` is prepended by
    * `RpcClient`, which also spawns `node <cliPath>` — the pinned build from
    * `piCli()`, never the `pi` on `PATH`.
    */
@@ -345,6 +337,8 @@ export class PiPlayer implements Player {
       model: this.options.model,
       args: [
         "--no-builtin-tools",
+        "-e",
+        SEAT_TOOLS_EXTENSION,
         "--no-context-files",
         "--no-skills",
         "--no-prompt-templates",
@@ -422,7 +416,7 @@ export class PiPlayer implements Player {
       switch (event.type) {
         case "tool_execution_start": {
           // Pi's lock-down decides what a seat can reach: a name it was not
-          // given (`submit_orders`, `mcpsalient_write_notes`) is answered "not
+          // given (`mcp__salient__write_notes`, `bash`) is answered "not
           // found", recorded as a refused call, and the turn goes on.
           open.set(event.toolCallId, { tool: event.toolName, args: event.args, at: performance.now() });
           break;
@@ -434,7 +428,7 @@ export class PiPlayer implements Player {
           open.delete(event.toolCallId);
           const at = performance.now();
           const record: ToolCallRecord = {
-            tool: stripPrefix(started?.tool ?? event.toolName),
+            tool: started?.tool ?? event.toolName,
             args: started?.args ?? {},
             result: answerOf(event.result),
             error: event.isError,

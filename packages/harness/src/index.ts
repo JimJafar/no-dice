@@ -39,7 +39,6 @@ export {
   callsToolThenSubmits,
   neverSubmits,
   providerError,
-  salientToolName,
   sleepsPastDeadline,
   stubModelsJson,
   stubProviderEntry,

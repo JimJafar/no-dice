@@ -147,7 +147,7 @@ score(state: MatchState, seat: Seat, config: Config): { points: number; supplied
 
 One server, Streamable HTTP, bound to `127.0.0.1`. Each request carries `Authorization: Bearer <token>`; the token maps to one match and one seat. A player can never act for the other seat.
 
-**Tool names.** The server is registered in Pi as `salient`, so models see `mcp__salient__get_state` and so on.
+**Tool names.** Models see the server's own names: `get_state`, `submit_orders` and so on (§6.3, the seat's tools).
 
 **Keep results compact.** Every tool result stays in the player's conversation for the rest of the match. Send static data once, in `get_rules`, and keep `get_state` to what changes.
 
@@ -260,23 +260,11 @@ The facts in this section were checked against the Pi documentation on 4 October
 
 Set `PI_CODING_AGENT_DIR` to a directory the runner creates for the match and seat. Pi then ignores the user's own `~/.pi/agent` settings, extensions, skills and context files. Run each process with its working directory set to an empty folder.
 
-`$PI_CODING_AGENT_DIR/mcp.json`:
+**The seat's tools**
 
-```json
-{
-  "mcpServers": {
-    "salient": {
-      "url": "http://127.0.0.1:8787/mcp",
-      "headers": { "Authorization": "Bearer ${SALIENT_TOKEN}" },
-      "exposure": "direct",
-      "description": "Salient game tools for this match"
-    }
-  }
-}
-```
+The seat gets the seven tools from `packages/harness/src/seat-tools.ts`, a Pi extension loaded with `-e`. It connects to the match's server with `SALIENT_URL` and `SALIENT_TOKEN` from the environment, lists the server's tools, and registers each under the server's own name with its description and input schema; a call is forwarded as it is, and the server's answer comes back as the content it sent. Every game action is an ordinary tool call that the server and the log can count.
 
-- `exposure` must be `direct`. Pi's default is `codemode`, where the model writes scripts that call tools. Direct exposure makes every game action an ordinary tool call that the server and the log can count.
-- The port is whatever the match runner chose; write the file per match.
+Pi's built-in MCP support is not used: it always names a server's tools `mcp__<server>__<tool>`, and models shorten or mangle that prefix often enough to waste calls.
 
 `$PI_CODING_AGENT_DIR/settings.json`:
 
@@ -295,11 +283,12 @@ Set `PI_CODING_AGENT_DIR` to a directory the runner creates for the match and se
 ```sh
 cd "$RUN_DIR/cwd-A"
 PI_CODING_AGENT_DIR="$RUN_DIR/pi-home-A" \
-SALIENT_TOKEN="$TOKEN_A" \
+SALIENT_URL="http://127.0.0.1:8787/mcp" SALIENT_TOKEN="$TOKEN_A" \
 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 PI_CACHE_RETENTION=long \
 pi --mode rpc \
    --session-dir "$RUN_DIR/session-A" \
    --no-builtin-tools \
+   -e "$REPO/packages/harness/src/seat-tools.ts" \
    --no-context-files --no-skills --no-prompt-templates --no-themes \
    --system-prompt "$REPO/games/salient/prompts/player-system.md" \
    --model "<provider>/<model-id>" --thinking <level>
@@ -310,6 +299,7 @@ pi --mode rpc \
 | `--mode rpc` | One long-lived process. The runner writes JSON commands to its stdin and reads responses and events from its stdout, one JSON object per line |
 | `--session-dir` | Saves the full conversation to disk as the raw transcript of the match |
 | `--no-builtin-tools` | Removes `read`, `bash`, `edit`, `write` and the rest. Without this a model could read the match log from disk |
+| `-e <seat-tools.ts>` | Gives the seat the seven game tools under their own names |
 | `--no-context-files`, `--no-skills`, `--no-prompt-templates`, `--no-themes` | No AGENTS.md, skills or templates leak into the prompt |
 | `--system-prompt <path>` | Replaces Pi's coding-agent system prompt with the player prompt |
 | `--model`, `--thinking` | The model under test and its reasoning level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). `--provider` alone is an error in Pi 1.0; always give `--model` |
@@ -358,19 +348,16 @@ At the end of the match, close the process's stdin; Pi shuts down in an orderly 
 | Output tokens for the turn exceed the budget | Send `abort`, pass unless already submitted, reason `token_budget` |
 | Provider error after Pi's retries | Pass, reason `provider_error`; the series runner may void and replay the match |
 | The Pi process exits during the match | Void the match, reason `harness_crash` |
-| A tool the seat was not given is called, by any name (`submit_orders`, `mcpsalient_write_notes`, `bash`) | Not a void: Pi's lock-down answers that there is no such tool, the call is logged as refused, and the turn goes on. It never reaches the server, so it does not count toward the tool-call cap |
+| A tool the seat was not given is called, by any name (`mcp__salient__submit_orders`, `mcpsalient_write_notes`, `bash`) | Not a void: Pi's lock-down answers that there is no such tool, the call is logged as refused, and the turn goes on. It never reaches the server, so it does not count toward the tool-call cap |
 
 After a pass the player stays in the match and is prompted again next turn, with the failed turn still in its history. A voided match must be replayed from turn 1 on the same seed. Never retry a single turn, because the model would see the position twice.
 
 **Verify on first run**
 
-- [ ] `pi mcp list --json`, run with the seat's `PI_CODING_AGENT_DIR` and token, shows exactly the seven tools.
-- [ ] A probe match's event stream contains no tool call outside `mcp__salient__*`.
+- [ ] The model's first request offers exactly the seven tools, by their own names.
 - [ ] `--no-builtin-tools` together with the settings above leaves no `bash`, `read`, `codemode` or `tool_search` tool available. If any survives, add `--tools` with an explicit allowlist of the seven tool names.
-- [ ] `--no-extensions` is not used, or if it is, built-in MCP still loads.
-- [ ] `${SALIENT_TOKEN}` in `mcp.json` is substituted from the environment.
 - [ ] `--system-prompt` with a file path replaces the default prompt completely.
-- [ ] The MCP connection stays up for all 25 turns of one RPC session.
+- [ ] The seat's connection to the server stays up for all 25 turns of one RPC session.
 - [ ] `agent_settled` arrives once per prompt, and `get_session_stats` returns `contextUsage`.
 - [ ] Turn 25's model request still contains turn 1's tool results when no compaction has happened.
 - [ ] Which event, if any, RPC mode emits when compaction runs.

@@ -41,7 +41,6 @@ import {
   callsToolThenSubmits,
   piCli,
   providerError,
-  salientToolName,
   sleepsPastDeadline,
   stubModelsJson,
 } from "@no-dice/harness";
@@ -106,13 +105,13 @@ const toolsSincePrompt = (request: StubRequest): string[] => {
  */
 const playsEveryTurn = (request: StubRequest): StubReply => {
   const called = toolsSincePrompt(request);
-  if (called.includes(salientToolName("submit_orders"))) {
+  if (called.includes("submit_orders")) {
     return { text: "I have submitted. I will hold this line." };
   }
-  if (called.includes(salientToolName("get_state"))) {
-    return { toolCalls: [{ name: salientToolName("submit_orders"), args: SUBMISSION }] };
+  if (called.includes("get_state")) {
+    return { toolCalls: [{ name: "submit_orders", args: SUBMISSION }] };
   }
-  return { toolCalls: [{ name: salientToolName("get_state"), args: {} }] };
+  return { toolCalls: [{ name: "get_state", args: {} }] };
 };
 
 /** Start a stub whose model entry costs something, so a turn has a price to read. */
@@ -236,13 +235,13 @@ describe("a seat that has submitted and is still running", () => {
 
   beforeAll(async () => {
     stub = await startStub((request): StubReply => {
-      if (toolsSincePrompt(request).includes(salientToolName("submit_orders"))) {
+      if (toolsSincePrompt(request).includes("submit_orders")) {
         // The server has the orders and the seat is still talking. Brief §6.3
         // gives it ten seconds; this match gives it a quarter of one, and the
         // reply outlasts both by a mile.
         return { delayMs: 60_000, text: "Still thinking about the next move." };
       }
-      return { toolCalls: [{ name: salientToolName("submit_orders"), args: SUBMISSION }] };
+      return { toolCalls: [{ name: "submit_orders", args: SUBMISSION }] };
     });
     const paths = pathsFor("lingering");
     matchDir = paths.matchDir;

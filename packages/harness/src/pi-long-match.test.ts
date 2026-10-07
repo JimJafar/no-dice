@@ -63,7 +63,7 @@ import { BotPlayer } from "./bot-player.ts";
 import type { SubmitVerdict } from "./bot-player.ts";
 import { PiPlayer } from "./pi-player.ts";
 import type { TurnOutcome } from "./player.ts";
-import { StubModel, outgrowsTheWindow, salientToolName, stubModelsJson } from "./stub-model.ts";
+import { StubModel, outgrowsTheWindow, stubModelsJson } from "./stub-model.ts";
 import type { StubReply, StubRequest } from "./stub-model.ts";
 
 /** The prompt a seat is played with, which is the one the match gives it. */
@@ -107,7 +107,7 @@ const SUBMISSION = {
 };
 
 /** The seven tools, in the order the server registers them, as the model sees them. */
-const SEVEN = TOOL_NAMES.map(salientToolName);
+const SEVEN = [...TOOL_NAMES];
 
 /** What resolving a turn reports: the match's result, or `null` while it runs. */
 type TurnResult = ReturnType<MatchServer["resolveTurn"]>["result"];
@@ -165,19 +165,19 @@ const toolResultsOf = (request: StubRequest): string =>
  */
 const playsEveryTurn = (request: StubRequest): StubReply => {
   const called = toolsSincePrompt(request);
-  if (called.includes(salientToolName("submit_orders"))) {
+  if (called.includes("submit_orders")) {
     return { text: "I have submitted. I will hold this line." };
   }
   if (
     lastPromptOf(request) === `Turn 1 of ${String(TURNS)}. Play your turn.` &&
-    !called.includes(salientToolName("get_rules"))
+    !called.includes("get_rules")
   ) {
-    return { toolCalls: [{ name: salientToolName("get_rules"), args: {} }] };
+    return { toolCalls: [{ name: "get_rules", args: {} }] };
   }
-  if (!called.includes(salientToolName("get_state"))) {
-    return { toolCalls: [{ name: salientToolName("get_state"), args: {} }] };
+  if (!called.includes("get_state")) {
+    return { toolCalls: [{ name: "get_state", args: {} }] };
   }
-  return { toolCalls: [{ name: salientToolName("submit_orders"), args: SUBMISSION }] };
+  return { toolCalls: [{ name: "submit_orders", args: SUBMISSION }] };
 };
 
 /**

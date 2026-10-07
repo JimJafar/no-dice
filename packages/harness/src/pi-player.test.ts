@@ -20,7 +20,7 @@ import { join } from "node:path";
 
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import type { Seat } from "@no-dice/salient-engine";
-import { MatchServer, startServer, type RunningServer } from "@no-dice/salient-server";
+import { MatchServer, TOOL_NAMES, startServer, type RunningServer } from "@no-dice/salient-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
@@ -31,7 +31,6 @@ import {
   STUB_PROVIDER,
   StubModel,
   callsToolThenSubmits,
-  salientToolName,
   stubModelsJson,
 } from "./stub-model.ts";
 import type { StubReply, StubRequest, StubScript } from "./stub-model.ts";
@@ -170,7 +169,7 @@ describe("a seat played by a headless Pi session", () => {
       const outcome = await player.playTurn(turn);
 
       expect(outcome.turn).toBe(turn);
-      // Pi names an MCP tool `mcp__salient__scout`; the log names it `scout`.
+      // The seat calls `scout` by the server's own name, and the log names it so.
       expect(outcome.toolCalls.map((call) => call.tool)).toEqual(["scout", "submit_orders"]);
       expect(matches.turnRecord(matchId, turn).A.tool_calls.map((call) => call.tool)).toEqual([
         "scout",
@@ -202,7 +201,7 @@ describe("a seat played by a headless Pi session", () => {
       // seven tools and nothing else — no `read`, no `bash`, no `edit` — and it
       // is offered the model under test, from the seat's own `models.json`.
       expect(first.toolNames).toHaveLength(7);
-      expect(first.toolNames.every((name) => name.startsWith("mcp__salient__"))).toBe(true);
+      expect(first.toolNames.slice().sort()).toEqual([...TOOL_NAMES].sort());
       expect(first.body.model).toBe(STUB_MODEL_ID);
 
       const provider = providerOf(outcome);
@@ -241,6 +240,30 @@ describe("a seat played by a headless Pi session", () => {
       expect(player.contextWindow()).toBe(40_000);
 
       nextTurn();
+    },
+    SEAT_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses to start a seat that cannot reach its match, rather than seating it without tools",
+    async () => {
+      const stub = await startStub(callsToolThenSubmits("get_state"));
+      const matchDir = mkdtempSync(join(tmpdir(), "no-dice-pi-player-"));
+      matchDirs.push(matchDir);
+      const player = new PiPlayer({
+        seat: "A",
+        matchDir,
+        model: stub.modelRef,
+        thinking: "off",
+        systemPrompt: PLAYER_SYSTEM,
+        modelsJson: stubModelsJson(stub.baseUrl, { cost: COST }),
+        env: { PI_OFFLINE: "1" },
+      });
+      players.push(player);
+
+      // A token this match never dealt: the seat's tools cannot load, and Pi
+      // exits rather than playing a match with none.
+      await expect(player.start({ serverUrl: running.url, token: "not-a-token" })).rejects.toThrow();
     },
     SEAT_TIMEOUT_MS,
   );
@@ -356,7 +379,7 @@ describe("a seat played by a headless Pi session", () => {
         {
           toolCalls: [
             {
-              name: salientToolName("submit_orders"),
+              name: "submit_orders",
               args: { orders: [badOrder], intent: "Trying an impossible move.", prediction: "Refused." },
             },
           ],
@@ -364,7 +387,7 @@ describe("a seat played by a headless Pi session", () => {
         {
           toolCalls: [
             {
-              name: salientToolName("submit_orders"),
+              name: "submit_orders",
               args: { orders: [], intent: "Holding still instead.", prediction: "Nothing moves." },
             },
           ],

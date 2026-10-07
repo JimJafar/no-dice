@@ -1,27 +1,11 @@
 /**
- * A seat's Pi home, and whether the pinned Pi actually reads it.
+ * A seat's Pi home: the directories and the settings file `createSeatHome`
+ * writes, the environment it hands the child, and the token that environment
+ * carries, which is what the server lets a seat play with and nothing else.
  *
- * A Pi session inherits the developer's `~/.pi/agent` unless it is told not to:
- * its settings, extensions, skills, context files and logins. A match played
- * with those in play is a different match — the model would have `bash` and
- * `read` beside the seven game tools, and whatever skills the machine it ran on
- * happened to hold. So the interesting question is not only what files
- * `createSeatHome` writes, but whether the Pi this repo pins honours them:
- * whether a relocated `PI_CODING_AGENT_DIR` is where it looks for `mcp.json`,
- * whether `${SALIENT_TOKEN}` is substituted from the child's environment, and
- * whether the server it then reaches is the match's, named by the seat's own
- * file rather than by anything in a home directory.
- *
- * The first suite reads the files back. The second runs the pinned CLI against
- * a real Salient server on a real socket, and uses `pi mcp list` as the
- * assertion: it exits 1 when an enabled server is not connected, so a seat that
- * failed to reach its match, or reached it with the wrong token, fails the test
- * rather than reporting a server nobody connected to. The one mistake that
- * exit code would not catch — a config directory that is not found at all, when
- * the runner named the match directory relatively — is caught by asking the seat
- * to name the file it read its server from.
+ * That the pinned Pi honours the home — the seven tools and nothing more, the
+ * seat's own model — is shown by the seat itself, in `pi-player.test.ts`.
  */
-import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
@@ -31,13 +15,11 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { DEFAULT_CONFIG } from "@no-dice/salient-engine";
 import {
   MatchServer,
-  TOOL_NAMES,
   startServer,
   type RunningServer,
 } from "@no-dice/salient-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { piCli } from "./pi-cli.ts";
 import { createSeatHome, type SeatHome } from "./pi-home.ts";
 
 /** Read a JSON file at an absolute path. */
@@ -46,9 +28,6 @@ const readJson = (path: string): Record<string, unknown> =>
 
 /** An empty directory to play a match in, which `createSeatHome` fills. */
 const freshMatchDir = (): string => mkdtempSync(join(tmpdir(), "no-dice-seat-home-"));
-
-/** The seven tools, in the order the server registers them. */
-const SEVEN = [...TOOL_NAMES];
 
 describe("the seat home on disk", () => {
   const dirs: string[] = [];
@@ -80,9 +59,8 @@ describe("the seat home on disk", () => {
     // The working directory is empty: a model with a file tool would find no
     // repository, no match log and no other seat's home in it.
     expect(readdirSync(seat.cwd)).toEqual([]);
-    // The config directory holds only the two files the runner wrote.
-    expect(readdirSync(seat.piHomeDir).sort()).toEqual(["mcp.json", "settings.json"]);
-    expect(seat.mcpConfigPath).toBe(join(seat.piHomeDir, "mcp.json"));
+    // The config directory holds only the settings file the runner wrote.
+    expect(readdirSync(seat.piHomeDir)).toEqual(["settings.json"]);
     expect(seat.settingsPath).toBe(join(seat.piHomeDir, "settings.json"));
   });
 
@@ -104,29 +82,7 @@ describe("the seat home on disk", () => {
     // The two seats are dealt different tokens, and neither token is in a file.
     expect(a.env.SALIENT_TOKEN).toBe("tok-A");
     expect(b.env.SALIENT_TOKEN).toBe("tok-B");
-    expect(readFileSync(b.mcpConfigPath, "utf-8")).not.toContain("tok-B");
-  });
-
-  it("points one `salient` server at the match, with the token as a placeholder", () => {
-    const config = readJson(seat.mcpConfigPath);
-    const servers = config.mcpServers as Record<string, Record<string, unknown>>;
-
-    expect(Object.keys(servers)).toEqual(["salient"]);
-    expect(servers.salient).toEqual({
-      url: "http://127.0.0.1:8787/mcp",
-      headers: { Authorization: "Bearer ${SALIENT_TOKEN}" },
-      // `direct` is what makes every game action an ordinary tool call the
-      // server and the log can count; Pi's default would hide them in codemode.
-      exposure: "direct",
-      description: "Salient game tools for this match",
-    });
-
-    // The token is in the environment, never in a file that gets read, diffed
-    // and committed.
-    const written =
-      readFileSync(seat.mcpConfigPath, "utf-8") + readFileSync(seat.settingsPath, "utf-8");
-    expect(written).toContain("${SALIENT_TOKEN}");
-    expect(written).not.toContain("seat-A-token-32-chars-long-xxxxxxx");
+    expect(readFileSync(b.settingsPath, "utf-8")).not.toContain("tok-B");
   });
 
   it("writes brief §6.3's settings.json, which leaves the seat the seven tools", () => {
@@ -139,14 +95,35 @@ describe("the seat home on disk", () => {
     });
   });
 
-  it("hands the child the relocated config directory and the token", () => {
+  it("hands the child the relocated config directory, the match's endpoint and the token", () => {
     expect(seat.env.PI_CODING_AGENT_DIR).toBe(seat.piHomeDir);
+    expect(seat.env.SALIENT_URL).toBe("http://127.0.0.1:8787/mcp");
     expect(seat.env.SALIENT_TOKEN).toBe("seat-A-token-32-chars-long-xxxxxxx");
     // No version check, no telemetry, and long provider cache retention for the
     // conversation that is re-sent on every turn.
     expect(seat.env.PI_SKIP_VERSION_CHECK).toBe("1");
     expect(seat.env.PI_TELEMETRY).toBe("0");
     expect(seat.env.PI_CACHE_RETENTION).toBe("long");
+  });
+
+  it("makes every path absolute when the runner names the match directory relatively", () => {
+    // `runs/seed-1` is a natural thing for a runner to pass, and a relative
+    // `PI_CODING_AGENT_DIR` would be looked for inside the seat's empty cwd.
+    const parent = freshMatchDir();
+    dirs.push(parent);
+    const matchDir = join(parent, "runs", "seed-1");
+    const home = createSeatHome({
+      matchDir: relative(process.cwd(), matchDir),
+      seat: "B",
+      serverUrl: "http://127.0.0.1:8787/mcp",
+      token: "t",
+    });
+
+    expect(isAbsolute(home.piHomeDir)).toBe(true);
+    expect(home.piHomeDir).toBe(join(matchDir, "pi-home-B"));
+    expect(home.cwd).toBe(join(matchDir, "cwd-B"));
+    expect(home.sessionDir).toBe(join(matchDir, "session-B"));
+    expect(home.env.PI_CODING_AGENT_DIR).toBe(home.piHomeDir);
   });
 
   it("rewrites the same home rather than colliding with itself", () => {
@@ -156,13 +133,12 @@ describe("the seat home on disk", () => {
     const second = createSeatHome({ matchDir, seat: "A", serverUrl: "http://new/mcp", token: "t2" });
 
     expect(second.piHomeDir).toBe(first.piHomeDir);
-    const servers = readJson(second.mcpConfigPath).mcpServers as Record<string, { url: string }>;
-    expect(servers.salient.url).toBe("http://new/mcp");
+    expect(second.env.SALIENT_URL).toBe("http://new/mcp");
     expect(second.env.SALIENT_TOKEN).toBe("t2");
   });
 });
 
-describe("the seat home against the pinned Pi and a real match", () => {
+describe("the seat's token against a real match", () => {
   /** The match these tests play, and the endpoint its seat reaches it on. */
   let matches: MatchServer;
   let running: RunningServer;
@@ -171,13 +147,6 @@ describe("the seat home against the pinned Pi and a real match", () => {
   /** Every directory these tests make, so they are all gone when the run ends. */
   const homes: string[] = [];
   let seat: SeatHome;
-
-  /**
-   * How long a seat's `pi mcp list` gets: Pi takes a second or two to start, and
-   * a seat that cannot reach its match takes Pi's own connection timeout — a
-   * minute — before it reports the failure.
-   */
-  const SEAT_TIMEOUT_MS = 90_000;
 
   beforeAll(async () => {
     matches = new MatchServer();
@@ -196,133 +165,6 @@ describe("the seat home against the pinned Pi and a real match", () => {
     await running.close();
     for (const dir of homes.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
-
-  /**
-   * Ask the pinned Pi what MCP servers `home` has, running it exactly the way a
-   * seat is run: from the seat's empty working directory, with the seat's
-   * environment and nothing else added.
-   *
-   * Asynchronously on purpose. The match these seats reach is served from this
-   * same process, so a blocking `spawnSync` would park the event loop, the
-   * server would never answer the child, and the test would measure a
-   * connection that could not have worked.
-   *
-   * Pi's stderr comes back with the result, because every assertion here is on
-   * the exit code and stdout: without it, a Pi-side complaint about a config
-   * file shows up as an unexplained `status: 1` or a JSON parse error.
-   */
-  const mcpList = (
-    home: SeatHome,
-    env: Record<string, string> = home.env,
-  ): Promise<{ status: number | null; stdout: string; stderr: string }> =>
-    new Promise((settled, failed) => {
-      const child = spawn(process.execPath, [piCli().path, "mcp", "list", "--json"], {
-        cwd: home.cwd,
-        env: { ...process.env, ...env },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.setEncoding("utf-8");
-      child.stdout.on("data", (chunk: string) => (stdout += chunk));
-      child.stderr.setEncoding("utf-8");
-      child.stderr.on("data", (chunk: string) => (stderr += chunk));
-      child.on("error", failed);
-      child.on("close", (status) => settled({ status, stdout, stderr }));
-    });
-
-  /** The single server entry `pi mcp list --json` reported. */
-  const listedServer = (run: { stdout: string; stderr: string }): Record<string, unknown> => {
-    const listed = JSON.parse(run.stdout) as {
-      servers: Record<string, unknown>[];
-      errors: unknown[];
-    };
-    expect(listed.errors, run.stderr).toEqual([]);
-    expect(listed.servers, run.stderr).toHaveLength(1);
-    return listed.servers[0];
-  };
-
-  it(
-    "connects the seat to the match and offers it exactly the seven tools",
-    async () => {
-      const run = await mcpList(seat);
-
-      // `pi mcp list` exits 1 when an enabled server is not connected, so a
-      // seat that could not reach its match fails here rather than reporting a
-      // server nobody connected to.
-      expect(run.status, run.stderr).toBe(0);
-      const server = listedServer(run);
-      expect(server.name).toBe("salient");
-      expect(server.state).toBe("connected");
-      expect(server.enabled).toBe(true);
-      expect(server.exposure).toBe("direct");
-      expect(server.transport).toBe(running.url);
-      expect((server.tools as string[]).slice().sort()).toEqual(SEVEN.slice().sort());
-    },
-    SEAT_TIMEOUT_MS,
-  );
-
-  it(
-    "reads the seat's own mcp.json, so nothing from ~/.pi/agent is in play",
-    async () => {
-      const server = listedServer(await mcpList(seat));
-
-      // `global` scope: the config directory was relocated, so the file is read
-      // without the project trust a `.pi/mcp.json` in the working directory
-      // would need — and the seat's cwd is empty, so there is no project file.
-      expect(server.scope).toBe("global");
-      expect(server.source).toBe(seat.mcpConfigPath);
-    },
-    SEAT_TIMEOUT_MS,
-  );
-
-  it(
-    "makes every path absolute when the runner names the match directory relatively",
-    async () => {
-      // `runs/seed-1` is a perfectly natural thing for a runner to pass, and a
-      // relative `PI_CODING_AGENT_DIR` is the one mistake that would not be
-      // caught by the exit code: Pi looks for it inside the seat's empty cwd,
-      // finds no config directory, answers `{"servers": [], "errors": []}` and
-      // exits 0. So the assertion is that the seat still reaches its match.
-      const parent = mkdtempSync(join(tmpdir(), "no-dice-seat-home-"));
-      homes.push(parent);
-      const matchDir = join(parent, "runs", "seed-1");
-      const home = createSeatHome({
-        matchDir: relative(process.cwd(), matchDir),
-        seat: "B",
-        serverUrl: running.url,
-        token: tokens.B,
-      });
-
-      expect(isAbsolute(home.piHomeDir)).toBe(true);
-      expect(home.piHomeDir).toBe(join(matchDir, "pi-home-B"));
-      expect(home.cwd).toBe(join(matchDir, "cwd-B"));
-      expect(home.sessionDir).toBe(join(matchDir, "session-B"));
-      expect(home.env.PI_CODING_AGENT_DIR).toBe(home.piHomeDir);
-
-      const run = await mcpList(home);
-      expect(run.status, run.stderr).toBe(0);
-      expect(listedServer(run).source).toBe(home.mcpConfigPath);
-    },
-    SEAT_TIMEOUT_MS,
-  );
-
-  it(
-    "fails the seat whose token does not reach the server",
-    async () => {
-      // The same home, the same server, a token this match never dealt.
-      const run = await mcpList(seat, {
-        ...seat.env,
-        SALIENT_TOKEN: "a-token-this-match-did-not-deal",
-      });
-
-      expect(run.status, run.stderr).toBe(1);
-      const server = listedServer(run);
-      expect(server.state).not.toBe("connected");
-      expect(server.tools).toEqual([]);
-    },
-    SEAT_TIMEOUT_MS,
-  );
 
   it("accepts a tool call made with the token the seat's environment carries", async () => {
     // The token the harness hands the child, used as the only credential, is

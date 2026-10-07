@@ -49,7 +49,7 @@ export const MODELS_FILE = "models.json";
 /** A tool call one scripted reply makes. */
 export interface StubToolCall {
   /**
-   * The tool as the model names it, prefix included: `mcp__salient__get_state`
+   * The tool as the model names it: `get_state`
    * for a game tool, or anything else for the case where it invents one.
    */
   name: string;
@@ -150,9 +150,6 @@ const replyJson = (res: ServerResponse, status: number, body: unknown): void => 
   });
   res.end(payload);
 };
-
-/** The name a Salient tool has in a model request: the MCP server's name, then the tool's. */
-export const salientToolName = (tool: string): string => `mcp__salient__${tool}`;
 
 /**
  * The provider entry of a seat's `models.json`, pointing at `baseUrl`.
@@ -625,11 +622,11 @@ export class StubModel {
  * instead of calling another tool, and stays settled on every later request.
  */
 export const callsToolThenSubmits = (tool: string, args: unknown = {}): StubReply[] => [
-  { toolCalls: [{ name: salientToolName(tool), args }] },
+  { toolCalls: [{ name: tool, args }] },
   {
     toolCalls: [
       {
-        name: salientToolName("submit_orders"),
+        name: "submit_orders",
         args: { orders: [], intent: "The stub is holding still.", prediction: "The other seat moves east." },
       },
     ],
@@ -657,11 +654,11 @@ export const outgrowsTheWindow = (
   text = "the map is a hex grid and the map is the territory ".repeat(3_000),
   usage: StubUsage = { input: 30_000, output: 2_000, cacheRead: 0, cacheWrite: 0 },
 ): StubReply[] => [
-  { toolCalls: [{ name: salientToolName("get_state"), args: {} }], usage },
+  { toolCalls: [{ name: "get_state", args: {} }], usage },
   {
     toolCalls: [
       {
-        name: salientToolName("submit_orders"),
+        name: "submit_orders",
         args: { orders: [], intent: "The stub is holding still.", prediction: "The other seat moves east." },
       },
     ],

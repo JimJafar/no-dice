@@ -28,7 +28,7 @@ export interface PlayerContext {
  * straight into a turn without translating them.
  */
 export interface ToolCallRecord {
-  /** The tool as the player called it, without any `mcp__salient__` prefix. */
+  /** The tool as the player called it. */
   tool: string;
   args: unknown;
   /** The answer the player got; `{ error: <code> }` for a call that was refused. */

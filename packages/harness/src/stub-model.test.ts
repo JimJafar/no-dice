@@ -31,12 +31,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { piCli } from "./pi-cli.ts";
 import { createSeatHome, type SeatHome, type SeatId } from "./pi-home.ts";
+import { SEAT_TOOLS_EXTENSION } from "./seat-tools.ts";
 import {
   StubModel,
   callsToolThenSubmits,
   neverSubmits,
   providerError,
-  salientToolName,
   sleepsPastDeadline,
   stubModelsJson,
   type StubReply,
@@ -44,7 +44,7 @@ import {
 } from "./stub-model.ts";
 
 /** The seven tools as a model is offered them. */
-const SEVEN = TOOL_NAMES.map((name) => salientToolName(name));
+const SEVEN = [...TOOL_NAMES];
 
 /** A chat request small enough to read in the test, with the tools named plainly. */
 const probeBody = (tools: string[], system = "You play Salient."): Record<string, unknown> => ({
@@ -152,7 +152,7 @@ describe("the stub endpoint", () => {
   });
 
   it("answers a scripted reply as chat.completion.chunk lines ending in [DONE]", async () => {
-    const answer = await chat(stub, probeBody([salientToolName("get_state")]));
+    const answer = await chat(stub, probeBody(["get_state"]));
 
     expect(answer.status).toBe(200);
     expect(answer.contentType).toContain("text/event-stream");
@@ -172,8 +172,8 @@ describe("the stub endpoint", () => {
     // Long enough to be streamed in more than one slice, as a real endpoint
     // streams it.
     const args = { notes: `Turn 1. ${"Holding the ridge and watching F6. ".repeat(12)}` };
-    const scripted = await StubModel.start([{ toolCalls: [{ name: salientToolName("write_notes"), args }] }]);
-    const answer = await chat(scripted, probeBody([salientToolName("write_notes")]));
+    const scripted = await StubModel.start([{ toolCalls: [{ name: "write_notes", args }] }]);
+    const answer = await chat(scripted, probeBody(["write_notes"]));
     await scripted.stop();
 
     const deltas = answer.chunks
@@ -189,7 +189,7 @@ describe("the stub endpoint", () => {
     expect(deltas[0]).toMatchObject({
       index: 0,
       type: "function",
-      function: { name: salientToolName("write_notes") },
+      function: { name: "write_notes" },
     });
     expect(typeof deltas[0].id).toBe("string");
     // Only the first slice names the tool; the rest carry arguments, so a seat
@@ -220,14 +220,14 @@ describe("the stub endpoint", () => {
 
   it("records the tools and the system prompt of every request it answers", async () => {
     const scripted = await StubModel.start([{ text: "noted" }]);
-    await chat(scripted, probeBody([salientToolName("get_rules"), salientToolName("get_state")]));
-    await chat(scripted, probeBody([salientToolName("scout")], "A different prompt."));
+    await chat(scripted, probeBody(["get_rules", "get_state"]));
+    await chat(scripted, probeBody(["scout"], "A different prompt."));
     await scripted.stop();
 
     expect(scripted.requestCount).toBe(2);
     const [first, second] = scripted.recorded;
     expect(first.index).toBe(0);
-    expect(first.toolNames).toEqual([salientToolName("get_rules"), salientToolName("get_state")]);
+    expect(first.toolNames).toEqual(["get_rules", "get_state"]);
     expect(first.systemPrompts).toEqual(["You play Salient."]);
     expect(first.messages.map((message) => message.role)).toEqual(["system", "user"]);
 
@@ -235,7 +235,7 @@ describe("the stub endpoint", () => {
     // early turn's tool result is still in a later request, and that is a
     // substring check over `body`.
     expect(second.index).toBe(1);
-    expect(second.toolNames).toEqual([salientToolName("scout")]);
+    expect(second.toolNames).toEqual(["scout"]);
     expect(second.systemPrompts).toEqual(["A different prompt."]);
     expect(JSON.stringify(second.body)).toContain("Play your turn");
   });
@@ -255,10 +255,10 @@ describe("the stub endpoint", () => {
 
   it("lets a script decide the reply from the request it is answering", async () => {
     const scripted = await StubModel.start((request) => ({
-      text: request.toolNames.includes(salientToolName("scout")) ? "scouting" : "holding",
+      text: request.toolNames.includes("scout") ? "scouting" : "holding",
     }));
-    const scouted = streamedText((await chat(scripted, probeBody([salientToolName("scout")]))).chunks);
-    const held = streamedText((await chat(scripted, probeBody([salientToolName("get_state")]))).chunks);
+    const scouted = streamedText((await chat(scripted, probeBody(["scout"]))).chunks);
+    const held = streamedText((await chat(scripted, probeBody(["get_state"]))).chunks);
     await scripted.stop();
 
     // A 25-turn match cannot be a list: turn N's reply depends on what turn N
@@ -314,7 +314,7 @@ describe("the stub endpoint", () => {
 
   it("answers a caller that asked for no stream with one JSON completion", async () => {
     const scripted = await StubModel.start([
-      { text: "Holding.", toolCalls: [{ name: salientToolName("scout"), args: { hex: "F6" } }] },
+      { text: "Holding.", toolCalls: [{ name: "scout", args: { hex: "F6" } }] },
     ]);
     const response = await fetch(`${scripted.baseUrl}/chat/completions`, {
       method: "POST",
@@ -337,7 +337,7 @@ describe("the stub endpoint", () => {
     expect(choice.message).toMatchObject({
       role: "assistant",
       content: "Holding.",
-      tool_calls: [{ type: "function", function: { name: salientToolName("scout"), arguments: '{"hex":"F6"}' } }],
+      tool_calls: [{ type: "function", function: { name: "scout", arguments: '{"hex":"F6"}' } }],
     });
     expect((completion.usage as Record<string, unknown>).prompt_tokens_details).toMatchObject({ cached_tokens: 0 });
   });
@@ -557,6 +557,8 @@ describe("a Pi seat played by the stub", () => {
           "--thinking",
           "off",
           "--no-builtin-tools",
+          "-e",
+          SEAT_TOOLS_EXTENSION,
           "--no-context-files",
           "--no-skills",
           "--no-prompt-templates",
@@ -721,7 +723,7 @@ describe("the script builders the milestone's cases need", () => {
   it("calls a named tool and then submits, in that order", () => {
     const script = callsToolThenSubmits("scout", { hex: "F6" });
 
-    expect(toolsOf(script)).toEqual([salientToolName("scout"), salientToolName("submit_orders")]);
+    expect(toolsOf(script)).toEqual(["scout", "submit_orders"]);
     expect(script[0].toolCalls?.[0].args).toEqual({ hex: "F6" });
     // The reply that ends the turn calls nothing, so the seat settles instead of
     // calling another tool forever.
