@@ -13,7 +13,9 @@
  * and `/api/matches` when the page opens, when a run it was watching ends, and when
  * a resume is asked for. They are not polled, because a series takes hours
  * and a page that re-read every match log once a second would be doing the stats
- * package's work for no one.
+ * package's work for no one. The leaderboard is read at those same moments and for
+ * that same reason: `GET /api/leaderboard` answers both of its tables out of one
+ * walk of every series' every log, which is the most expensive read the page makes.
  *
  * The provider registry is a fourth read, and the rarest: `/api/providers` when
  * the page opens and after an entry has been added. It is not polled and not
@@ -32,15 +34,18 @@
  */
 import { getJson, postJson } from "./api.ts";
 import type { FetchJson } from "./api.ts";
+import { fetchLeaderboard } from "./leaderboard.ts";
 import { createRunPoller, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
 import { addProvider, checkCredential, fetchProviders } from "./providers.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
+import { renderLeaderboard } from "./render-leaderboard.ts";
 import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import { startRun } from "./start.ts";
 import { fetchResults, renderResults } from "./results.ts";
+import type { MatchRow } from "./results.ts";
 import { parseState } from "./state.ts";
 
 /** The one line the frame has, which `index.html` owns. */
@@ -59,18 +64,40 @@ const say = (message: string, bad = false): void => {
 const fetchJson: FetchJson = (path, init) => fetch(path, init);
 
 /**
- * Read what the console has on disk and redraw the results section from it.
+ * The finished logs the last `/api/matches` read gave, which the leaderboard's
+ * per-pairing rows link their matches from. The two listings are read together
+ * for that: the leaderboard answer names each series, and the match listing says
+ * which logs belong to it.
+ */
+let listedMatches: readonly MatchRow[] = [];
+
+/**
+ * Read what the console has on disk and redraw the results section and the
+ * leaderboard from it.
  *
  * The figures are the console's — `seriesReport`, the same report `no-dice stats`
- * prints — and the page adds nothing to them but wording. A listing that could not
- * be read leaves the section standing and says why on the status line: half a
- * results section is worse than a whole one with a bad line under it.
+ * prints, and `pooledModelRows` over that same walk — and the page adds nothing to
+ * them but wording. A listing that could not be read leaves the section standing
+ * and says why on the status line: half a results section is worse than a whole
+ * one with a bad line under it, and the same goes for a leaderboard that could
+ * not be read while the results beside it could.
  */
-const refreshResults = async (): Promise<void> => {
+const refreshListings = async (): Promise<void> => {
   try {
     const results = await fetchResults(fetchJson);
+    listedMatches = results.matches;
     renderResults(sections.results, results, (dir) => void resumeSeries(dir));
     say(`${String(results.series.length)} series and ${String(results.matches.length)} matches listed.`);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), true);
+  }
+
+  try {
+    const board = await fetchLeaderboard(fetchJson);
+    renderLeaderboard(sections.leaderboard, { board, matches: listedMatches });
+    say(
+      `${String(board.series.length)} pairings and ${String(board.models.length)} models on the leaderboard.`,
+    );
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
   }
@@ -86,7 +113,7 @@ const resumeSeries = async (dir: string): Promise<void> => {
     await postJson("/api/run/resume", { dir }, fetchJson);
     say(`Resuming ${dir}.`);
     void poller.run();
-    await refreshResults();
+    await refreshListings();
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
   }
@@ -104,13 +131,14 @@ const poller = createRunPoller({
   render: (run: RunSnapshot): void => {
     void renderProgress(sections.progress, run);
     // A run that has just stopped has left logs and a record on disk. The
-    // listings are read again at that moment and at no other, so the finished
-    // work appears without a reload and without polling the stats report.
+    // listings and both leaderboard views are read again at that moment and at
+    // no other, so the finished work appears without a reload and without
+    // polling the stats report.
     if (run.state === "running") {
       watching = true;
     } else if (watching) {
       watching = false;
-      void refreshResults();
+      void refreshListings();
     }
   },
   say,
@@ -189,5 +217,5 @@ const refresh = async (): Promise<void> => {
 };
 
 void refresh();
-void refreshResults();
+void refreshListings();
 void poller.run();

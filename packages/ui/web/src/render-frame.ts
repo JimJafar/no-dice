@@ -76,10 +76,11 @@ export const clear = (el: HTMLElement): void => {
  * to fill from `/api/run`, the results section for `results.ts` to fill from
  * `/api/series` and `/api/matches` — the roots it names there are the roots
  * those listings were taken from, so there is no second copy of them to keep in
- * step — and the providers section for `render-providers.ts` to fill from
- * `/api/providers`. The leaderboard section is left standing empty as
- * well: it has nothing to say until a series has been counted, and an invented row
- * would be a row the results page contradicts.
+ * step — the providers section for `render-providers.ts` to fill from
+ * `/api/providers`, and the leaderboard section for `render-leaderboard.ts` to
+ * fill from `/api/leaderboard`, which is the one answer both of its tables come
+ * from. Nothing is invented here: a row drawn from `/api/state` would be a row
+ * the section that read the disk contradicts.
  *
  * The frame takes no state because it draws nothing from it: every section with
  * an answer of its own reads that answer from its own route, and a copy of it
