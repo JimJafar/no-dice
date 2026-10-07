@@ -15,6 +15,12 @@
  * and a page that re-read every match log once a second would be doing the stats
  * package's work for no one.
  *
+ * The provider registry is a fourth read, and the rarest: `/api/providers` when
+ * the page opens and after an entry has been added. It is not polled and not
+ * drawn by the frame, because that section holds the add form and the credential
+ * check an operator asked for, and only the module that drew them knows when a
+ * redraw is safe.
+ *
  * The start form is built out of the state read, because its seat pickers are the
  * bots and providers `/api/state` names. It is built once: the frame replaces
  * everything under every heading, so the form and the run the poller is watching
@@ -28,7 +34,9 @@ import { getJson, postJson } from "./api.ts";
 import type { FetchJson } from "./api.ts";
 import { createRunPoller, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
+import { addProvider, checkCredential, fetchProviders } from "./providers.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
+import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import { startRun } from "./start.ts";
@@ -126,6 +134,38 @@ const drawStart = (choices: SeatChoices): void => {
 };
 
 /**
+ * Read the provider registry and redraw the providers section from it.
+ *
+ * The entries are the console's — `GET /api/providers` answers out of the same
+ * file a run seats on — and the page adds nothing to them. It is read again
+ * after an entry has been added, because what the section should list is the
+ * file's account of itself rather than the form's. A registry that could not be
+ * read leaves the section standing and says why on the status line, as every
+ * other failed read does.
+ */
+const refreshProviders = async (added?: string): Promise<void> => {
+  try {
+    const rows = await fetchProviders(fetchJson);
+    renderProviders(sections.providers, {
+      rows,
+      onAdd: (values) => addProvider(values, fetchJson),
+      onCheck: (model) => checkCredential(model, fetchJson),
+      // An entry the console took is in the file the next run seats
+      // on, so the list is read from the console again rather than from what the
+      // form posted — and the status line says which one it is now holding.
+      onAdded: (name): void => void refreshProviders(name),
+    });
+    say(
+      added === undefined
+        ? `${String(rows.length)} providers listed.`
+        : `Added ${added}; ${String(rows.length)} providers listed.`,
+    );
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), true);
+  }
+};
+
+/**
  * Read the console's state and redraw the frame from it. A console that cannot
  * be reached leaves the frame standing with one bad line rather than half a
  * frame: the page is a view of the console, and a console that is not answering
@@ -134,12 +174,14 @@ const drawStart = (choices: SeatChoices): void => {
 const refresh = async (): Promise<void> => {
   try {
     const state = parseState(await getJson<unknown>("/api/state", fetchJson));
-    renderFrame(sections, state);
+    renderFrame(sections);
     // The frame took back everything under every heading, so the run the
-    // poller is watching and the form the state was used to build both go
+    // poller is watching, the form the state was used to build, and the
+    // provider entries with the credential check asked of each of them all go
     // straight back under the one they belong to.
     renderProgress(sections.progress, poller.last());
     drawStart({ bots: state.bots, providers: state.providers });
+    void refreshProviders();
   } catch (error) {
     drawStart({ bots: [], providers: [] });
     say(error instanceof Error ? error.message : String(error), true);

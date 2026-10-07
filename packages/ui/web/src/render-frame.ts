@@ -1,28 +1,34 @@
 /**
- * The console's frame: the five sections the page is made of, and what
- * `/api/state` puts in them.
+ * The console's frame: the five sections the page is made of, and the rule for
+ * what stands under each heading.
  *
  * Nothing here decides what a run is, what a provider costs or
- * what a leaderboard row holds — those are the progress, start, results and
- * leaderboard tasks' own modules, which draw into these same sections. What is
- * drawn now is only what the console has said about itself: the providers the
- * registry names.
+ * what a leaderboard row holds — those are the progress, start, results,
+ * providers and leaderboard tasks' own modules, which draw into these
+ * same sections.
  *
- * The start section, the progress section and the results section are the three
- * this file leaves standing empty. The start form is built in `#start` by
- * `render-start.ts` out of this same state, and owns that section from then on:
- * a frame that redrew it would be a frame that wiped what someone had typed.
- * A run's own lines and counters come from `/api/run`, which the
- * page reads once a second, and the finished series and matches come from
- * `/api/series` and `/api/matches`; a line invented here from `/api/state`
+ * The start section, the progress section, the results section and the providers
+ * section are the four this file leaves standing empty. The start form is built
+ * in `#start` by `render-start.ts` out of the state read, and owns that
+ * section from then on: a frame that redrew it would be a frame that wiped what
+ * someone had typed. The providers section is owned by `render-providers.ts` for
+ * the same reason, and a sharper one: it holds the add form and the credential
+ * check an operator just asked for, and a frame that redrew it would be a frame
+ * that wiped that answer. A run's own lines and counters come from `/api/run`,
+ * which the page reads once a second, and the finished series and matches come
+ * from `/api/series` and `/api/matches`; a line invented here from `/api/state`
  * would be a second, staler account of the same thing.
  *
+ * So the frame draws nothing of its own. `/api/state`'s name-only provider
+ * answer still feeds the seat pickers in `render-start.ts`; the wider entry —
+ * endpoint, rates, the key variable's *name* — is read from `/api/providers` by
+ * that section's own module, which is the only thing allowed to redraw it.
+ *
  * A section is kept as it is in `index.html` apart from what stands under its
- * heading, which is replaced whole on every render: a state that no longer holds
- * a provider must not leave the last one's row on the page. The caller puts back
- * what it owns — the progress section, for one.
+ * heading, which is replaced whole on every render: an entry that has left the
+ * registry file must not leave its row on the page. The caller puts back what it
+ * owns — the progress section, for one.
  */
-import type { ProviderOption, UiState } from "./state.ts";
 
 /** The sections the console is made of, in the order the page draws them. */
 export const SECTION_IDS = ["start", "progress", "results", "providers", "leaderboard"] as const;
@@ -63,59 +69,22 @@ export const clear = (el: HTMLElement): void => {
   }
 };
 
-/** A short element with a class and a sentence. */
-const paragraph = (className: string, text: string): HTMLElement => {
-  const el = document.createElement("p");
-  el.className = className;
-  el.textContent = text;
-  return el;
-};
-
-/** A list of one-line items, in the order given. */
-const list = (className: string, items: readonly string[]): HTMLElement => {
-  const ul = document.createElement("ul");
-  ul.className = className;
-  for (const item of items) {
-    const li = document.createElement("li");
-    li.textContent = item;
-    ul.append(li);
-  }
-  return ul;
-};
-
 /**
- * The providers, each with the name of the variable its key is read from — and
- * nothing else. An endpoint that checks no key says so, which is a fact about
- * the provider rather than a missing field.
- */
-const renderProviders = (el: HTMLElement, providers: readonly ProviderOption[]): void => {
-  if (providers.length === 0) {
-    el.append(paragraph("providers-none", "The registry names no provider yet."));
-    return;
-  }
-  el.append(
-    list(
-      "providers",
-      providers.map((provider) =>
-        provider.apiKeyEnv === null
-          ? `${provider.name} — no key checked`
-          : `${provider.name} — key from ${provider.apiKeyEnv}`,
-      ),
-    ),
-  );
-};
-
-/**
- * The frame, as the console's state describes it. The start section is left for
- * `render-start.ts` to build its form in, the progress section is left empty for
- * `progress.ts` to fill from `/api/run`, and so is the results section,
- * which `results.ts` fills from `/api/series` and `/api/matches` — the roots it
- * names there are the roots those listings were taken from, so there is no second
- * copy of them to keep in step. The leaderboard section is left standing empty as
+ * Every section taken back to its heading, so what stands under one is what the
+ * module that owns it last read. The start section is left for
+ * `render-start.ts` to build its form in, the progress section for `progress.ts`
+ * to fill from `/api/run`, the results section for `results.ts` to fill from
+ * `/api/series` and `/api/matches` — the roots it names there are the roots
+ * those listings were taken from, so there is no second copy of them to keep in
+ * step — and the providers section for `render-providers.ts` to fill from
+ * `/api/providers`. The leaderboard section is left standing empty as
  * well: it has nothing to say until a series has been counted, and an invented row
  * would be a row the results page contradicts.
+ *
+ * The frame takes no state because it draws nothing from it: every section with
+ * an answer of its own reads that answer from its own route, and a copy of it
+ * carried through here would be a second, staler one.
  */
-export const renderFrame = (sections: FrameSections, state: UiState): void => {
+export const renderFrame = (sections: FrameSections): void => {
   for (const el of Object.values(sections)) clear(el);
-  renderProviders(sections.providers, state.providers);
 };

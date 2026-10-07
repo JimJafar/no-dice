@@ -1,27 +1,16 @@
 // @vitest-environment happy-dom
 /**
- * The frame the console draws: five sections, and what the console's state puts
- * under each heading. The state itself is `state.test.ts`'s business; this file
- * asks whether the page that gets drawn says what that state says — including
- * the two things it must not say, which are a provider's endpoint and a key.
+ * The frame the console draws: five sections, and what is left standing under
+ * each heading. Every section with an answer of its own has a module of its own
+ * — the form in `#start`, the run in `#progress`, the listings in `#results`, the
+ * registry in `#providers` — so what this file holds is that the frame takes
+ * those sections back to their heading and no further, and that a redraw does
+ * not leave a stale row behind.
  */
 import { describe, expect, it } from "vitest";
 
 import { SECTION_IDS, frameSections, renderFrame } from "./render-frame.ts";
 import type { FrameSections } from "./render-frame.ts";
-import type { UiState } from "./state.ts";
-
-/** The state a console that has just started answers. */
-const STATE: UiState = {
-  bots: ["bot:random", "bot:greedy"],
-  providers: [
-    { name: "marvin", apiKeyEnv: null },
-    { name: "openai", apiKeyEnv: "OPENAI_API_KEY" },
-  ],
-  seriesRoot: "/repo/series",
-  matchesRoot: "/repo/matches",
-  running: null,
-};
 
 /** A frame in the shape `index.html` gives it. */
 const frame = (): { sections: FrameSections; root: HTMLElement } => {
@@ -37,14 +26,6 @@ const frame = (): { sections: FrameSections; root: HTMLElement } => {
   document.body.append(root);
   return { sections: frameSections(root), root };
 };
-
-/** The text of one section, its heading included. */
-const textOf = (root: HTMLElement, id: string): string =>
-  root.querySelector<HTMLElement>(`#${id}`)?.textContent ?? "";
-
-/** The items of one list, by the class the section gives it. */
-const itemsOf = (root: HTMLElement, listClass: string): string[] =>
-  [...root.querySelectorAll<HTMLElement>(`.${listClass} li`)].map((li) => li.textContent ?? "");
 
 describe("frameSections", () => {
   it("names the five sections the console is made of", () => {
@@ -62,7 +43,7 @@ describe("frameSections", () => {
 describe("renderFrame", () => {
   it("leaves the start section to the module that builds the form, rather than drawing a second list of seats", () => {
     const { sections, root } = frame();
-    renderFrame(sections, STATE);
+    renderFrame(sections);
 
     // The seat pickers are `render-start.ts`'s, built out of this same state. A
     // list drawn here would be a second account of the same seats, and a frame
@@ -72,17 +53,18 @@ describe("renderFrame", () => {
 
   it("leaves the progress section to the run's own module, rather than inventing a line for a run it cannot see", () => {
     const { sections, root } = frame();
-    renderFrame(sections, STATE);
-    renderFrame(sections, { ...STATE, running: { state: "running" } });
+    renderFrame(sections);
+    renderFrame(sections);
 
     // `/api/state` does not carry a run: `/api/run` does, and the page reads that
-    // once a second. A line drawn here would be a second, staler account of it.
+    // once a second, putting its lines back under this heading after every frame.
+    // A line drawn here would be a second, staler account of it.
     expect(root.querySelector("#progress")?.children).toHaveLength(1);
   });
 
   it("leaves the results section to the module that reads the listings, rather than naming roots it cannot list", () => {
     const { sections, root } = frame();
-    renderFrame(sections, STATE);
+    renderFrame(sections);
 
     // `/api/state` knows the two roots but not what stands in them. The roots
     // belong on the page beside the listing they were taken from, which is
@@ -90,36 +72,37 @@ describe("renderFrame", () => {
     expect(root.querySelector("#results")?.children).toHaveLength(1);
   });
 
-  it("names each provider with the variable its key is read from, and says when it checks none", () => {
+  it("leaves the providers section to the module that lists the registry", () => {
     const { sections, root } = frame();
-    renderFrame(sections, STATE);
+    renderFrame(sections);
 
-    expect(itemsOf(root, "providers")).toEqual([
-      "marvin — no key checked",
-      "openai — key from OPENAI_API_KEY",
-    ]);
-  });
-
-  it("says when the registry names no provider, rather than drawing an empty list", () => {
-    const { sections, root } = frame();
-    renderFrame(sections, { ...STATE, providers: [] });
-
+    // `render-providers.ts` draws the whole entry — endpoint, api, the key
+    // variable's name, the window, the cap, the rates — from `/api/providers`,
+    // along with the add form and the credential check under each row. A list
+    // drawn here from `/api/state` would be a second, narrower account of the
+    // same providers, and a frame that redrew the section would wipe a check the
+    // operator had just asked for.
+    expect(root.querySelector("#providers")?.children).toHaveLength(1);
     expect(root.querySelector(".providers")).toBeNull();
-    expect(textOf(root, "providers")).toContain("The registry names no provider yet.");
   });
 
   it("keeps each section's heading and replaces only what stands under it", () => {
     const { sections, root } = frame();
-    renderFrame(sections, STATE);
-    renderFrame(sections, { ...STATE, providers: [{ name: "marvin", apiKeyEnv: null }] });
+    // What a section's own module put there, as if it had drawn it.
+    const stale = document.createElement("p");
+    stale.className = "providers-none";
+    stale.textContent = "The registry names no provider yet.";
+    sections.providers.append(stale);
+
+    renderFrame(sections);
 
     expect(root.querySelectorAll("h2")).toHaveLength(SECTION_IDS.length);
-    expect(itemsOf(root, "providers")).toEqual(["marvin — no key checked"]);
+    expect(root.querySelector(".providers-none")).toBeNull();
   });
 
   it("leaves the leaderboard standing empty until a series has been counted", () => {
     const { sections, root } = frame();
-    renderFrame(sections, STATE);
+    renderFrame(sections);
 
     expect(root.querySelector("#leaderboard")?.children).toHaveLength(1);
   });

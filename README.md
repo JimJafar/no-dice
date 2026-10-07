@@ -99,3 +99,10 @@ an entry typed at the page is seatable by the next run without a restart. It
 refuses to write while a run of its own is in flight, because a series seats each
 match as that match starts: an entry added halfway through a series would seat
 its later matches on different windows and rates while its record said one game.
+
+The console is the `no-dice-ui` bin, and the Providers section of its page lists
+that same file — every entry with its endpoint, its api, the *name* of the
+variable its key is read from, whether it streams reasoning, its context
+window, its output cap and its four rates — and adds entries to it. No key
+value is ever in that file, or on that page: the form asks for a variable's
+name, and the page never learns what is in it.
