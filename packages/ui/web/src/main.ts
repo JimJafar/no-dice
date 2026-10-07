@@ -15,6 +15,11 @@
  * and a page that re-read every match log once a second would be doing the stats
  * package's work for no one.
  *
+ * The start form is built out of the state read, because its seat pickers are the
+ * bots and providers `/api/state` names. It is built once: the frame replaces
+ * everything under every heading, so the form and the run the poller is watching
+ * both go straight back under the headings they own.
+ *
  * The three reads draw into the same sections, so the order matters: `renderFrame`
  * replaces everything under every heading, and the run it cannot see is put back
  * from the last snapshot the poller took.
@@ -24,6 +29,9 @@ import type { FetchJson } from "./api.ts";
 import { createRunPoller, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
+import { renderStart } from "./render-start.ts";
+import type { SeatChoices } from "./render-start.ts";
+import { startRun } from "./start.ts";
 import { fetchResults, renderResults } from "./results.ts";
 import { parseState } from "./state.ts";
 
@@ -101,6 +109,23 @@ const poller = createRunPoller({
 });
 
 /**
+ * The start form, built from the seats the console named. It is drawn once per
+ * `/api/state` read — which is once per page load — because a form that rebuilt
+ * itself under someone mid-way through typing a model id would lose it. A
+ * console that named no seat gets the form anyway, saying that it has nothing to
+ * seat a run with, rather than an empty section.
+ */
+const drawStart = (choices: SeatChoices): void => {
+  renderStart(sections.start, {
+    choices,
+    onStart: (kind, body) => startRun(kind, body, fetchJson),
+    // The run is the console's now, so the page starts reading it: closing this
+    // page, or this read failing, changes nothing about the run itself.
+    onStarted: (): void => void poller.run(),
+  });
+};
+
+/**
  * Read the console's state and redraw the frame from it. A console that cannot
  * be reached leaves the frame standing with one bad line rather than half a
  * frame: the page is a view of the console, and a console that is not answering
@@ -111,9 +136,12 @@ const refresh = async (): Promise<void> => {
     const state = parseState(await getJson<unknown>("/api/state", fetchJson));
     renderFrame(sections, state);
     // The frame took back everything under every heading, so the run the
-    // poller is watching goes straight back under the one it belongs to.
+    // poller is watching and the form the state was used to build both go
+    // straight back under the one they belong to.
     renderProgress(sections.progress, poller.last());
+    drawStart({ bots: state.bots, providers: state.providers });
   } catch (error) {
+    drawStart({ bots: [], providers: [] });
     say(error instanceof Error ? error.message : String(error), true);
   }
 };

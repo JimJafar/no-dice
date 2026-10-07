@@ -60,11 +60,14 @@ describe("frameSections", () => {
 });
 
 describe("renderFrame", () => {
-  it("lists every seat a run can be started with, bots first and providers after", () => {
+  it("leaves the start section to the module that builds the form, rather than drawing a second list of seats", () => {
     const { sections, root } = frame();
     renderFrame(sections, STATE);
 
-    expect(itemsOf(root, "seat-options")).toEqual(["bot:random", "bot:greedy", "marvin", "openai"]);
+    // The seat pickers are `render-start.ts`'s, built out of this same state. A
+    // list drawn here would be a second account of the same seats, and a frame
+    // that redrew `#start` would wipe what someone had typed into the form.
+    expect(root.querySelector("#start")?.children).toHaveLength(1);
   });
 
   it("leaves the progress section to the run's own module, rather than inventing a line for a run it cannot see", () => {

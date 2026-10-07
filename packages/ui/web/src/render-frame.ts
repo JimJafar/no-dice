@@ -5,11 +5,14 @@
  * Nothing here decides what a run is, what a provider costs or
  * what a leaderboard row holds — those are the progress, start, results and
  * leaderboard tasks' own modules, which draw into these same sections. What is
- * drawn now is only what the console has said about itself: the seats a run can be
- * started with, and the providers the registry names.
+ * drawn now is only what the console has said about itself: the providers the
+ * registry names.
  *
- * The progress section and the results section are the two this file leaves
- * standing empty. A run's own lines and counters come from `/api/run`, which the
+ * The start section, the progress section and the results section are the three
+ * this file leaves standing empty. The start form is built in `#start` by
+ * `render-start.ts` out of this same state, and owns that section from then on:
+ * a frame that redrew it would be a frame that wiped what someone had typed.
+ * A run's own lines and counters come from `/api/run`, which the
  * page reads once a second, and the finished series and matches come from
  * `/api/series` and `/api/matches`; a line invented here from `/api/state`
  * would be a second, staler account of the same thing.
@@ -80,14 +83,6 @@ const list = (className: string, items: readonly string[]): HTMLElement => {
   return ul;
 };
 
-/** What a run can be seated on: the two bots, then every provider the registry names. */
-const renderSeats = (el: HTMLElement, state: UiState): void => {
-  el.append(
-    paragraph("seats", "Seats a run can be started with — the pickers the start form builds will list these."),
-    list("seat-options", [...state.bots, ...state.providers.map((provider) => provider.name)]),
-  );
-};
-
 /**
  * The providers, each with the name of the variable its key is read from — and
  * nothing else. An endpoint that checks no key says so, which is a fact about
@@ -111,8 +106,9 @@ const renderProviders = (el: HTMLElement, providers: readonly ProviderOption[]):
 };
 
 /**
- * The frame, as the console's state describes it. The progress section is left
- * empty for `progress.ts` to fill from `/api/run`, and so is the results section,
+ * The frame, as the console's state describes it. The start section is left for
+ * `render-start.ts` to build its form in, the progress section is left empty for
+ * `progress.ts` to fill from `/api/run`, and so is the results section,
  * which `results.ts` fills from `/api/series` and `/api/matches` — the roots it
  * names there are the roots those listings were taken from, so there is no second
  * copy of them to keep in step. The leaderboard section is left standing empty as
@@ -121,6 +117,5 @@ const renderProviders = (el: HTMLElement, providers: readonly ProviderOption[]):
  */
 export const renderFrame = (sections: FrameSections, state: UiState): void => {
   for (const el of Object.values(sections)) clear(el);
-  renderSeats(sections.start, state);
   renderProviders(sections.providers, state.providers);
 };
