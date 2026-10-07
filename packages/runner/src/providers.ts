@@ -30,8 +30,14 @@
  * A provider the registry does not name is left alone: `seatModelsJson` answers
  * `null`, the seat is given no `models.json`, and Pi's built-in lookup and the
  * operator's exported `ANTHROPIC_API_KEY` work as they did before.
+ *
+ * The console can add an entry to that file and seat the next run on it in the
+ * same process: `addProvider` writes through the same schema and the same
+ * single-rename discipline the logs are written with, and `reloadProviders` is
+ * the one deliberate exception to reading the registry once per process.
  */
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
@@ -69,7 +75,7 @@ export interface ProviderEntry {
 export type ProviderRegistry = Record<string, ProviderEntry>;
 
 /** The rates a seat's model entry carries, all four of them. */
-const costSchema = z
+export const providerCostSchema = z
   .object({
     input: z.number().nonnegative(),
     output: z.number().nonnegative(),
@@ -80,10 +86,14 @@ const costSchema = z
 
 /**
  * One entry, strict: a field the schema does not name is a typo that would
- * otherwise sit in a committed file while the run played with a default nobody
- * chose.
+ * otherwise sit in a committed file while the run played with a default
+ * nobody chose — and it is what refuses an entry carrying a key value (`apiKey`,
+ * `key`) at the write, rather than hoping no caller sends one.
+ *
+ * Exported because the console validates a posted entry with this same list of
+ * fields: a second list is a second rule, and the two drift.
  */
-const entrySchema = z
+export const providerEntrySchema = z
   .object({
     baseUrl: z.url(),
     api: z.string().min(1),
@@ -91,12 +101,12 @@ const entrySchema = z
     reasoning: z.boolean(),
     contextWindow: z.number().int().positive(),
     maxTokens: z.number().int().positive(),
-    cost: costSchema,
+    cost: providerCostSchema,
   })
   .strict();
 
 /** The whole file: a map of provider names to entries, and nothing else. */
-const registrySchema = z.record(z.string().min(1), entrySchema);
+export const providerRegistrySchema = z.record(z.string().min(1), providerEntrySchema);
 
 /** Why a registry did not parse, one clause per problem, with the provider named. */
 const describeIssues = (
@@ -114,7 +124,7 @@ const describeIssues = (
  * what a match's log says about its own window and cost.
  */
 export const parseProviders = (value: unknown, source: string): ProviderRegistry => {
-  const parsed = registrySchema.safeParse(value);
+  const parsed = providerRegistrySchema.safeParse(value);
   if (!parsed.success) {
     throw new Error(`${source} is not a provider registry: ${describeIssues(parsed.error.issues)}`);
   }
@@ -159,6 +169,92 @@ let registry: ProviderRegistry | null = null;
 export const providerRegistry = (): ProviderRegistry => {
   registry ??= loadProviders();
   return registry;
+};
+
+/**
+ * Re-read the registry at `path` and replace what this process holds with it.
+ *
+ * The one deliberate exception to reading once: a provider added through the
+ * console has to be seatable by the next run this process starts, without a
+ * restart. Nothing else asks for it, so a file edited mid-run still cannot
+ * put one pair's two matches on two different context windows.
+ */
+export const reloadProviders = (path: string = PROVIDERS_FILE): ProviderRegistry => {
+  registry = loadProviders(path);
+  return registry;
+};
+
+/**
+ * A provider name has to be one path segment: `providerOf` splits a seat's
+ * `<provider>/<id>` on the first `/`, so a name carrying one — like `.` and
+ * `..`, which are not names — makes an entry no command line can address.
+ */
+const checkProviderName = (name: string): void => {
+  if (name === "" || name === "." || name === ".." || name.includes("/")) {
+    throw new Error(
+      `"${name}" is not a provider name: it has to be one path segment, ` +
+        "because a seat is addressed as <provider>/<id>",
+    );
+  }
+};
+
+/**
+ * Write the registry in one step, the way `match.ts` writes a log and
+ * `series-plan.ts` writes a series record: the text goes to a temp file named
+ * `<path>.tmp-*` in the same directory, and one `renameSync` moves it over the
+ * target, so the only file another process can ever read is a whole registry —
+ * a registry cut in half by a crash seats the next match on nothing. It is written
+ * as 2-space JSON with a trailing newline, so the file stays a `git diff` a person
+ * can read.
+ */
+const writeRegistry = (path: string, next: ProviderRegistry): void => {
+  const tmp = `${path}.tmp-${randomUUID()}`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    renameSync(tmp, path);
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // The half file is already gone: there is nothing to take away.
+    }
+    throw error;
+  }
+};
+
+/**
+ * Add `entry` under `name` to the registry at `path`, and answer with the
+ * registry as it now stands on disk.
+ *
+ * Three things are refused before a byte is written, so a refusal always leaves
+ * the file exactly as it was: a name that is not one path segment, a name the
+ * registry already has — silently overwriting the entry a run is seated
+ * on changes that run's terms — and an entry the schema refuses, which includes
+ * one carrying a key value. The entry is validated by the same schema that reads
+ * the file back, so nothing a seat could misread gets in.
+ */
+export const addProvider = (
+  name: string,
+  entry: unknown,
+  path: string = PROVIDERS_FILE,
+): ProviderRegistry => {
+  checkProviderName(name);
+  const current = loadProviders(path);
+  if (Object.hasOwn(current, name)) {
+    throw new Error(
+      `the provider registry already names "${name}": it is refused rather than ` +
+        "overwritten, because a run seated on it would change terms",
+    );
+  }
+  const parsed = providerEntrySchema.safeParse(entry);
+  if (!parsed.success) {
+    throw new Error(`"${name}" is not a provider entry: ${describeIssues(parsed.error.issues)}`);
+  }
+  writeRegistry(path, {
+    ...current,
+    [name]: { ...parsed.data, apiKeyEnv: parsed.data.apiKeyEnv ?? null },
+  });
+  return loadProviders(path);
 };
 
 /** The entry for one provider name, or `null` when the registry does not name it. */

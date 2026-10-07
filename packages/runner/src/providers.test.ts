@@ -8,7 +8,7 @@
  * server above all — has to be named in that file, or the run stops at the
  * credential check before a turn is played. So the entry a real run plays on is
  * committed rather than written into whichever script happens to need it, and
- * these tests hold three things about it:
+ * these tests hold four things about it:
  *
  * - the file parses, and says what the milestone measured: Marvin's endpoint,
  *   its keyless-ness, and the `contextWindow` and `maxTokens` that were decided
@@ -18,12 +18,14 @@
  *   Pi's built-in lookup — and an exported `ANTHROPIC_API_KEY` — in charge;
  * - no key is ever in the file: an entry names the environment variable a key
  *   is read from, and the seat's own `models.json` interpolates it, so the value
- *   exists only in the seat's environment.
+ *   exists only in the seat's environment;
+ * - an entry can be added to a registry file and re-read in the same process, which
+ *   is how the console seats its next run on a provider the operator just typed in.
  *
  * None of it needs a network, a credential or a live provider: the seat is read
  * back as the spec the runner is handed, not as a match it would play.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,10 +34,14 @@ import { describe, expect, it } from "vitest";
 import { seatSpec } from "./match.ts";
 import {
   PROVIDERS_FILE,
+  addProvider,
   loadProviders,
   modelsJsonFor,
   parseProviders,
   providerEntry,
+  providerEntrySchema,
+  providerRegistrySchema,
+  reloadProviders,
   seatModelsJson,
 } from "./providers.ts";
 import type { ProviderEntry } from "./providers.ts";
@@ -53,6 +59,34 @@ const ACME: ProviderEntry = {
 
 /** One provider, spelled out, for `parseProviders` to accept or refuse. */
 const acmeJson = (entry: unknown): unknown => ({ acme: entry });
+
+/** The entry the committed file names, as a temp registry can start from it. */
+const MARVIN: ProviderEntry = {
+  baseUrl: "https://marvin.example.ts.net:8033/v1",
+  api: "openai-completions",
+  apiKeyEnv: null,
+  reasoning: true,
+  contextWindow: 131_072,
+  maxTokens: 8_192,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+};
+
+/** A registry file to write into: one temp directory, one `providers.json` in it. */
+const tempRegistry = (dir: string, registry: unknown): string => {
+  const path = join(dir, "providers.json");
+  writeFileSync(path, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+  return path;
+};
+
+/** Run `body` against a fresh temp registry, and clean the directory up after. */
+const withTempRegistry = <T>(registry: unknown, body: (dir: string, path: string) => T): T => {
+  const dir = mkdtempSync(join(tmpdir(), "no-dice-providers-write-"));
+  try {
+    return body(dir, tempRegistry(dir, registry));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
 
 describe("the committed provider registry", () => {
   it("names Marvin with the entry a real run plays on", () => {
@@ -221,5 +255,152 @@ describe("a seat the command line names", () => {
 
   it("is a bot seat, registry or no registry", () => {
     expect(seatSpec({ kind: "bot", bot: "greedy" })).toEqual({ kind: "bot", bot: "greedy" });
+  });
+});
+
+describe("adding a provider to the registry", () => {
+  it("writes the entry into the file it was given, and leaves no half file beside it", () => {
+    // The write is one `rename` of a temp file in the same directory over the
+    // target, so the only registry another process can ever read is a whole one: a
+    // file cut in half by a crash seats the next match on nothing.
+    withTempRegistry({ marvin: MARVIN }, (dir, path) => {
+      const saved = addProvider("acme", ACME, path);
+      expect(saved.acme).toEqual(ACME);
+      // What the caller is told is what the file says: the answer is re-read.
+      expect(loadProviders(path)).toEqual(saved);
+      expect(readdirSync(dir)).toEqual(["providers.json"]);
+      // 2-space JSON with a trailing newline, so the registry stays a `git diff` a
+      // person can read.
+      expect(readFileSync(path, "utf8")).toBe(
+        `${JSON.stringify({ marvin: MARVIN, acme: ACME }, null, 2)}\n`,
+      );
+    });
+  });
+
+  it("writes an entry that names no key variable as an explicitly keyless one", () => {
+    const { apiKeyEnv: _apiKeyEnv, ...keyless } = ACME;
+    withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+      expect(addProvider("keyless", keyless, path).keyless?.apiKeyEnv).toBeNull();
+      expect(readFileSync(path, "utf8")).toContain('"apiKeyEnv": null');
+    });
+  });
+
+  it("refuses an entry carrying a key value, names the field, and leaves the file alone", () => {
+    // The strict entry schema is what enforces "no key value anywhere" at the write,
+    // rather than hoping the page never sends one.
+    withTempRegistry({ marvin: MARVIN }, (dir, path) => {
+      const before = readFileSync(path, "utf8");
+      expect(() => addProvider("evil", { ...ACME, apiKey: "sk-not-a-secret" }, path)).toThrow(
+        /apiKey/,
+      );
+      expect(readFileSync(path, "utf8")).toBe(before);
+      expect(readdirSync(dir)).toEqual(["providers.json"]);
+    });
+  });
+
+  it("refuses an entry the schema refuses, naming the field that is wrong", () => {
+    withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+      const before = readFileSync(path, "utf8");
+      expect(() => addProvider("acme", { ...ACME, baseUrl: "not a url" }, path)).toThrow(
+        /baseUrl/,
+      );
+      expect(() => addProvider("acme", { ...ACME, contextWindow: 0 }, path)).toThrow(
+        /contextWindow/,
+      );
+      expect(readFileSync(path, "utf8")).toBe(before);
+    });
+  });
+
+  it("refuses a name the registry already has, rather than moving a seat under a run", () => {
+    withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+      const before = readFileSync(path, "utf8");
+      expect(() => addProvider("marvin", ACME, path)).toThrow(/marvin/);
+      expect(readFileSync(path, "utf8")).toBe(before);
+    });
+  });
+
+  it("refuses a name that is not one path segment, which would break <provider>/<id>", () => {
+    // `providerOf` splits on the first `/`, so a name carrying one — like `.` and
+    // `..`, which are not names either — makes an entry no command line can address.
+    for (const name of ["", ".", "..", "acme/m1", "a/b"]) {
+      withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+        const before = readFileSync(path, "utf8");
+        expect(() => addProvider(name, ACME, path)).toThrow(/one path segment/);
+        expect(readFileSync(path, "utf8")).toBe(before);
+      });
+    }
+  });
+
+  it("exports the schemas `parseProviders` parses with, so there is one field list", () => {
+    // A page validates with these rather than with a copy of the fields: a second
+    // list is a second rule, and the two drift.
+    expect(providerEntrySchema.safeParse(ACME).success).toBe(true);
+    expect(providerRegistrySchema.safeParse({ marvin: MARVIN, acme: ACME }).success).toBe(true);
+    expect(
+      providerRegistrySchema.safeParse({ acme: { ...ACME, apiKey: "sk-not-a-secret" } }).success,
+    ).toBe(false);
+    expect(Object.keys(providerEntrySchema.shape).sort()).toEqual([
+      "api",
+      "apiKeyEnv",
+      "baseUrl",
+      "contextWindow",
+      "cost",
+      "maxTokens",
+      "reasoning",
+    ]);
+  });
+});
+
+describe("re-reading the registry in the same process", () => {
+  // These reload the module's cache from a temp file, so they hand it back to the
+  // committed registry when they are done.
+  const withReloaded = (registry: unknown, body: (path: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), "no-dice-providers-reload-"));
+    try {
+      const path = tempRegistry(dir, registry);
+      reloadProviders(path);
+      body(path);
+    } finally {
+      reloadProviders(PROVIDERS_FILE);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("seats on an entry that was not in the file when the process started", () => {
+    // The reload is the one deliberate exception to reading once: it is what lets a
+    // provider added through the console be seated on without a restart.
+    withReloaded({ marvin: MARVIN }, (path) => {
+      expect(providerEntry("acme")).toBeNull();
+      expect(seatModelsJson("acme/m1")).toBeNull();
+      addProvider("acme", ACME, path);
+      reloadProviders(path);
+      expect(providerEntry("acme")).toEqual(ACME);
+      expect(seatModelsJson("acme/m1")).toMatchObject({
+        providers: { acme: { baseUrl: ACME.baseUrl, apiKey: "${ACME_API_KEY}" } },
+      });
+    });
+  });
+
+  it("keeps one pair's two matches on one window when nothing asked for a reload", () => {
+    withReloaded({ marvin: MARVIN, acme: { ...ACME, contextWindow: 1_000 } }, (path) => {
+      expect(providerEntry("acme")?.contextWindow).toBe(1_000);
+      // The file moves under the process; the registry it seats on does not.
+      writeFileSync(
+        path,
+        `${JSON.stringify({ marvin: MARVIN, acme: { ...ACME, contextWindow: 9_000 } }, null, 2)}\n`,
+        "utf8",
+      );
+      expect(providerEntry("acme")?.contextWindow).toBe(1_000);
+      expect(reloadProviders(path).acme?.contextWindow).toBe(9_000);
+      expect(seatModelsJson("acme/m1")).toMatchObject({
+        providers: {
+          acme: {
+            baseUrl: ACME.baseUrl,
+            apiKey: "${ACME_API_KEY}",
+            models: [{ id: "m1", contextWindow: 9_000 }],
+          },
+        },
+      });
+    });
   });
 });
