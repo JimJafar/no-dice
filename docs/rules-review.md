@@ -80,7 +80,7 @@ as [series-notes §6](series-notes.md) records. Checked on this box: `no-dice ev
 series/marvin-subagent-vs-greedy` answers `series.json is not there, so there is no series to
 report`; a filesystem-wide search finds no `series.json`, no `evidence.md` under any `series/`
 directory, and no match log named for any of the five seeds; and no commit reachable from a ref,
-nor any of the five commits unreachable from one, holds a series evidence file. Marvin answers
+nor any commit unreachable from a ref holds a series evidence file. Marvin answers
 `/v1/models` from here, so the endpoint is not what is missing.
 
 **The logs are gone, and unless a backup exists outside this box the five counters have to be
@@ -330,13 +330,13 @@ so of the two confounders only turn latency is still owed.
 
 That fix has a cost for the recommendation below it: **a re-run is played under a different
 harness rule from this series.** The 10 matches above were played by a harness that voided a
-bare-name call; the next ten will be played by one that does not, so they are not matches played
-under identical conditions — the same comparability problem [series-notes §5](series-notes.md)
-cites for changing nothing mid-series. It bites the report's own rows: both missing matches are
-`tool_surface` voids the new harness would not have made for that reason, so the two reports'
-missing-match rows are not the same measurement, and a new series' win-rate interval will be
-computed over ten matches none of which is one of these 8. Read the seat split and the
-missing-match rows of this report as belonging to this series alone.
+bare-name call; the 20 matches a 10-pair re-run plays will be played under one that does not, so
+they are not matches played under identical conditions — the same comparability problem
+[series-notes §5](series-notes.md) cites for changing nothing mid-series. It bites the report's
+own rows: both missing matches are `tool_surface` voids the new harness would not have made for
+that reason, so the two reports' missing-match rows are not the same measurement, and a new
+series' win-rate interval will be computed over 20 matches none of which is one of these 8. Read
+the seat split and the missing-match rows of this report as belonging to this series alone.
 
 Re-run the check on a series of at least 10 pairs in which passes are a small share of turns and
 both matches of every pair produce a log; if Greedy still wins above 50% with the interval
@@ -361,12 +361,13 @@ deletion — so this is a re-run, plus one change to what the repository keeps:
    what a fixed `seed_base` is for — but the record is new ([series-notes §6](series-notes.md)).
 
    **Read the two reports as two series, not one sample.** Nothing is stitched together: the new
-   run replays all ten pairs. But the ten new matches are played after `749d236` turned a
-   bare-name call from a `tool_surface` void into a refused call, and the ten in the standing
+   run replays all ten pairs. But those 20 matches are played after `749d236` turned a
+   bare-name call from a `tool_surface` void into a refused call, and the 10 in the standing
    report were played before it, so the figures do not carry across that line — the old report's
-   missing-match row counts voids the new harness would not make, and its 0.0% – 32.4% interval
-   belongs to the old ten alone. That is the judgement [series-notes §5](series-notes.md) already
-   made about not changing the prompt mid-series, and it is Jim's to make about the name: reuse
+   missing-match row counts voids the new harness would not make, and its 0.0% – 32.4%
+   interval belongs to the old series' 8 counted matches alone. That is the judgement
+   [series-notes §5](series-notes.md) already made about not changing the prompt mid-series, and
+   it is Jim's to make about the name: reuse
    `marvin-subagent-vs-greedy` and keep two reports under one name, or pick a fresh name so the
    directory says which harness played it. Either way the 17,379,888 tokens and 5 h 27 m already
    spent stand as history, not as part of the new sample.
@@ -375,7 +376,8 @@ deletion — so this is a re-run, plus one change to what the repository keeps:
    step 2 the counters are computed into a directory that is deleted with the workspace, which is
    how this review came to have four sections with no counters in them.
 
-At 10 pairs the interval test runs, the win-rate interval narrows, and each of the counters above
+At 10 pairs — 20 matches, about 11 h of Marvin at the 65.5 minutes a pair the Cost growth section
+measured — the interval test runs, the win-rate interval narrows, and each of the counters above
 has 20 matches behind it instead of none.
 
 Two engine questions are deferred in prose above and have **no task filed behind them**: whether
