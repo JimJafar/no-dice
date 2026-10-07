@@ -8,10 +8,12 @@
   ],
   // The viewer is a browser app and gets its own project, whose `lib` has the
   // DOM. Listing it here would give every node package DOM globals too, so the
-  // base project's `exclude` is repeated rather than overridden away.
+  // base project's `exclude` is repeated rather than overridden away. The
+  // console's browser half is the second such app, and is excluded the same way.
   "exclude": [
     "**/node_modules/**",
     "**/dist/**",
-    "games/salient/viewer/**"
+    "games/salient/viewer/**",
+    "packages/ui/web/**"
   ]
 }

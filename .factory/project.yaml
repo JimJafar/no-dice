@@ -21,3 +21,9 @@ gates:
   # so `tsc` alone would not notice a viewer that cannot be bundled.
   - name: viewer-build
     run: pnpm --filter @no-dice/salient-viewer build
+
+  # The console's browser half is excluded from the root project for the same
+  # reason, and its server serves `web/dist` — so a console that cannot be built
+  # is a console that serves a page saying to build it.
+  - name: ui-build
+    run: pnpm --filter @no-dice/ui build

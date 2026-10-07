@@ -14,6 +14,9 @@ importers:
       '@no-dice/runner':
         specifier: workspace:*
         version: link:packages/runner
+      '@no-dice/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
@@ -131,6 +134,28 @@ importers:
       zod:
         specifier: ^4.1.11
         version: 4.6.5
+
+  packages/ui:
+    dependencies:
+      '@no-dice/log':
+        specifier: workspace:*
+        version: link:../log
+      '@no-dice/runner':
+        specifier: workspace:*
+        version: link:../runner
+      '@no-dice/stats':
+        specifier: workspace:*
+        version: link:../stats
+      zod:
+        specifier: ^4.1.11
+        version: 4.6.5
+    devDependencies:
+      happy-dom:
+        specifier: ^20.14.5
+        version: 20.14.5
+      vite:
+        specifier: ^8.3.2
+        version: 8.3.2(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
 packages:
 

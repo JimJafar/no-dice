@@ -9,8 +9,9 @@
     "games/salient/*"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc --noEmit -p games/salient/viewer",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p games/salient/viewer && tsc --noEmit -p packages/ui/web",
+    "test": "vitest run",
+    "ui": "node packages/ui/src/server.ts"
   },
   "engines": {
     "node": ">=22"
@@ -18,6 +19,7 @@
   "devDependencies": {
     "@no-dice/log": "workspace:*",
     "@no-dice/runner": "workspace:*",
+    "@no-dice/ui": "workspace:*",
     "@types/node": "^24.19.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"

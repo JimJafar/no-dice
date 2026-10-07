@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    // The console's browser half is a second workspace project that runs in a
+    // browser, beside the viewer: it needs the DOM globals, and the root project
+    // excludes it so the node packages never see them. `vite/client` types
+    // `import.meta.env` and keeps `@types/node`'s globals out of the app.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
+}
