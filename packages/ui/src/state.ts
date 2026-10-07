@@ -37,9 +37,10 @@ export interface UiState {
   /** The directory finished match logs are listed from, as an absolute path. */
   readonly matchesRoot: string;
   /**
-   * The run in flight, and `null` when there is none. The run manager gives this
-   * a shape of its own; until then the page has one fact to draw — nothing is
-   * running.
+   * The run in flight, and `null` when there is none. The run slot answers for
+   * itself at `/api/run`, with its lines and its paths; this stays `null` until
+   * the page reads that route rather than being told, which is what the
+   * start-page task replaces.
    */
   readonly running: unknown;
 }

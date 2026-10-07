@@ -7,15 +7,19 @@
  * flag would only be a way to expose a run starter to a network by accident. The
  * bind address is not the whole answer: a domain can be aimed at the loopback
  * address, and then a stranger's page is same-origin with this port, so a
- * request whose `Host` is not `127.0.0.1` or `localhost` is refused too. A route
- * that *changes* anything — the one that starts a run — has to check `Origin`
- * over and above that, and no such route exists yet.
+ * request whose `Host` is not `127.0.0.1` or `localhost` is refused too. The
+ * routes that *change* anything — the two that start a run — check `Origin` over
+ * and above that, because a browser sends it and a cross-origin page cannot
+ * make it name this console.
  *
  * Two halves answer. `/api/state` says what a run may be seated on — the bots
- * and the providers the registry names, names and key-variable names only — the
- * two roots the console reads, and the run in flight. Everything else is the
- * built browser app in `web/dist`, served path-safely through `static.ts`, or a
- * page saying to build it when nobody has.
+ * and the providers the registry names, names and key-variable names only —
+ * and the two roots the console reads. `/api/run` says what the run slot holds:
+ * the run in flight, or the last one, with the lines it has printed. A run
+ * is started by `POST /api/run/match` or `POST /api/run/series`, and it is
+ * played in this process, so the request that started it is not what keeps it
+ * alive. Everything else is the built browser app in `web/dist`, served
+ * path-safely through `static.ts`, or a page saying to build it when nobody has.
  *
  * Nothing a request can do is allowed to end this process, because this process
  * is where a run in flight lives. A request line that cannot be read, a `Host`
@@ -46,6 +50,8 @@ import { providerRegistry } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
+import { createRunSlot } from "./runs.ts";
+import type { RunKind, RunSlot } from "./runs.ts";
 import { contentTypeOf, resolveStatic } from "./static.ts";
 import { uiState } from "./state.ts";
 import type { UiRoots, UiState } from "./state.ts";
@@ -70,6 +76,8 @@ export interface UiConfig {
   seriesRoot: string;
   matchesRoot: string;
   webRoot: string;
+  /** Where a run is played: what a relative `--out` or `--dir` is taken from. */
+  cwd: string;
 }
 
 /** What a console may be asked for. The command line's three flags, plus a test's three. */
@@ -112,6 +120,7 @@ const configOf = (options: UiOptions): UiConfig => {
     seriesRoot: resolve(cwd, options.seriesRoot ?? DEFAULT_SERIES_ROOT),
     matchesRoot: resolve(cwd, options.matchesRoot ?? DEFAULT_MATCHES_ROOT),
     webRoot: resolve(cwd, options.webRoot ?? WEB_ROOT),
+    cwd,
   };
 };
 
@@ -131,6 +140,54 @@ const sendJson = (
   // Node drops the body of a `HEAD` answer by itself, so the length above is
   // what a `curl -I` sees and nothing follows it.
   response.end(text);
+};
+
+/** The largest run request this console will read. A form posts a few hundred bytes. */
+const MAX_BODY = 16 * 1024;
+
+/**
+ * The JSON a run request carried, or one line saying why it did not. The body is
+ * read here rather than by the route, because a run must not be started from a
+ * payload that is still arriving — and a body of any size at all is a way to make
+ * a console hold a request it will never answer. A body that cannot be read is a
+ * bad request, not a console that failed, so the route answers it with the line.
+ */
+const readBody = async (request: IncomingMessage): Promise<unknown> => {
+  const text = await new Promise<string>((answered, refused) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      // Refused rather than truncated, and the rest of the body is dropped on the
+      // floor: the run is not started, and the console does not hold a request it
+      // will never answer.
+      if (size > MAX_BODY) refused(new Error(`a run request has to fit in ${String(MAX_BODY)} bytes`));
+      else chunks.push(chunk);
+    });
+    request.on("end", () => void answered(Buffer.concat(chunks).toString("utf8")));
+    request.on("error", refused);
+  });
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("the run request body is not JSON");
+  }
+};
+
+/**
+ * Whether the page that posted is this console's own page. A browser sends
+ * `Origin`, and a page on another domain cannot make it name this console, so a
+ * cross-origin `fetch` against a run route is refused — the `Host` check keeps a
+ * rebound domain from reaching the port at all, and this keeps a page that got
+ * there by some other route from starting a run in it. A request with no
+ * `Origin` is not a browser's cross-origin request: `curl` sends none, and the
+ * operator at a terminal is who that is for.
+ */
+const originIsOurs = (request: IncomingMessage): boolean => {
+  const origin = request.headers.origin;
+  if (origin === undefined || origin === "") return true;
+  const host = request.headers.host;
+  return host !== undefined && origin === `http://${host}`;
 };
 
 /** An answer the browser renders. */
@@ -232,14 +289,78 @@ const pathOf = (url: string | undefined): string | null => {
 /** Where the console's state comes from — the registry is a file this process does not own. */
 type StateOf = (roots: UiRoots) => UiState;
 
-/** One request, routed. The routes so far are reads; a run is started by a later one. */
-const route = (
+/** The two routes that start a run, and the command each one starts. */
+const RUN_POSTS: ReadonlyMap<string, RunKind> = new Map([
+  ["/api/run/match", "match"],
+  ["/api/run/series", "series"],
+]);
+
+/** A method a route does not take, said with the ones it does. */
+const sendMethod = (response: ServerResponse, path: string, method: string, allow: string): void => {
+  sendJson(response, 405, { error: `${method} is not a route of ${path}` }, { allow });
+};
+
+/**
+ * One request, routed. The reads answer out of the state and the run slot; the
+ * two POSTs read their body and ask the slot for a run. The route is `async`
+ * only because a body arrives over more than one event — a started run is not
+ * awaited here, and a request that is answered while its run has
+ * nineteen minutes to go is the whole design of this file.
+ */
+const route = async (
   config: UiConfig,
   stateOf: StateOf,
+  runs: RunSlot,
   path: string,
   method: string,
+  request: IncomingMessage,
   response: ServerResponse,
-): void => {
+): Promise<void> => {
+  if (path === "/api/run") {
+    if (method !== "GET" && method !== "HEAD") {
+      sendMethod(response, path, method, "GET, HEAD");
+      return;
+    }
+    sendJson(response, 200, runs.snapshot());
+    return;
+  }
+
+  const kind = RUN_POSTS.get(path);
+  if (kind !== undefined) {
+    if (method !== "POST") {
+      sendMethod(response, path, method, "POST");
+      return;
+    }
+    if (!originIsOurs(request)) {
+      sendJson(response, 403, {
+        error: `"${String(request.headers.origin)}" is not a page this console starts runs for`,
+      });
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = await readBody(request);
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    const started = runs.start(kind, body);
+    if (!started.ok) {
+      // `parseArgs`'s line for a run the CLI would refuse, and the slot's own
+      // line for a run already in flight — both one line the page shows as it
+      // stands. A 409 rather than a 400 because nothing is wrong with the
+      // request: it is the console that cannot take it right now.
+      sendJson(response, started.problem === "busy" ? 409 : 400, { error: started.error });
+      return;
+    }
+    // Answered before the run has finished, and answered as the run slot
+    // already sees it, so the page can start drawing from the answer.
+    sendJson(response, 202, started.snapshot);
+    return;
+  }
+
   if (method !== "GET" && method !== "HEAD") {
     sendJson(response, 405, { error: `${method} is not a route of this server` }, { allow: "GET, HEAD" });
     return;
@@ -263,10 +384,13 @@ const route = (
  * files this process does not own — `providers.json` is a hand-edited file, and
  * `web/dist` is rewritten by a build — and Node does not catch an
  * exception thrown out of a request listener: it ends the process, run and all.
+ * A route that returns a promise can still reject, and that is the same failure
+ * answered the same way.
  */
 const handle = (
   config: UiConfig,
   stateOf: StateOf,
+  runs: RunSlot,
   request: IncomingMessage,
   response: ServerResponse,
 ): void => {
@@ -283,18 +407,21 @@ const handle = (
     return;
   }
 
-  try {
-    route(config, stateOf, path, request.method ?? "GET", response);
-  } catch (error) {
+  /** One line the page can show, and the same one for whoever is at a terminal. */
+  const failed = (error: unknown): void => {
     const message = error instanceof Error ? error.message : String(error);
-    // The page gets one line it can show, and the terminal gets the same one:
-    // whoever can fix a registry that does not parse is reading a terminal.
     console.error(`no-dice-ui: ${path}: ${message}`);
     if (response.headersSent) {
       response.destroy();
       return;
     }
     sendJson(response, 500, { error: `the console could not answer ${path}: ${message}` });
+  };
+
+  try {
+    route(config, stateOf, runs, path, request.method ?? "GET", request, response).catch(failed);
+  } catch (error) {
+    failed(error);
   }
 };
 
@@ -311,7 +438,11 @@ export async function startServer(options: UiOptions = {}): Promise<Server> {
   // file once and keeps it.
   const registryOf = options.registry ?? providerRegistry;
   const stateOf = (roots: UiRoots): UiState => uiState(roots, registryOf());
-  const server = createServer((request, response) => handle(config, stateOf, request, response));
+  // One slot per console, made here rather than at module scope: a test that
+  // starts two consoles in one process must not have them refuse each
+  // other's runs, and a console that is closed has no run to hand on.
+  const runs = createRunSlot({ roots: config, cwd: config.cwd });
+  const server = createServer((request, response) => handle(config, stateOf, runs, request, response));
 
   await new Promise<void>((listening, failed) => {
     server.once("error", failed);

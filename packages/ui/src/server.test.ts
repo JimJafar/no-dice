@@ -382,9 +382,9 @@ describe("the page", () => {
   it("answers an unknown /api route with a 404, and a method it has no route for with a 405", async () => {
     const port = await listen({ port: 0 });
 
-    const missing = await get(port, "/api/run");
+    const missing = await get(port, "/api/nope");
     expect(missing.status).toBe(404);
-    expect(JSON.parse(missing.body)).toEqual({ error: "no route at /api/run" });
+    expect(JSON.parse(missing.body)).toEqual({ error: "no route at /api/nope" });
 
     const posted = await get(port, "/api/state", "POST");
     expect(posted.status).toBe(405);
