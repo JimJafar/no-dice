@@ -93,13 +93,16 @@ function builtApp(): string {
 const raw = (
   port: number,
   target: string,
-  options: { method?: string; host?: string } = {},
+  options: { method?: string; host?: string; headers?: Record<string, string> } = {},
 ): Promise<RawAnswer> =>
   new Promise((done) => {
     const method = options.method ?? "GET";
     const host = options.host ?? `${HOST}:${String(port)}`;
     const socket = connect({ host: HOST, port }, () => {
-      socket.write(`${method} ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+      const extra = Object.entries(options.headers ?? {})
+        .map(([name, value]) => `${name}: ${value}\r\n`)
+        .join("");
+      socket.write(`${method} ${target} HTTP/1.1\r\nHost: ${host}\r\n${extra}Connection: close\r\n\r\n`);
     });
 
     let text = "";
@@ -285,6 +288,20 @@ describe("the address a request was addressed to", () => {
 
     expect((await raw(port, "/api/state", { host: `localhost:${String(port)}` })).status).toBe(200);
     expect((await raw(port, "/api/state", { host: "127.0.0.1" })).status).toBe(200);
+  });
+
+  it("answers the tailnet name when `tailscale serve` passed the request on from a tailnet user", async () => {
+    const port = await listen({ port: 0 });
+    const host = "colin.example.ts.net:8765";
+
+    const served = await raw(port, "/api/state", {
+      host,
+      headers: { "Tailscale-User-Login": "jim@example.com", "X-Forwarded-For": "100.101.102.103" },
+    });
+    expect(served.status).toBe(200);
+
+    // The same name without the proxy's user is a rebound domain like any other.
+    expect((await raw(port, "/api/state", { host })).status).toBe(400);
   });
 });
 

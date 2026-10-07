@@ -374,6 +374,15 @@ describe("the client that asked", () => {
     expect(own.status).toBe(400);
     expect(JSON.parse(own.body).error).toContain("--a");
 
+    // Behind `tailscale serve` the page is https, on the same host.
+    const tailnet = await post(
+      port,
+      "/api/run/match",
+      { game: "salient" },
+      { origin: `https://${HOST}:${String(port)}` },
+    );
+    expect(tailnet.status).toBe(400);
+
     expect((await snapshotAt(port)).state).toBe("idle");
   });
 

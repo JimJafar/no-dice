@@ -280,7 +280,8 @@ const originIsOurs = (request: IncomingMessage): boolean => {
   const origin = request.headers.origin;
   if (origin === undefined || origin === "") return true;
   const host = request.headers.host;
-  return host !== undefined && origin === `http://${host}`;
+  // `tailscale serve` terminates HTTPS, so a tailnet page's origin is https.
+  return host !== undefined && (origin === `http://${host}` || origin === `https://${host}`);
 };
 
 /** An answer the browser renders. */
@@ -379,7 +380,20 @@ const hostIsOurs = (request: IncomingMessage): boolean => {
   const host = request.headers.host;
   // An HTTP/1.0 request with no `Host` at all is not a browser, and a browser
   // cannot send one.
-  return host !== undefined && (HOSTS as readonly string[]).includes(hostNameOf(host));
+  if (host === undefined) return false;
+  return (HOSTS as readonly string[]).includes(hostNameOf(host)) || viaTailscaleServe(request);
+};
+
+/**
+ * Whether `tailscale serve` passed the request on from a signed-in tailnet user.
+ * It names the user in `Tailscale-User-Login`, and the console binds loopback
+ * only, so that proxy is the one way a tailnet browser reaches it. A rebound
+ * domain's page cannot add the header without a preflight this server never
+ * answers.
+ */
+const viaTailscaleServe = (request: IncomingMessage): boolean => {
+  const login = request.headers["tailscale-user-login"];
+  return typeof login === "string" && login !== "";
 };
 
 /**
