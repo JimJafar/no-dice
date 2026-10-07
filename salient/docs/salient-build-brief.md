@@ -47,7 +47,7 @@ These come from the original design conversation and are not negotiable in v0.
 - Live streaming of a match in progress
 - Video export of a replay
 - More than two players, or leagues and ratings across many models
-- A web UI for launching matches
+- A launching UI beyond the local console in `packages/ui` (`no-dice-ui`), which is loopback-only and one user on one machine: it starts a match or a series in its own process, lists finished results and resumes an interrupted series. Hosting, auth, sessions and HTTPS stay out, as does live per-turn streaming of a match in progress — the console's progress is per pair and per match.
 - Own-orientation boards (an [open question](salient-rules-v0.md#Open%20questions))
 - A calibrated win-probability bar (needs a large batch of real logs first)
 

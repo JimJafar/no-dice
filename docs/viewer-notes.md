@@ -132,7 +132,8 @@ timings are all driven by those fields, not by the fixture.
 | The "Called it" / "Missed" verdict tag | How predictions are scored is undecided (`salient/docs/salient-mockups.md`, "What is placeholder"). The panel shows the prediction and no judgement of it. |
 | Live streaming of a match in progress | Brief §3, out of scope for v0. The viewer loads a finished log file. |
 | Video export of a replay | Brief §3, out of scope for v0. The frame keeps the mock-up's 1920 × 1080 geometry so a recording is still possible, but nothing records it. |
-| A calibrated win-probability bar, own-orientation boards, more than two players, a web UI for launching matches | Brief §3, out of scope for v0. |
+| A calibrated win-probability bar, own-orientation boards, more than two players | Brief §3, out of scope for v0. |
+| A web UI for launching matches | No longer out of scope, and still not this app: the console is `packages/ui` (`no-dice-ui`), loopback-only and one user on one machine, which starts a match or a series in its own process, mounts the built viewer at `/viewer/` and hands it a `?log=` URL for a log it serves itself. The viewer reads that log and nothing else. Brief §3 as amended. |
 | The mock-up's six-symbol key beside the board | The symbols are on the board itself, and the chart carries its own two-line legend. A legend for the board is not in the plan's tasks. |
 | A context meter on a bot seat | Not a missing feature: a bot seat keeps no conversation and has no window to measure against, so the panel draws no meter rather than one reading zero. |
 
