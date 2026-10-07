@@ -685,6 +685,68 @@ describe("the per-model rows", () => {
     expect(x.bands["9-17"].tokens.total).toBe(110 * x.bands["9-17"].turnCount);
   });
 
+  it("gives each model its own win rate, with the report's 95% interval", () => {
+    // Model X's row is the headline row: the same five counted matches, seen
+    // from X's seat either way.
+    const x = report.models[0];
+    expect(x.result).toEqual(report.result);
+    expect(x.result.confidence).toBe(0.95);
+
+    // The bot held the other seat of every one of those matches, so its counts
+    // are the mirror of X's: it won the 101 seat-B match, drew the 102 seat-B
+    // one, and lost the other three.
+    const bot = report.models[1];
+    expect(bot.result.winRate).toEqual({
+      wins: 1,
+      losses: 3,
+      draws: 1,
+      n: 5,
+      successes: 1.5,
+      rate: 0.3,
+    });
+    expect(bot.result.interval).toEqual(wilson(1.5, 5, 1.96));
+    // The rate sits inside its own interval, which is the only check a pooled
+    // row over several series can have.
+    expect(bot.result.interval!.low).toBeLessThanOrEqual(bot.result.winRate.rate!);
+    expect(bot.result.winRate.rate!).toBeLessThanOrEqual(bot.result.interval!.high);
+  });
+
+  it("splits each model's record by the seat that model held", () => {
+    // The report's own seat split is model X's, so X's row repeats it exactly.
+    const x = report.models[0];
+    expect(x.seatSplit).toEqual(report.seatSplit);
+
+    // The bot held seat A in the matches the record puts X in seat B for — 101
+    // (won), 102 (drawn) and 104 (lost) — and seat B in 101 seat A
+    // and 102 seat A, both of which it lost. A row that read model X's seat for
+    // every model would print X's split here.
+    const bot = report.models[1];
+    expect(bot.seatSplit.A.winRate).toEqual({
+      wins: 1,
+      losses: 1,
+      draws: 1,
+      n: 3,
+      successes: 1.5,
+      rate: 0.5,
+    });
+    expect(bot.seatSplit.B.winRate).toEqual({
+      wins: 0,
+      losses: 2,
+      draws: 0,
+      n: 2,
+      successes: 0,
+      rate: 0,
+    });
+    expect(bot.seatSplit.A.interval).toEqual(wilson(1.5, 3, 1.96));
+
+    for (const model of report.models) {
+      expect(model.result.winRate.n).toBe(model.matches);
+      expect(model.seatSplit.A.winRate.n + model.seatSplit.B.winRate.n).toBe(model.matches);
+      expect(model.seatSplit.A.winRate.n).toBe(model.seats.A);
+      expect(model.seatSplit.B.winRate.n).toBe(model.seats.B);
+    }
+  });
+
   it("keeps the context figures per match, and a compaction's nought out of them", () => {
     const x = report.models[0];
     // One compaction turn in the fixture, on turn 18 of seed 101 from seat A,
@@ -984,6 +1046,17 @@ describe("the markdown", () => {
     expect(markdown).toContain("## Seat effect");
     expect(markdown).toContain("| A | 2 | 0 | 0 | 2 | 100.0% |");
     expect(markdown).toContain("| B | 1 | 1 | 1 | 3 | 50.0% |");
+  });
+
+  it("prints no per-model win rate: the leaderboard reads the object, not this", () => {
+    // The per-model section is brief §6.7's counts table. A model's win rate is
+    // on the report once, under its own pairing, and the pooled rows the
+    // leaderboard draws are read off the report object rather than off this
+    // markdown — which is why adding those fields changes no line here.
+    const perModel = markdown.slice(markdown.indexOf("## Per model"), markdown.indexOf("## Seat effect"));
+    expect(perModel).not.toContain("win rate");
+    expect(perModel).not.toContain("Wilson");
+    expect(perModel).toContain("5 matches counted — 2 in seat A, 3 in seat B.");
   });
 });
 

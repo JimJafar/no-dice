@@ -7,7 +7,9 @@
  * the log's own `result` decides who won and by how much, and the per-model rows
  * are `./match-metrics.ts`'s counts summed over the series' matches, so the
  * figures a series report prints are the same figures the report on one match of
- * that series prints.
+ * that series prints. A per-model row carries that model's win rate and seat
+ * split too, from the same `resultOf` as the headline row, which is what lets
+ * `./leaderboard.ts` pool those rows across series without a second formula.
  *
  * **What counts, and what does not.** A match enters the win rate only when it
  * was played and stands. A match the series recorded as `failed` — a voided
@@ -261,6 +263,18 @@ export interface ModelRow {
   /** Matches counted for this model, and how many of them it played from each seat. */
   matches: number;
   seats: Record<Seat, number>;
+  /**
+   * That model's record over the matches counted for it, with the report's 95%
+   * interval — the headline row's arithmetic over this model's scope, and the
+   * row `./leaderboard.ts` pools across series.
+   */
+  result: ResultRow;
+  /**
+   * The same record over only the matches this model played from each seat. The
+   * seat a model actually held, read off that match's log header, which is not
+   * one seat for a model across a series: the swap moves it.
+   */
+  seatSplit: Record<Seat, ResultRow>;
   metrics: ModelMetrics;
   bands: Record<BandName, ModelMetrics>;
 }
@@ -510,8 +524,14 @@ export const missingOf = (matches: readonly MissingMatch[]): MissingMatches => {
   };
 };
 
-/** The win rate over a scope of outcomes, with the report's 95% interval. */
-const resultOf = (outcomes: readonly Outcome[]): ResultRow => {
+/**
+ * The win rate over a scope of outcomes, with the report's 95% interval.
+ *
+ * Exported for `./leaderboard.ts`, which pools counts across series and then
+ * puts the pooled totals through this: one place takes the report's interval, so
+ * a pooled row cannot quote an interval the report would not print.
+ */
+export const resultOf = (outcomes: readonly Outcome[]): ResultRow => {
   const winRate = winRateOf(outcomes);
   return {
     winRate,
@@ -650,6 +670,8 @@ const aggregate = (
 interface SeatScope {
   seed: number;
   seat: Seat;
+  /** How that match went for the model holding `seat`, read off the log's result. */
+  outcome: Outcome;
   metrics: TurnMetrics;
   bands: Record<BandName, BandMetrics>;
 }
@@ -659,7 +681,8 @@ interface SeatScope {
  *
  * A model plays both seats across a series — that is what the seat swap is — so
  * its rows are the counts of the seat it actually held in each match, never one
- * seat's rows read for every match. The depth split is `match-metrics`'s own
+ * seat's rows read for every match — and its win rate is taken over those same
+ * matches, from the seat's side of each one. The depth split is `match-metrics`'s own
  * bands summed across the matches, which is what brief §6.7's "decline with
  * depth" asks for: a model that falls apart from turn 18 on shows in the
  * `18-25` column instead of being averaged into the series figure.
@@ -671,6 +694,8 @@ const modelRowOf = (label: string, played: readonly SeatScope[]): ModelRow => {
       played.map((each) => ({ seed: each.seed, seat: each.seat, metrics: each.bands[band.name].metrics })),
     );
   }
+  const at = (seat: Seat): Outcome[] =>
+    played.filter((each) => each.seat === seat).map((each) => each.outcome);
   return {
     label,
     matches: played.length,
@@ -678,6 +703,8 @@ const modelRowOf = (label: string, played: readonly SeatScope[]): ModelRow => {
       A: played.filter((each) => each.seat === "A").length,
       B: played.filter((each) => each.seat === "B").length,
     },
+    result: resultOf(played.map((each) => each.outcome)),
+    seatSplit: { A: resultOf(at("A")), B: resultOf(at("B")) },
     metrics: aggregate(played),
     bands,
   };
@@ -703,13 +730,16 @@ export async function seriesReport(
   // Model X is the pairing's first seat, and the one the swap moves. Which model
   // actually sat in each seat of each match is the log header's to say.
   const byModel = new Map<string, SeatScope[]>();
-  for (const { seed, players, metrics } of counted) {
+  for (const { seed, players, metrics, result } of counted) {
     for (const each of ["A", "B"] as const) {
       const label = players[each];
       const scopes = byModel.get(label) ?? [];
       scopes.push({
         seed,
         seat: each,
+        // The result from the side of the board that model actually held, which
+        // is the seat this loop is in — not model X's seat.
+        outcome: outcomeOf(result, each),
         metrics: metrics[each].metrics,
         bands: metrics[each].bands,
       });

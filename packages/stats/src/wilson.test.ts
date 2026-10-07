@@ -140,6 +140,26 @@ describe("the Wilson interval", () => {
     expect(winless.high).toBeCloseTo(0.398849, 6);
   });
 
+  it("puts the rate inside its own interval at the ends, at either confidence", () => {
+    // Which side of 1 the arithmetic lands on depends on `n` and `z`: 5
+    // for 5 at 99% comes out a hair past and clamps to 1, while 6 for 6 at the
+    // report's 95% comes out a hair short — which would leave a model that won
+    // every match of two series sitting outside the interval it is ranked by, and
+    // a leaderboard row cannot do that.
+    for (const { successes, n, confidence } of [
+      { successes: 6, n: 6, confidence: 0.95 as const },
+      { successes: 0, n: 6, confidence: 0.95 as const },
+      { successes: 2, n: 2, confidence: 0.95 as const },
+      { successes: 3, n: 3, confidence: 0.99 as const },
+    ]) {
+      const interval = wilsonInterval({ successes, n, z: zOf(confidence) });
+      const rate = successes / n;
+      expect(interval.low <= rate && rate <= interval.high, `${String(successes)} of ${String(n)}`).toBe(true);
+      expect(interval.low).toBeGreaterThanOrEqual(0);
+      expect(interval.high).toBeLessThanOrEqual(1);
+    }
+  });
+
   it("refuses a sample it cannot put an interval on", () => {
     // An interval out of no matches, or out of more successes than matches, is
     // what a series would stop on, so it fails at the call.

@@ -103,10 +103,16 @@ export const wilsonInterval = (input: { successes: number; n: number; z: number 
   const half = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
   // The interval is mathematically inside [0, 1] — that is the point of it — but
   // the arithmetic lands a hair outside at the ends, and a report that prints a
-  // win rate above 1 is a report nobody can read.
+  // win rate above 1 is a report nobody can read. At the two ends of the sample
+  // the bounds are not merely inside [0, 1], they are 1 and 0: `p * (1 - p)` is
+  // nought and the two `z2` terms cancel exactly. They are named rather than
+  // rounded to, because which side of 1 the rounding falls on depends on `n` and
+  // `z` — 5 for 5 at 99% lands a hair past and clamps to 1, 6 for 6 at 95% lands
+  // a hair short — and a model that won every match it played cannot be
+  // allowed to sit outside its own interval.
   return {
-    low: Math.max(0, centre - half),
-    high: Math.min(1, centre + half),
+    low: successes === 0 ? 0 : Math.max(0, centre - half),
+    high: successes === n ? 1 : Math.min(1, centre + half),
   };
 };
 

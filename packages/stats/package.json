@@ -3,12 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Match and series statistics: win rate and margin from brief §6.5 and §6.7, one salient-log/1's per-model counts split by turn depth, the rules' open questions counted out of the logs, and the one match of a series worth rendering.",
+  "description": "Match and series statistics: win rate and margin from brief §6.5 and §6.7, one salient-log/1's per-model counts split by turn depth, the rules' open questions counted out of the logs, the one match of a series worth rendering, and the per-model rows a leaderboard pools across series.",
   "exports": {
     "./match-metrics": "./src/match-metrics.ts",
     "./wilson": "./src/wilson.ts",
     "./margin": "./src/margin.ts",
     "./series-report": "./src/series-report.ts",
+    "./leaderboard": "./src/leaderboard.ts",
     "./rules-evidence": "./src/rules-evidence.ts",
     "./showcase": "./src/showcase.ts"
   },
