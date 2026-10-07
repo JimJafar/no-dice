@@ -2,8 +2,13 @@ node_modules/
 dist/
 # Anchored: the runner's series directories live at the repo root, and a series'
 # report is kept under `reports/series/`, which must not be caught by this.
-/series/
+/series/*
 matches/
+# A baseline series is kept: its record, logs and Pi transcripts are what later
+# series are measured against. The seat homes beside the transcripts are not.
+!/series/deepseek-flash-vs-greedy/
+!/series/deepseek-flash-vs-greedy/matches/
+/series/*/sessions/*/pi-home-*/
 # A measurement run's log and its seat homes; the report beside them is kept.
 reports/*.json
 reports/*-match/
