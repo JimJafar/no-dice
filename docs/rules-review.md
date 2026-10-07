@@ -70,23 +70,23 @@ provider, so it has no context to lose.
 The rules' questions are stated as counts — hex flips a turn, lead changes a match, Node hand
 changes, neutral captures, re-scouts. `packages/stats/src/rules-evidence.ts` computes all five
 from a match log alone, and `no-dice evidence --series <dir>` writes them to
-`series/<name>/evidence.md`. **Nothing of it is reachable from this workspace.** `series/` is
+`series/<name>/evidence.md`. **Nothing of it survives.** `series/` is
 gitignored because a real log is 0.9–1.1 MB of tool results
 ([series-notes §7](series-notes.md)); the report was copied into `reports/series/` and the
 evidence file was not; and the directory the report header names —
 `/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy` —
-is not on this box. Checked again on 7 October, after the outage that first made it look missing:
-`no-dice evidence --series series/marvin-subagent-vs-greedy` answers `series.json is not there, so
-there is no series to report`, and a search of the filesystem finds no `evidence.md`, no
-`series.json` and no match log named for any of the five seeds anywhere; the repository's history
-and its two dangling commits hold no evidence file either. Marvin answers `/v1/models` from here,
-so the endpoint is not the blocker — the logs are.
+was written inside the `series-real-run` task's own workspace and deleted when that task merged,
+as [series-notes §6](series-notes.md) records. Checked on this box: `no-dice evidence --series
+series/marvin-subagent-vs-greedy` answers `series.json is not there, so there is no series to
+report`; a filesystem-wide search finds no `series.json`, no `evidence.md` under any `series/`
+directory, and no match log named for any of the five seeds; and no commit reachable from a ref,
+nor any of the five commits unreachable from one, holds a series evidence file. Marvin answers
+`/v1/models` from here, so the endpoint is not what is missing.
 
-**Whether those 8 logs are gone for good is Jim's to answer, and it decides how much of this
-review has to be re-earned.** If that directory is still somewhere reachable, `no-dice evidence`
-reads the five counters out of logs already played, in seconds, and four of the sections below
-fill in with no new matches at all. If it is not, they come from the re-run the closing section
-sets out.
+**The logs are gone, and unless a backup exists outside this box the five counters have to be
+re-earned by playing again.** The one thing this review can act on without a model is the reason
+they went missing: the counters exist as code, the run computed them, and nothing copied the
+answer somewhere that survives.
 
 So the four sections that turn on those counts — Home bonus, Final-turn lunge, Centre Node
 ping-pong, No last-seen memory — carry the real-series numbers the report *does* hold, and are
@@ -227,12 +227,12 @@ compactions in 9-17 sit in a band with only 4 provider errors, so nothing here a
 error to a compaction. That join needs the per-turn `compacted` flag against the per-turn error
 counts, which is one pass over the logs — logs that no longer exist.
 
-**Decision:** none taken here — the recommendation is that compaction stays on, and the
-rules' alternative, let it fail when it runs out of room, is refused on these numbers. It is not a
-hypothetical failure: the
-seat already lost **18 turns to provider errors** and **34 more to the 300 s cap**, so 53 of its
-200 turns were already lost to the harness, and removing the one mechanism that keeps a 25-turn
-conversation inside its window would add to that count rather than protect anything. No engine or
+**Decision:** recommended, not taken — compaction stays on and the rules' alternative, let it
+fail when it runs out of room, is refused on these numbers; Jim confirms it in brief §11. It is
+not a hypothetical failure: the seat already lost **18 turns to provider errors** and **34 more to
+the 300 s cap**, so 53 of its 200 turns were already lost to the harness, and removing the one
+mechanism that keeps a 25-turn conversation inside its window would add to that count rather
+than protect anything. No engine or
 config change, nothing to replay. The place this is answered is the brief §11 open item **"Whether
 compaction stays on, after seeing how often it happens"** — how often it happens is now measured
 (7 turns, every seed, the first on turn 9), so the item can be answered. Until Jim answers it
@@ -328,15 +328,15 @@ changed `packages/harness/src/pi-player.ts` so that a call to one of the seven b
 `tool_surface`. A tool outside the seven still voids it. A re-run should not lose matches this way,
 so of the two confounders only turn latency is still owed.
 
-That fix has a cost for the recommendation below it: **extending this series crosses the harness
-change.** The 5 pairs already on disk were played by a harness that voided a bare-name call; the
-new ones will be played by one that does not, so the two halves are not matches played under
-identical conditions — the same comparability problem [series-notes §5](series-notes.md) cites for
-changing nothing mid-series. It bites the report's own rows: both missing matches are `tool_surface`
-voids the new harness would not have made for that reason, so a resumed series' missing-match
-figures straddle the boundary, and the win-rate interval would be computed over 8 old matches plus
-however many new ones survive. Read the seat split and the missing-match rows as two samples
-across that line, not one.
+That fix has a cost for the recommendation below it: **a re-run is played under a different
+harness rule from this series.** The 10 matches above were played by a harness that voided a
+bare-name call; the next ten will be played by one that does not, so they are not matches played
+under identical conditions — the same comparability problem [series-notes §5](series-notes.md)
+cites for changing nothing mid-series. It bites the report's own rows: both missing matches are
+`tool_surface` voids the new harness would not have made for that reason, so the two reports'
+missing-match rows are not the same measurement, and a new series' win-rate interval will be
+computed over ten matches none of which is one of these 8. Read the seat split and the
+missing-match rows of this report as belonging to this series alone.
 
 Re-run the check on a series of at least 10 pairs in which passes are a small share of turns and
 both matches of every pair produce a log; if Greedy still wins above 50% with the interval
@@ -347,29 +347,29 @@ the series would be replayed at its seeds.
 
 ## What would close the four open sections
 
-First the cheap one, which the first look at this could not do because of a network outage: **if
-`series/marvin-subagent-vs-greedy/` and its `matches/` are still reachable anywhere**, then
-`no-dice evidence --series <that directory>` reads all five counters out of the 8 logs already
-played, and four of the sections above fill in with no new matches. The counters exist as code,
-the logs existed, and nothing copied the output somewhere that survives — that is the whole gap.
-
-Then the run, and one change to what the repository keeps:
+Nothing of the first series is left to resume — [series-notes §6](series-notes.md) records the
+deletion — so this is a re-run, plus one change to what the repository keeps:
 
 1. `no-dice series --game salient --a marvin/subagent --b bot:greedy --name
-   marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 60000000 --concurrency 1` — the same
-   command at a higher pair limit continues this series from its recorded seeds
-   ([series-notes §6](series-notes.md)) and replays the two voided matches, which under the
-   post-`749d236` harness are likely to produce logs the old one threw away.
+   marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 60000000 --concurrency 1` — **a new
+   series, not a continuation of the first.** With no `series.json` on disk, `planSeries` falls
+   back to `DEFAULT_SEED_BASE` and draws a fresh list, so the command plays all ten pairs
+   into a new `series/marvin-subagent-vs-greedy/`, and the `series.json` and `report.md` it writes
+   describe that series alone. The 8 matches already played are not in it: they exist only as the
+   numbers in the kept report. The maps are the same ones — the draw is a stream from one base, so
+   a fresh draw from base `0` starts with the five seeds §1 of the series notes lists, which is
+   what a fixed `seed_base` is for — but the record is new ([series-notes §6](series-notes.md)).
 
-   **Read that as two series stitched together.** The five pairs on disk were played before
-   `749d236` turned a bare-name call from a `tool_surface` void into a refused call; the five new
-   pairs will be played after it, so the ten are not one comparable sample — the missing-match row
-   of the standing report describes the old half only, and the win-rate interval mixes the two.
-   That is the judgement [series-notes §5](series-notes.md) already made about not changing the
-   prompt mid-series, and it is Jim's to make again here: extend this name and treat the boundary
-   openly, or start a fresh series name so the sample is one harness from turn 1. Extending keeps
-   the 8 matches already paid for but makes the sample two samples; starting fresh throws away
-   17,379,888 tokens and 5 h 27 m of Marvin and buys one clean sample.
+   **Read the two reports as two series, not one sample.** Nothing is stitched together: the new
+   run replays all ten pairs. But the ten new matches are played after `749d236` turned a
+   bare-name call from a `tool_surface` void into a refused call, and the ten in the standing
+   report were played before it, so the figures do not carry across that line — the old report's
+   missing-match row counts voids the new harness would not make, and its 0.0% – 32.4% interval
+   belongs to the old ten alone. That is the judgement [series-notes §5](series-notes.md) already
+   made about not changing the prompt mid-series, and it is Jim's to make about the name: reuse
+   `marvin-subagent-vs-greedy` and keep two reports under one name, or pick a fresh name so the
+   directory says which harness played it. Either way the 17,379,888 tokens and 5 h 27 m already
+   spent stand as history, not as part of the new sample.
 2. `no-dice evidence --series series/marvin-subagent-vs-greedy` afterwards, and the resulting
    `evidence.md` kept in `reports/series/` beside the report the way `report.md` is kept. Without
    step 2 the counters are computed into a directory that is deleted with the workspace, which is
