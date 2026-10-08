@@ -1,5 +1,7 @@
 /**
- * Every kept rules-evidence copy holds the five counters it was kept for.
+ * The kept copies under `reports/series/` hold the figures they were kept for.
+ * Where a series' logs are tracked as well, they hold exactly what those logs
+ * give today.
  *
  * `no-dice evidence --series <dir>` writes `series/<name>/evidence.md`, and
  * `/series/` in `.gitignore` is anchored to the repository root precisely so the
@@ -17,12 +19,25 @@
  * sections the generator writes them in. It does not require a copy for
  * every kept report: run 1's logs are gone, so its evidence cannot be
  * regenerated, and a test that demanded one would be a test that fails forever.
+ *
+ * The second suite answers the other half of the problem. A kept series is now
+ * tracked twice over: the whole series directory (`series/marvin-subagent-vs-
+ * greedy/`, whitelisted into git as the benchmark's baseline) and the kept copy
+ * under `reports/series/`. `no-dice stats` and `no-dice evidence` rewrite the
+ * first and never touch the second, so the two can drift and the rules review
+ * would quietly quote the stale one. So the copy is regenerated from the logs
+ * with the very generators the CLI runs, and compared: only the line naming the
+ * directory the generator was pointed at is allowed to differ, because a kept
+ * copy carries the path of the machine that played the series.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+
+import { renderSeriesReportMarkdown, seriesReport } from "../packages/stats/src/series-report.ts";
+import { renderSeriesEvidenceMarkdown, seriesEvidence } from "../packages/stats/src/rules-evidence.ts";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -81,5 +96,77 @@ describe("the kept rules-evidence copies under reports/series/", () => {
         expect(text, `reports/series/${name} has no ${column} column`).toContain(column);
       }
     }
+  });
+});
+
+/** The one series whose logs are tracked, and the copies kept from them. */
+const SERIES_DIR = join(ROOT, "series", "marvin-subagent-vs-greedy");
+const KEPT_OF_SERIES = {
+  report: join(KEPT_DIR, "marvin-subagent-vs-greedy-rerun.md"),
+  evidence: join(KEPT_DIR, "marvin-subagent-vs-greedy-rerun-evidence.md"),
+};
+
+/**
+ * The kept copies and a fresh render compared on everything but where they were
+ * generated: the `Series directory ...` line is the one line the generator
+ * copies from its argument rather than from the logs.
+ */
+const apartFromTheDirectoryLine = (text) =>
+  text.replace(/^Series directory `[^`]*`\.$/m, "Series directory <wherever>.");
+
+describe("the kept copies against the series they were copied from", () => {
+  /** What the CLI's own generators make of the tracked logs, in memory. */
+  let rendered;
+
+  beforeAll(async () => {
+    const report = await seriesReport(SERIES_DIR);
+    const evidence = await seriesEvidence(SERIES_DIR);
+    rendered = {
+      report: renderSeriesReportMarkdown(report),
+      evidence: renderSeriesEvidenceMarkdown(evidence),
+      pairing: [report.xLabel, report.opponentLabel],
+    };
+  });
+
+  it("keeps a report and an evidence copy for the series whose logs are tracked", () => {
+    expect(existsSync(join(SERIES_DIR, "series.json")), `${SERIES_DIR} has no series.json`).toBe(
+      true,
+    );
+    for (const [kind, path] of Object.entries(KEPT_OF_SERIES)) {
+      expect(existsSync(path), `no kept ${kind} at ${path}`).toBe(true);
+    }
+  });
+
+  it("keeps a report that is what `no-dice stats` writes for those logs", () => {
+    expect(apartFromTheDirectoryLine(readFileSync(KEPT_OF_SERIES.report, "utf8"))).toBe(
+      apartFromTheDirectoryLine(rendered.report),
+    );
+  });
+
+  it("keeps an evidence file that is what `no-dice evidence` writes for those logs", () => {
+    expect(apartFromTheDirectoryLine(readFileSync(KEPT_OF_SERIES.evidence, "utf8"))).toBe(
+      apartFromTheDirectoryLine(rendered.evidence),
+    );
+  });
+
+  it("counts the same matches in both copies as the record lists", () => {
+    // The line `stats` prints and the report and the evidence both repeat.
+    const counted = rendered.report.match(/^\d+ pairs recorded, \d+ matches: .+$/m)?.[0] ?? "";
+    expect(counted, "the record's own tally did not match the pattern").not.toBe("");
+    for (const [kind, path] of Object.entries(KEPT_OF_SERIES)) {
+      expect(readFileSync(path, "utf8"), `the kept ${kind} counts other matches`).toContain(
+        counted,
+      );
+    }
+  });
+
+  it("names the pairing the record says was played", () => {
+    const [x, opponent] = rendered.pairing;
+    expect(readFileSync(KEPT_OF_SERIES.report, "utf8")).toContain(
+      `# Series report: ${x} vs ${opponent}`,
+    );
+    expect(readFileSync(KEPT_OF_SERIES.evidence, "utf8")).toContain(
+      `# Rules evidence: ${x} vs ${opponent}`,
+    );
   });
 });
