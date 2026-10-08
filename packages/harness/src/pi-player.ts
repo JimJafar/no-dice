@@ -36,8 +36,9 @@
  * A `prompt` command the seat never answers — its client waits 30 s, drops the
  * request and rejects, with the child alive — passes with `prompt_timeout`, the
  * seat is stopped before the turn is handed back, and the match goes on; the
- * next turn first puts the seat back in order (`recoverSeat`), and if it still
- * will not take a prompt, that turn passes the same way. A turn that runs out of
+ * next turn first puts the seat back in order (`recoverSeat`), and a seat that
+ * recovery still cannot make quiet is passed with `prompt_timeout` too — there
+ * its refusal to take the prompt is known, not guessed. A turn that runs out of
  * its time is aborted by the runner,
  * which is the one that knows, and the runner says `timeout` on the way to the
  * log. The match-level failure — the Pi process dying — is not a turn, and is
@@ -208,6 +209,13 @@ const RUN_STOPS = 2;
  * round trip, so a seat that is merely busy answers them in milliseconds; five
  * seconds is room for a loaded box, and three passes is room for a stop that
  * needs a second look.
+ *
+ * The worst case is what the next turn has to carry on top of its own: three
+ * passes, two commands each, five seconds each — 30 s, against the runner's
+ * 5-minute turn cap (`TURN_TIMEOUT_MS`, packages/runner/src/match.ts) and the
+ * ~220 s a turn that is fought all the way to its stops already costs.
+ * `packages/harness/src/pi-turn.test.ts` bounds the turn after a wedge against
+ * that cap, so this number cannot grow unnoticed.
  */
 const RECOVERY_COMMAND_MS = 5_000;
 const RECOVERY_PASSES = 3;
@@ -272,6 +280,23 @@ export interface SeatRecovery {
 }
 
 /**
+ * Why a `prompt` command that came back wrong passes the turn.
+ *
+ * The rejection text alone only ever says `prompt_timeout` when it is the
+ * client's own 30 s wait: a rejection carrying Pi's error text — "Agent is
+ * already processing…" is the likeliest — is a seat that answered the command to
+ * refuse it, which is brief §6.3's plain pass and not a turn nobody answered.
+ * Unless the recovery that began this turn already said the seat was not quiet:
+ * a seat still streaming or compacting refuses the prompt for that reason, and
+ * "not quiet" is this end's own measurement of a seat that never took the
+ * question, which is what `prompt_timeout` says.
+ */
+export const passReasonFor = (error: unknown, recovery: SeatRecovery | null): PassReason =>
+  commandTimedOut(error) || (recovery !== null && recovery.quiet !== true)
+    ? "prompt_timeout"
+    : "no_submission";
+
+/**
  * Wait for one command on this end's clock, and read not being told as an
  * answer rather than as a failure.
  *
@@ -318,7 +343,9 @@ const withinBudget = async <T>(run: () => Promise<T>, ms: number): Promise<T | n
  * brief §6.3 forbids retrying a turn, and the passed turn's prompt is already in
  * the seat's history, late or not. A seat that is still busy after being asked
  * and stopped as many times as the budget allows is asked anyway; if it will
- * not take the prompt, that turn passes too, and the match goes on.
+ * not take the prompt, that turn passes too, and the verdict here is what lets
+ * the harness call that pass `prompt_timeout` rather than the `no_submission`
+ * a seat earns by being asked and choosing to sit the turn out.
  */
 export const recoverSeat = async (
   client: SeatRecoveryClient,
@@ -426,6 +453,13 @@ export class PiPlayer implements Player {
    */
   private missedPrompt = false;
   /**
+   * What the last between-turns recovery found and did, or `null` when the last
+   * turn needed none. The log has no field for a recovery — adding one is a
+   * schema change — but the runner and the tests read the cost of it, and that a
+   * seat was handed to a turn still busy, from here.
+   */
+  private recovery: SeatRecovery | null = null;
+  /**
    * The context window Pi reported for the seat's model, read from the
    * session stats while the seat was starting. `null` when the seat has not
    * started, and when Pi gives its model no window at all.
@@ -456,6 +490,14 @@ export class PiPlayer implements Player {
     const home = this.home;
     if (home === null) throw new Error("the player has not started");
     return home;
+  }
+
+  /**
+   * The recovery the last turn began with, if it needed one: whether the seat
+   * was made quiet, and how many asks, stops and queue-clears it took.
+   */
+  get lastRecovery(): SeatRecovery | null {
+    return this.recovery;
   }
 
   /**
@@ -564,7 +606,10 @@ export class PiPlayer implements Player {
    * record and the seat is prompted again next turn; only a seat whose process is
    * gone ends the match. The turn after such a pass starts by putting the seat
    * back in order, which is what makes "prompted again next turn" mean a turn
-   * that is played rather than a turn that is refused.
+   * that is played rather than a turn that is refused; and when the recovery
+   * cannot make the seat quiet, the refusal that follows is read as that seat
+   * never taking the question — `prompt_timeout` again — rather than as a seat
+   * that answered and sat the turn out.
    */
   async playTurn(turn: number): Promise<TurnOutcome> {
     const client = this.client;
@@ -573,8 +618,11 @@ export class PiPlayer implements Player {
     // A seat that missed the last turn's prompt is put back in order
     // before this one asks it again. This runs before the turn's listener is
     // installed, so a run that is still finishing the passed turn cannot have
-    // its tool calls, or any orders it makes, read as this turn's.
-    if (this.missedPrompt) await recoverSeat(client);
+    // its tool calls, or any orders it makes, read as this turn's. The verdict
+    // is kept: a seat the recovery could not make quiet is a seat whose refusal
+    // of this prompt is known, not guessed, and `lastRecovery` says what it cost.
+    const recovery: SeatRecovery | null = this.missedPrompt ? await recoverSeat(client) : null;
+    this.recovery = recovery;
 
     const toolCalls: ToolCallRecord[] = [];
     /** The calls Pi has started but not finished, keyed by its own call id. */
@@ -671,11 +719,9 @@ export class PiPlayer implements Player {
         // request and rejects, with the child running and still working. That is
         // not a death, and it is not the runner's turn cap either, so the turn is
         // passed under a reason of its own and the match goes on with the calls
-        // the seat had already made. Only the client's own wait is that reason: a
-        // rejection carrying Pi's error text — "Agent is already processing…" is
-        // the likeliest — is a seat that answered the command to refuse it, which
-        // is brief §6.3's plain pass and not a turn nobody answered.
-        passed = commandTimedOut(error) ? "prompt_timeout" : "no_submission";
+        // the seat had already made — and which reason, read together with what
+        // the recovery that began this turn found, is what `passReasonFor` says.
+        passed = passReasonFor(error, recovery);
         // The turn is not retried, and this prompt is never sent again; the
         // seat is put back in order before the *next* turn asks it.
         this.missedPrompt = true;

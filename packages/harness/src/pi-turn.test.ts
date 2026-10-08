@@ -44,8 +44,8 @@ import { MatchServer, startServer, type RunningServer } from "@no-dice/salient-s
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
-import type { PiPlayerOptions, SeatRecoveryClient } from "./pi-player.ts";
-import { recoverSeat } from "./pi-player.ts";
+import type { PiPlayerOptions, SeatRecovery, SeatRecoveryClient } from "./pi-player.ts";
+import { passReasonFor, recoverSeat } from "./pi-player.ts";
 import type { PlayerContext, TurnOutcome } from "./player.ts";
 import {
   StubModel,
@@ -616,7 +616,25 @@ describe("a seat's turn outcomes", () => {
         { text: "turn four settles" },
       ]);
       const requestsForTurn = stub.requestCount;
+      const afterFrom = Date.now();
       const after = await player.playTurn(turn);
+      // The turn after a wedge carries the recovery as well as its own prompt, so
+      // the runner's cap is pinned on this turn too: the recovery's worst case
+      // (three passes, two commands, five seconds each) has to fit inside the
+      // 5-minute turn cap (`TURN_TIMEOUT_MS`, packages/runner/src/match.ts)
+      // along with everything else a turn spends, not sit on top of it.
+      expect(
+        Date.now() - afterFrom,
+        "the turn after the wedge outlived the runner's turn cap",
+      ).toBeLessThan(300_000);
+      // And the recovery it began with is readable, with its verdict: the seat
+      // was quiet by the time this turn asked, and one ask said so. The log has
+      // no field for a recovery, so this is where a match shows that one ran,
+      // what it found and what it cost.
+      const recovery = player.lastRecovery;
+      expect(recovery, "the turn after a passed one ran no recovery").not.toBeNull();
+      expect(recovery?.quiet, "the seat was handed to this turn still busy").toBe(true);
+      expect(recovery?.asks).toBeGreaterThanOrEqual(1);
       expect(after.turn).toBe(turn);
       // Played, not passed: it settles with a submission the server accepted.
       expect(after.passed).toBeNull();
@@ -754,7 +772,15 @@ describe("a seat's turn outcomes", () => {
       // summary it waits behind is one that arrives: the turn after the wedges
       // is played, with its own calls and a submission of its own.
       stub.setScript([{ text: "a summary that arrives" }, ...callsToolThenSubmits("get_state")]);
+      const playedFrom = Date.now();
       const played = await player.playTurn(turn);
+      // The turn after two wedges is inside the runner's cap as well, and the
+      // recovery that began it found the seat quiet at last.
+      expect(
+        Date.now() - playedFrom,
+        "the turn after the wedges outlived the runner's turn cap",
+      ).toBeLessThan(300_000);
+      expect(player.lastRecovery?.quiet, "the seat was handed to this turn still busy").toBe(true);
       expect(played.turn).toBe(turn);
       expect(played.passed).toBeNull();
       expect(played.submitted).toBe(true);
@@ -840,19 +866,33 @@ const promptCopies = (stub: StubModel, prompt: string): number =>
  * client's 30 s, and that budget is passed in and measured here. The fake has no
  * `prompt` to send, which is the shape of the rule it works to: the recovery
  * puts a seat back in order for the next turn and never asks for the last one
- * again.
+ * again. What the recovery decides is used twice — the pass reason of the turn it
+ * hands over, and `PiPlayer.lastRecovery` — so both are held here as well.
  */
 describe("the recovery between a passed turn and the next one", () => {
   /** What a fake seat reports about itself. */
   const IDLE = { isStreaming: false, isCompacting: false, pendingMessageCount: 0 };
 
-  /** How one command answers: with a value, by never answering, or by rejecting. */
-  type Fake<T> = T | "hang" | "error";
+  /**
+   * How one command answers: with a value, by never answering, by rejecting the
+   * way a live seat does, or by rejecting the way a seat whose process has gone
+   * does — the client remembers an exit and rejects every later command with it.
+   */
+  type Fake<T> = T | "hang" | "error" | "dead";
+
+  /** The rejection texts `RpcClient` answers with, both of them its own. */
+  const REJECTION: Record<"error" | "dead", string> = {
+    error: "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+    dead: "Pi process exited with code 1",
+  };
+
+  /** Which of the two rejections an answer carries, or `null` when it answers. */
+  const rejectionOf = <T>(what: Fake<T>): "error" | "dead" | null =>
+    what === "error" ? "error" : what === "dead" ? "dead" : null;
 
   /**
    * A seat that answers `get_state`, `abort` and `clear_queue` as a test says,
-   * and counts how many times each was asked. The rejection text is the client's
-   * own, including the one a dead process answers with.
+   * and counts how many times each was asked.
    */
   const fakeSeat = (options: {
     /** What each `get_state` reports, in order, held on the last entry. */
@@ -864,10 +904,10 @@ describe("the recovery between a passed turn and the next one", () => {
     calls: { getState: number; abort: number; clearQueue: number };
   } => {
     const calls = { getState: 0, abort: 0, clearQueue: 0 };
-    const answer = <T>(what: Fake<T>, value: T, dead = false): Promise<T> => {
+    const answer = <T>(what: Fake<T>, value: T): Promise<T> => {
       if (what === "hang") return new Promise<T>(() => undefined);
-      if (what === "error")
-        return Promise.reject(new Error(dead ? "Pi process exited with code 1" : "Agent is already processing"));
+      const rejection = rejectionOf(what);
+      if (rejection !== null) return Promise.reject(new Error(REJECTION[rejection]));
       return Promise.resolve((what ?? value) as T);
     };
     const client: SeatRecoveryClient = {
@@ -875,7 +915,7 @@ describe("the recovery between a passed turn and the next one", () => {
         const state = options.states[Math.min(calls.getState, options.states.length - 1)];
         calls.getState += 1;
         if (state === "hang") return new Promise(() => undefined);
-        if (state === "error") return Promise.reject(new Error("Timeout waiting for response to get_state."));
+        if (state === "error" || state === "dead") return Promise.reject(new Error(REJECTION[state]));
         return Promise.resolve({ ...IDLE, ...state });
       },
       abort: () => {
@@ -928,16 +968,20 @@ describe("the recovery between a passed turn and the next one", () => {
   });
 
   it("survives a command that rejects, including a seat whose process is gone", async () => {
-    const gone = fakeSeat({ states: ["error"] });
+    // The exit text is what `seatIsGone` matches on, and the recovery is not
+    // the place that reports it: a seat that dies between the two turns is
+    // noticed by the next `prompt`, which is a command whose failure means
+    // something. Here it is only another command that will not answer.
+    const gone = fakeSeat({ states: [{ isStreaming: true }, "dead"], abort: "dead", clearQueue: "dead" });
     await expect(recoverSeat(gone.client, BUDGET_MS, PASSES)).resolves.toEqual({
       quiet: null,
-      asks: 1,
-      stops: 0,
+      asks: 2,
+      stops: 1,
       clears: 0,
     });
 
-    // A stop that is refused does not end the recovery either: the seat is
-    // asked again, and the turn is asked whatever the last answer was.
+    // A stop that a live seat refuses does not end the recovery either: the seat
+    // is asked again, and the turn is asked whatever the last answer was.
     const refusing = fakeSeat({ states: [{ isStreaming: true }, IDLE], abort: "error" });
     await expect(recoverSeat(refusing.client, BUDGET_MS, PASSES)).resolves.toEqual({
       quiet: true,
@@ -955,10 +999,36 @@ describe("the recovery between a passed turn and the next one", () => {
 
     // Busy, stopped, busy, stopped, busy: and then the turn is asked anyway,
     // because a seat that will not take a prompt passes its turn, and only a
-    // process that is gone ends the match.
+    // process that is gone ends the match. The verdict below is what makes that
+    // pass `prompt_timeout` rather than a plain one — the test after this says
+    // how the two are told apart.
     expect(recovery).toEqual({ quiet: false, asks: PASSES, stops: PASSES, clears: 0 });
     expect(performance.now() - started, "the recovery outlasted its budget").toBeLessThan(
       2_000,
     );
+  });
+
+  it("tells a seat that was refused from a seat that never answered", () => {
+    // The two rejections a failed `prompt` can carry, in the client's own words.
+    const refusal = new Error(
+      "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+    );
+    const timeout = new Error("Timeout waiting for response to prompt. Stderr: ");
+    const QUIET: SeatRecovery = { quiet: true, asks: 1, stops: 0, clears: 0 };
+    const BUSY: SeatRecovery = { quiet: false, asks: PASSES, stops: PASSES, clears: 0 };
+    const SILENT: SeatRecovery = { quiet: null, asks: 1, stops: 0, clears: 0 };
+
+    // A seat that answered the command to refuse it, with nothing outstanding
+    // from the turn before, is brief §6.3's plain pass.
+    expect(passReasonFor(refusal, null)).toBe("no_submission");
+    expect(passReasonFor(refusal, QUIET)).toBe("no_submission");
+    // The same refusal after a recovery that could not make the seat quiet is a
+    // seat this end has measured as never taking the question, and `no_submission`
+    // would read it as a seat that was asked and chose to sit the turn out.
+    expect(passReasonFor(refusal, BUSY)).toBe("prompt_timeout");
+    expect(passReasonFor(refusal, SILENT)).toBe("prompt_timeout");
+    // And the client's own wait is `prompt_timeout` whatever the recovery said.
+    expect(passReasonFor(timeout, null)).toBe("prompt_timeout");
+    expect(passReasonFor(timeout, QUIET)).toBe("prompt_timeout");
   });
 });

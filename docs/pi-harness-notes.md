@@ -561,7 +561,7 @@ while a run was still starting — the window the section above describes. A
 streaming seat does not wait for the next prompt, it refuses it:
 `AgentSession.prompt()` throws "Agent is already processing…"
 (`agent-session.js:1517`) and `rpc-mode.js` answers the command with that, which
-the harness reads as `no_submission` — a seat that answered and sat the turn out,
+on its own reads as `no_submission` — a seat that answered and sat the turn out,
 which is not what happened. Queued messages are worse: they are answered inside a
 run nobody asked for.
 
@@ -588,20 +588,44 @@ recovery does not report that: the next `prompt` is the command whose failure
 means something, and it turns the death into a voided match, which is the only
 thing that ends one.
 
-Nothing in the recovery re-sends a prompt. The passed turn's prompt is already in
-the seat's history, late or not, and brief §6.3 forbids asking a turn twice.
-A seat that is still busy after being asked and stopped as many times as the
-budget allows is asked anyway: if it will not take the prompt, that turn passes
-with `prompt_timeout` too, and the match goes on playing.
+Nothing in the recovery re-sends a prompt. The passed turn's prompt is
+already in the seat's history, late or not, and brief §6.3 forbids asking a turn
+twice. A seat that is still busy after being asked and stopped as many times as
+the budget allows is asked anyway — and the recovery's verdict is kept, because
+the refusal that follows is ambiguous on its own: `rpc-mode.js` answers the
+command with Pi's "Agent is already processing…", which is the shape of a seat
+that was asked and chose to sit the turn out. The rejection text alone only ever
+reads as `prompt_timeout` when it is the client's own 30 s wait; when the
+recovery has just said the seat was not quiet, this end has its own measurement
+that the seat never took the question, and the turn is passed with
+`prompt_timeout` rather than `no_submission` (`passReasonFor`, same file).
+`PiPlayer.lastRecovery` carries
+that verdict — quiet or not, and how many asks, stops and queue-clears it took —
+because the log has no field for a recovery and adding one is a schema change
+this does not need.
+
+One case the recovery does not close, and does not try to. When it gives up with
+the seat still busy, the turn is asked anyway, its prompt is refused, and the run
+still going belongs to the turn before. Its `tool_execution_end` events are
+recorded on this turn, and any `submit_orders` it makes is accepted by the server
+for this turn, so `submitted` can be true for a turn whose prompt was never
+taken. That is the shape the section above already accepts for a refused prompt,
+for the same reason: the server plays those orders in this turn, so the log and
+the server agree about what happened, and `prompt_timeout` — which the verdict
+above now guarantees here — is what says the turn was never asked. Suppressing
+the attribution would only make the two disagree.
 
 `packages/harness/src/pi-turn.test.ts` pins both halves. A fake client proves the
 bounds and the survivability — a seat that is stopped and asked again, a seat that
-never answers, a seat that rejects every command, a seat that stays busy through
-every pass — and a live seat plays the durable version of the wedge: the abort
-cancels the summary the next prompt waits behind without appending one, so a seat
-left over the compaction line is left over it for the turn after that as well,
-and the suite shows two turns in a row passed with `prompt_timeout`, each back
-inside the runner's 5-minute turn cap, and the turn after them played. It also
-shows the rule the recovery exists to keep: each turn's prompt reaches the model
-exactly once, and the turn after a wedge carries its own calls and its own
-submission rather than the wedged run's.
+never answers, a seat that rejects every command including with a dead process's
+exit text, a seat that stays busy through every pass — and a live seat plays the
+durable version of the wedge: the abort cancels the summary the next prompt waits
+behind without appending one, so a seat left over the compaction line is left
+over it for the turn after that as well, and the suite shows two turns in a row
+passed with `prompt_timeout`, each back inside the runner's 5-minute turn cap,
+and the turn after them played. That last turn is bounded against the same cap,
+so the recovery's worst case — three passes, two commands each, five seconds
+each — cannot grow into a turn the runner cuts off. It also shows the rule the
+recovery exists to keep: each turn's prompt reaches the model exactly once, and
+the turn after a wedge carries its own calls and its own submission rather than
+the wedged run's.
