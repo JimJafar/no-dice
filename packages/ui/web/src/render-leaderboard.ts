@@ -44,9 +44,9 @@
  * repeated as it was written.
  */
 import { clear } from "./render-frame.ts";
-import { matchLabel } from "./results.ts";
+import { matchLabel, unreadMatchLabel } from "./results.ts";
 import type { Interval, Leaderboard, ModelRow, ResultCell, SeriesRow } from "./leaderboard.ts";
-import type { MatchRow } from "./results.ts";
+import type { MatchHeaderReader, MatchRow } from "./results.ts";
 
 /** What the section draws: both views, and the match logs to link them by. */
 export interface LeaderboardView {
@@ -54,6 +54,12 @@ export interface LeaderboardView {
   board: Leaderboard;
   /** The finished logs `/api/matches` listed, which the per-pairing rows link their matches from. */
   matches: readonly MatchRow[];
+  /**
+   * Where a match log's header comes from, for the words over each replay link.
+   * Optional, and never waited for: without it the links say the seed the listing
+   * carries, and with it they say who played, on what seed, on what day.
+   */
+  headers?: MatchHeaderReader;
 }
 
 /** A short element with a class and a sentence. */
@@ -199,8 +205,11 @@ const seatCell = (seat: "A" | "B", result: ResultCell): string =>
  * The link says what the match was — the two seats, the seed, the day — and not
  * what its log is called. The URL it points at is the console's and is untouched:
  * the rule is about the words a reader sees, not the address a browser follows.
+ *
+ * The fuller words arrive after the table is on the page, from the same one
+ * read per log the Matches view asks for.
  */
-const matchLinks = (row: SeriesRow, matches: readonly MatchRow[]): Node => {
+const matchLinks = (row: SeriesRow, matches: readonly MatchRow[], headers?: MatchHeaderReader): Node => {
   const ofSeries = matches.filter((each) => each.series === row.name);
   if (ofSeries.length === 0) return document.createTextNode("no finished match listed for this series");
 
@@ -208,14 +217,20 @@ const matchLinks = (row: SeriesRow, matches: readonly MatchRow[]): Node => {
   ul.className = "series-matches";
   for (const each of ofSeries) {
     const li = document.createElement("li");
-    li.append(link("match-viewer", each.viewerUrl, matchLabel(each)));
+    const anchor = link("match-viewer", each.viewerUrl, matchLabel(each));
+    if (headers !== undefined) {
+      void headers(each.url).then((header) => {
+        anchor.textContent = header === null ? unreadMatchLabel(each) : matchLabel({ ...each, header });
+      });
+    }
+    li.append(anchor);
     ul.append(li);
   }
   return ul;
 };
 
 /** One series: its name, its pairing as the console spells a seat, and the report's figures for it. */
-const seriesCells = (row: SeriesRow, matches: readonly MatchRow[]): Node[] => [
+const seriesCells = (row: SeriesRow, matches: readonly MatchRow[], headers?: MatchHeaderReader): Node[] => [
   cell(row.name),
   cell(`${row.a} vs ${row.b}`),
   cell(`${String(row.pairs)} of ${String(row.maxPairs)} pairs`),
@@ -224,7 +239,7 @@ const seriesCells = (row: SeriesRow, matches: readonly MatchRow[]): Node[] => [
   cell(rateWith(row.winRate, row.interval, row.confidence)),
   cell(`stopped on ${row.stopReason} — ${row.stoppedEarly ? "short of its pair limit" : "its full length"}`),
   cell(link("series-report", row.reportUrl, "its report")),
-  cell(matchLinks(row, matches)),
+  cell(matchLinks(row, matches, headers)),
 ];
 
 /**
@@ -270,7 +285,7 @@ const modelCells = (row: ModelRow, byDir: ReadonlyMap<string, string>): Node[] =
  */
 export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void => {
   clear(el);
-  const { board, matches } = view;
+  const { board, matches, headers } = view;
 
   const roots = paragraph("leaderboard-roots", "");
   roots.append(
@@ -305,7 +320,7 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
           "Report",
           "Replays",
         ],
-        board.series.map((row) => seriesCells(row, matches)),
+        board.series.map((row) => seriesCells(row, matches, headers)),
       ),
     );
   }

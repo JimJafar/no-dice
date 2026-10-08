@@ -47,7 +47,7 @@ import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import { startRun } from "./start.ts";
-import { fetchResults, renderResults } from "./results.ts";
+import { createMatchHeaderSource, fetchResults, renderResults } from "./results.ts";
 import type { MatchRow, SeriesRow } from "./results.ts";
 import { parseState } from "./state.ts";
 import { mountViews } from "./views.ts";
@@ -89,6 +89,14 @@ let listedMatches: readonly MatchRow[] = [];
 let listedSeries: readonly SeriesRow[] = [];
 
 /**
+ * The page's supply of match-log headers, shared by the two views that label
+ * matches: one read per log between them, a few at a time, and never on the path
+ * to a draw. Both listings are re-read on every refresh and every run end, and a
+ * log that has been read once does not need reading again for the same page.
+ */
+const matchHeaders = createMatchHeaderSource(fetchJson);
+
+/**
  * Read what the console has on disk and redraw the results section and the
  * leaderboard from it.
  *
@@ -104,7 +112,7 @@ const refreshListings = async (): Promise<void> => {
     const results = await fetchResults(fetchJson);
     listedMatches = results.matches;
     listedSeries = results.series;
-    renderResults(sections.results, results, (dir) => void resumeSeries(dir));
+    renderResults(sections.results, results, (dir) => void resumeSeries(dir), matchHeaders);
     say(`${String(results.series.length)} series and ${String(results.matches.length)} matches listed.`);
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
@@ -112,7 +120,7 @@ const refreshListings = async (): Promise<void> => {
 
   try {
     const board = await fetchLeaderboard(fetchJson);
-    renderLeaderboard(sections.leaderboard, { board, matches: listedMatches });
+    renderLeaderboard(sections.leaderboard, { board, matches: listedMatches, headers: matchHeaders });
     say(
       `${String(board.series.length)} pairings and ${String(board.models.length)} models on the leaderboard.`,
     );

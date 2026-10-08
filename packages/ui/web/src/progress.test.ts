@@ -19,7 +19,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { expectPlainWords } from "./plain-words.ts";
+import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import { createRunPoller, parseRun, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
 
@@ -223,15 +223,15 @@ describe("renderProgress", () => {
     [...el.querySelectorAll<HTMLElement>(`.${listClass} li`)].map((li) => li.textContent ?? "");
 
   /**
-   * What the page says in its own voice: the section's text with the run's own
-   * output block left out. That block is the CLI's, kept verbatim, and it is
-   * full of paths and file names on purpose; the rule under test is about the
-   * words the page chooses for itself.
+   * What the page says in its own voice: every element's words and hints, with
+   * the run's own output block left out of it. That block is the CLI's, kept
+   * verbatim, and it is full of paths and file names on purpose; the rule under
+   * test is about the words the page chooses for itself.
    */
   const pageWords = (el: HTMLElement): string =>
     [...el.children]
       .filter((child) => !child.classList.contains("run-lines"))
-      .map((child) => child.textContent ?? "")
+      .map((child) => wordsOf(child as HTMLElement))
       .join("\n");
 
   it("says that nothing is in flight, for a console that has never started a run", () => {

@@ -16,7 +16,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { expectPlainWords } from "./plain-words.ts";
+import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import {
   addProvider,
   checkCredential,
@@ -498,15 +498,16 @@ describe("the words the providers section speaks", () => {
   it("lists the entries and the add form in plain words", () => {
     // The base URL is drawn, and it is the one address on this page that is the
     // fact rather than the furniture: it is what the entry is, and what a run is
-    // seated on. Nothing else here names a path or a flag.
-    const { text } = drawn([MARVIN, OPENAI]);
+    // seated on. Nothing else here names a path or a flag — including the hints
+    // inside the fields, which is where a flag name creeps back in first.
+    const { el } = drawn([MARVIN, OPENAI]);
 
-    expectPlainWords("providers", text);
+    expectPlainWords("providers", wordsOf(el));
   });
 
   it("lists an empty registry and its add form in plain words", () => {
-    const { text } = drawn([]);
+    const { el } = drawn([]);
 
-    expectPlainWords("providers", text);
+    expectPlainWords("providers", wordsOf(el));
   });
 });

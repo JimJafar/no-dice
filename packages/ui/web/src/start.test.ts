@@ -173,7 +173,7 @@ describe("ceilingsOf", () => {
     expect(ceilings.map((each) => `${each.label}: ${each.value}`)).toEqual([
       "Matches: 2 — one pair, both seat orders",
       "Seed: 135",
-      "Ceilings: none: a single match has no pair, cost or token limit",
+      "Ceilings: none — a single match has no pair, cost or token limit",
     ]);
   });
 

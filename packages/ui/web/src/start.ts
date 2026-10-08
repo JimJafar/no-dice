@@ -205,7 +205,7 @@ export const ceilingsOf = (values: StartValues): Ceiling[] =>
           : { label: "Seed", value: values.seed.trim(), source: "form" },
         {
           label: "Ceilings",
-          value: "none: a single match has no pair, cost or token limit",
+          value: "none — a single match has no pair, cost or token limit",
           source: "fixed",
         },
       ]

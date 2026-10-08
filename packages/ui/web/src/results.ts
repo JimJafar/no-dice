@@ -27,10 +27,19 @@
  * says the two seats, the seed and the day it was played. Those three are not in
  * `/api/matches`, whose rows carry a log's name and its two URLs; they are in the
  * log's own header, which is the one place that says who played, on what seed,
- * when. So the page reads the header — the first kilobyte of the log and no
- * more, since a real log runs to a megabyte and everything after the header is
- * the match itself. A log whose header will not read is a row that says so, not
- * a section that failed.
+ * when. So the page reads the header — the first few kilobytes of the log, and no
+ * more of it than that.
+ *
+ * **That read never stands between the listing and the page.** The rows go up with
+ * what the listing alone supports — the seed its file name carries — and each
+ * label is replaced when its header arrives. And the reads are one per log and
+ * a few at a time, because the console answers a log request by streaming the
+ * whole file: `sendFile` pipes a `createReadStream` and does not stop when the
+ * reader stops reading, so a read costs the server the log's full size however
+ * little of it the page looks at. A full series is around 150 logs of about a
+ * megabyte; fanned out at once that is a hundred and fifty megabytes of disk and
+ * socket work for a page of labels, and a front view that stayed blank until the
+ * last of them landed.
  *
  * The shapes below are declared here rather than imported from
  * `packages/ui/src/results.ts`, which reads the filesystem and pulls in
@@ -231,7 +240,17 @@ export const parseMatchListing = (value: unknown): { matchesRoot: string; matche
 /** How much of a log the page reads to label a row: its header, and nothing after it. */
 const HEADER_LIMIT = 4096;
 
-/** The first `limit` characters of an answer, with the rest of it left unread. */
+/**
+ * The first `limit` characters of an answer, with the rest of it left unread.
+ *
+ * This is what stops the *page* holding and decoding a megabyte per row. It does
+ * not stop the console reading the file: `sendFile` in `packages/ui/src/server.ts`
+ * pipes a `createReadStream` and Node does not destroy the source when the
+ * destination goes away, so the whole log is read and written whatever the client
+ * does. That is why the reads are one per log and a few at a time — see
+ * `createMatchHeaderSource` — and not because cancelling is cheap for the
+ * server, which it is not.
+ */
 const prefixOf = async (response: Response, limit: number): Promise<string> => {
   const reader = response.body?.getReader();
   if (reader === undefined) return (await response.text()).slice(0, limit);
@@ -244,10 +263,9 @@ const prefixOf = async (response: Response, limit: number): Promise<string> => {
     text += decoder.decode(next.value, { stream: true });
     if (text.length >= limit) break;
   }
-  // The rest of the log stays where it is. A real one is about a megabyte, and
-  // everything past the header is the match: turns, orders, tool calls. A
-  // page that read all of it to label a row would be downloading every match it
-  // lists, which is what the replay does when someone asks for the replay.
+  // The page asks for no more of the body, and keeps none of it. Everything past
+  // the header is the match — turns, orders, tool calls — and the replay is what
+  // asks for that, when someone opens the replay.
   await reader.cancel().catch(() => undefined);
   return text.slice(0, limit);
 };
@@ -313,10 +331,10 @@ const headerOf = (prefix: string): MatchHeader | null => {
  * What one match log says about itself, or `null` when it will not say.
  *
  * The read is of the log the console already serves at `url` — the same URL the
- * row links its replay at — and it stops as soon as the header is in hand. A log
- * that is not there, is not JSON, or has a header this page cannot read is one
- * row with no label rather than a listing that failed: the listing came from the
- * console, and this is only the wording over a link.
+ * row links its replay at — and the page stops looking as soon as the header
+ * is in hand. A log that is not there, is not JSON, or has a header this page
+ * cannot read is one row that says so rather than a listing that failed: the
+ * listing came from the console, and this is only the wording over a link.
  */
 export const readMatchHeader = async (
   url: string,
@@ -331,19 +349,72 @@ export const readMatchHeader = async (
   }
 };
 
-/** Every listed log, labelled from its own header. */
-const withHeaders = async (rows: readonly MatchRow[], fetchJson: FetchJson): Promise<MatchRow[]> => {
-  const headers = await Promise.all(rows.map((row) => readMatchHeader(row.url, fetchJson)));
-  return rows.map((row, at) => ({ ...row, header: headers[at] ?? null }));
+/** One log's header, asked for by URL. */
+export type MatchHeaderReader = (url: string) => Promise<MatchHeader | null>;
+
+/** How many logs the page reads at a time. The rest of them wait their turn. */
+const HEADER_CONCURRENCY = 4;
+
+/**
+ * The page's supply of log headers: one read per log however many views ask for
+ * it, a few at a time, and nothing that ever waits for one.
+ *
+ * Three rules, and the reason for each:
+ *
+ * - **No draw waits for a read.** A caller draws the listing with the label the
+ *   listing itself supports and asks this for the fuller words afterwards. A page
+ *   that awaited every log was a blank front view until the last one landed.
+ * - **One read per log.** The Matches view and the Leaderboard view label the
+ *   same logs; whoever asks second is given the first one's promise, not a second
+ *   request.
+ * - **A few at a time.** The console answers a log request by streaming the whole
+ *   file, and does not stop when the reader stops reading, so each of these reads
+ *   costs it the log's full size. A full series is around 150 logs of about a
+ *   megabyte, and a page of labels is not worth a hundred and fifty megabytes of
+ *   disk and socket work arriving at once.
+ */
+export const createMatchHeaderSource = (
+  fetchJson: FetchJson = fetch,
+  limit: number = HEADER_CONCURRENCY,
+): MatchHeaderReader => {
+  const asked = new Map<string, Promise<MatchHeader | null>>();
+  const waiting: (() => void)[] = [];
+  let reading = 0;
+
+  /** Take a place, waiting for one when they are all taken. */
+  const take = async (): Promise<void> => {
+    if (reading >= limit) await new Promise<void>((done) => void waiting.push(done));
+    reading += 1;
+  };
+  /** Give one back, and hand it to whoever asked first. */
+  const give = (): void => {
+    reading -= 1;
+    waiting.shift()?.();
+  };
+
+  return (url: string): Promise<MatchHeader | null> => {
+    const already = asked.get(url);
+    if (already !== undefined) return already;
+
+    const started = (async (): Promise<MatchHeader | null> => {
+      await take();
+      try {
+        return await readMatchHeader(url, fetchJson);
+      } finally {
+        give();
+      }
+    })();
+    asked.set(url, started);
+    return started;
+  };
 };
 
 /**
  * Both listings, read together. The section is one thing, so it arrives as one.
  *
- * Each match row is then read once more, at the URL its own listing gave it, for
- * the header the row is labelled from. That is one small request per match —
- * the page stops after the first kilobyte — and it is what keeps a row saying
- * what the match was instead of what its file is called.
+ * The rows arrive with `header: null`: what a match was is in the log, and the
+ * page reads those afterwards, as they come, rather than holding the whole
+ * section back for them.
  */
 export const fetchResults = async (fetchJson: FetchJson = fetch): Promise<Results> => {
   const series = parseSeriesListing(await getJson<unknown>("/api/series", fetchJson));
@@ -353,7 +424,7 @@ export const fetchResults = async (fetchJson: FetchJson = fetch): Promise<Result
     matchesRoot: matches.matchesRoot,
     series: series.series,
     unreadable: series.unreadable,
-    matches: await withHeaders(matches.matches, fetchJson),
+    matches: matches.matches,
   };
 };
 
@@ -394,28 +465,60 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /**
  * The day a log's header says it was written, as the page says it: `7 Oct 2026`.
  *
- * The header writes its timestamp in UTC, and the day is read back in UTC, so a
- * match played just after midnight there is not filed under the day before it on
- * the other side of the world.
+ * Read back in the zone the reader's browser is in, which is the zone every other
+ * time on this page is in — the progress section says a run started at the
+ * clock on their wall. A day worked out in UTC would put a match played at half
+ * past midnight under the day before the run that played it, with both on the
+ * same page. The header's timestamp is an instant, not a day; the day is the
+ * reader's.
  */
 export const dateOf = (iso: string): string => {
   const at = new Date(iso);
-  return `${String(at.getUTCDate())} ${MONTHS[at.getUTCMonth()]} ${String(at.getUTCFullYear())}`;
+  return `${String(at.getDate())} ${MONTHS[at.getMonth()]} ${String(at.getFullYear())}`;
+};
+
+/**
+ * The seed a log's own file name carries: `<seed>-<seat A>-<seat B>.json`, which
+ * is how the runner names them.
+ *
+ * The name is not drawn — a file name is what this page is not supposed to show.
+ * It is used to keep two rows apart before their logs have been read, and the
+ * seed is the one fact in the name that a reader would use for that.
+ */
+const seedOfName = (name: string): string | null => /^(\d+)-/.exec(name)?.[1] ?? null;
+
+/** What a row can say about a match from the listing alone. */
+const seedWords = (row: MatchRow): string => {
+  const seed = seedOfName(row.name);
+  return seed === null ? "a match this console has no facts about" : `a match on seed ${seed}`;
 };
 
 /**
  * What a match was, in the words a reader looks for: the two seats, the seed,
  * the day. The log's own file name says the same three things to whoever named
  * the file, and nothing to anyone else.
+ *
+ * Before the log has been read the row says what the listing already knows — the
+ * seed — and says the log has not been read. It does not claim the log is
+ * unreadable, which would be a guess about a read that has not happened.
  */
 export const matchLabel = (row: MatchRow): string => {
   const header = row.header;
-  if (header === null) return "a match whose log this console could not read";
+  if (header === null) return `${seedWords(row)}, whose log this console has not read`;
   return (
     `${header.seats[0]} vs ${header.seats[1]} — seed ${String(header.seed)}, ` +
     `played ${dateOf(header.playedOn)}`
   );
 };
+
+/**
+ * What a row says once the read has been made and did not answer.
+ *
+ * The seed is still there, so a list of logs that will not read is still a list
+ * of different matches rather than the same sentence over and over, each one
+ * linking somewhere the reader cannot name.
+ */
+export const unreadMatchLabel = (row: MatchRow): string => `${seedWords(row)}, whose log this console could not read`;
 
 /**
  * What the series is and how far it got: its name, its pairing, and the pair
@@ -483,19 +586,42 @@ const seriesItem = (row: SeriesRow, onResume: (dir: string) => void): HTMLLIElem
   return li;
 };
 
-/** One finished match: what it was, linked at the viewer's own URL for it. */
-const matchItem = (row: MatchRow): HTMLLIElement => {
+/**
+ * One finished match: what it was, linked at the viewer's own URL for it.
+ *
+ * The link's words are the row's, not the log's: the URL it
+ * points at is the console's and is set once and untouched afterwards. When a
+ * header arrives the words over it change and the address does not.
+ */
+const matchItem = (row: MatchRow, headers?: MatchHeaderReader): HTMLLIElement => {
   const li = document.createElement("li");
   li.className = "match-row";
   const link = document.createElement("a");
   link.className = "match-viewer";
   link.href = row.viewerUrl;
   link.textContent = matchLabel(row);
+  fillWhenRead(headers, row, link);
   li.append(
     link,
     document.createTextNode(row.series === null ? " — a match played on its own" : ` — from ${row.series}`),
   );
   return li;
+};
+
+/**
+ * Replace a link's words when the log's header turns up, and say what the log
+ * could not be read as, when it does not.
+ *
+ * Nothing is awaited: the row is on the page with what the listing supports, and
+ * this is a later change to one text node. A row drawn out from
+ * under the answer by a later render simply loses the write — the newer render
+ * asked for the same header and will have its own link to fill.
+ */
+const fillWhenRead = (headers: MatchHeaderReader | undefined, row: MatchRow, link: HTMLAnchorElement): void => {
+  if (headers === undefined) return;
+  void headers(row.url).then((header) => {
+    link.textContent = header === null ? unreadMatchLabel(row) : matchLabel({ ...row, header });
+  });
 };
 
 /**
@@ -505,8 +631,16 @@ const matchItem = (row: MatchRow): HTMLLIElement => {
  * started somewhere else is real work this console will never list, and a page
  * that said "no series" without saying that would be a page that contradicted
  * what its reader watched start.
+ *
+ * `headers`, when the caller has one, is where the fuller label for each match
+ * comes from — asked for here and written in when it lands, never waited for.
  */
-export const renderResults = (el: HTMLElement, results: Results, onResume: (dir: string) => void): void => {
+export const renderResults = (
+  el: HTMLElement,
+  results: Results,
+  onResume: (dir: string) => void,
+  headers?: MatchHeaderReader,
+): void => {
   clear(el);
 
   el.append(
@@ -543,6 +677,6 @@ export const renderResults = (el: HTMLElement, results: Results, onResume: (dir:
   if (results.matches.length === 0) {
     el.append(paragraph("matches-none", "No finished match here yet."));
   } else {
-    el.append(list("matches", results.matches.map(matchItem)));
+    el.append(list("matches", results.matches.map((row) => matchItem(row, headers))));
   }
 };

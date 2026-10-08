@@ -23,11 +23,17 @@
 const FLAG = /--[a-z][\w-]*/i;
 
 /**
- * An absolute path: something starting at the root of the filesystem. A
- * model named `deepseek/deepseek-flash` is not one, because it does not start at
- * the root, and a bare slash between words is not one either.
+ * An absolute path: a slash that starts a path rather than sitting inside a word.
+ *
+ * What that leaves out is what the page legitimately says with a slash in it: a
+ * model named `marvin/subagent` or `deepseek/deepseek-flash`, whose slash has a
+ * word on both sides of it, and a URL's `://`, whose first slash is followed by
+ * another one. What it catches is a path glued to anything — a space,
+ * a comma, an arrow, an equals sign, the start of the text — because that is the
+ * shape a label takes when someone writes `under,/repo/series` or
+ * `root -> /repo/series`.
  */
-const ABSOLUTE_PATH = /(^|[\s("'(])\/[^\s]+/;
+const ABSOLUTE_PATH = /(^|[^\w/])\/(?!\/)[^\s]+/;
 
 /** The name of a log file, as the console names them on disk: the whole token, not one letter of it. */
 const LOG_FILE_NAME = /[\w.-]+\.json\b/;
@@ -43,7 +49,10 @@ export const breachesOf = (text: string): string[] => {
   const found: string[] = [];
   if (FLAG.test(text)) found.push(`names a CLI flag: ${String(text.match(FLAG)?.[0])}`);
   if (ABSOLUTE_PATH.test(text)) {
-    found.push(`shows an absolute path: ${String(text.match(ABSOLUTE_PATH)?.[0].trim())}`);
+    // The match carries whatever the path was glued to, which is not part of
+    // the path: one character of glue, then the path from its first slash.
+    const glued = String(text.match(ABSOLUTE_PATH)?.[0].trim());
+    found.push(`shows an absolute path: ${glued.replace(/^\S(?=\/)/, "")}`);
   }
   if (LOG_FILE_NAME.test(text)) found.push(`shows a log file name: ${String(text.match(LOG_FILE_NAME)?.[0])}`);
   return found;
@@ -55,4 +64,25 @@ export const expectPlainWords = (view: string, text: string): void => {
   if (breaches.length > 0) {
     throw new Error(`the ${view} view is not in plain words — ${breaches.join("; ")}\n\ndrew:\n${text}`);
   }
+};
+
+/**
+ * Everything a drawn element says, in the order a reader meets it: the text, and
+ * the attributes that stand in for text — a field's hint, a button's explanation,
+ * a control's accessible name.
+ *
+ * `textContent` alone misses the labels most likely to drift back to a flag name,
+ * because a placeholder is where someone writes the flag they have in mind. Those
+ * three attributes are every one this page uses to label something without
+ * drawing words for it.
+ */
+export const wordsOf = (el: HTMLElement): string => {
+  const said = [el.textContent ?? ""];
+  for (const each of el.querySelectorAll("[placeholder], [title], [aria-label]")) {
+    for (const name of ["placeholder", "title", "aria-label"]) {
+      const value = each.getAttribute(name);
+      if (value !== null) said.push(value);
+    }
+  }
+  return said.join("\n");
 };

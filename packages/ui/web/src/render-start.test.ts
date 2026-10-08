@@ -22,7 +22,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { expectPlainWords } from "./plain-words.ts";
+import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import type { RunKind, StartBody, StartOutcome } from "./start.ts";
@@ -157,6 +157,7 @@ describe("the seat pickers", () => {
     // The placeholder shows the shape a seat takes, without dressing it up as a
     // command the reader would have to type somewhere else.
     expect(model.placeholder).toContain("marvin/<id>");
+    expect(model.placeholder).not.toContain("--");
 
     set(el, "select.field-seat-a", "bot:greedy");
     expect(model.hidden).toBe(true);
@@ -253,7 +254,7 @@ describe("the ceilings beside Start", () => {
     expect(ceilingItems(el)).toEqual([
       "Matches: 2 — one pair, both seat orders",
       "Seed: 135",
-      "Ceilings: none: a single match has no pair, cost or token limit",
+      "Ceilings: none — a single match has no pair, cost or token limit",
     ]);
     // The series' limits are not a match's flags, and a field that is not sent
     // is not shown.
@@ -379,17 +380,18 @@ describe("the words the start form speaks", () => {
   it("draws the form, its ceilings and its answer in plain words", () => {
     // A series with every limit blank, which is the state a run gets started by
     // accident from: the block under the button is the page's own prose, and it
-    // has to say 75 pairs without saying `--max-pairs`.
+    // has to say 75 pairs without saying `--max-pairs`. The hints inside the
+    // fields are checked too, since a hint is where a flag name goes back in.
     const { el } = drawn({ ok: true, run: STARTED });
 
-    expectPlainWords("runs", el.textContent ?? "");
+    expectPlainWords("runs", wordsOf(el));
   });
 
   it("draws a match run's ceilings in plain words too", () => {
     const { el } = drawn({ ok: true, run: STARTED });
     set(el, "select.field-kind", "match");
 
-    expectPlainWords("runs", el.textContent ?? "");
+    expectPlainWords("runs", wordsOf(el));
   });
 
   it("repeats the console's refusal as the console wrote it, flag and all", async () => {

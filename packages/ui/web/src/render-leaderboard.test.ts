@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { expectPlainWords } from "./plain-words.ts";
+import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import { renderLeaderboard } from "./render-leaderboard.ts";
 import type { Leaderboard } from "./leaderboard.ts";
 import type { MatchRow } from "./results.ts";
@@ -100,7 +100,7 @@ const MATCH: MatchRow = {
   header: {
     seats: ["bot:greedy", "marvin/subagent"] as [string, string],
     seed: 1234,
-    playedOn: "2026-10-07T20:19:32.132Z",
+    playedOn: "2026-10-07T12:19:32.132Z",
   },
 };
 
@@ -114,7 +114,7 @@ const BETA_MATCH: MatchRow = {
   header: {
     seats: ["bot:greedy", "bot:random"] as [string, string],
     seed: 77,
-    playedOn: "2026-10-08T09:14:00.000Z",
+    playedOn: "2026-10-08T13:14:00.000Z",
   },
 };
 
@@ -127,7 +127,7 @@ const ALONE: MatchRow = {
   header: {
     seats: ["bot:greedy", "bot:random"] as [string, string],
     seed: 9,
-    playedOn: "2026-10-09T18:00:00.000Z",
+    playedOn: "2026-10-09T12:00:00.000Z",
   },
 };
 
@@ -212,6 +212,23 @@ describe("renderLeaderboard", () => {
       "/logs/alpha/report.md its report",
       "/logs/beta/report.md its report",
     ]);
+  });
+
+  it("fills a replay link's words in when the log's header arrives, without moving the link", async () => {
+    const el = section();
+    renderLeaderboard(el, {
+      board: BOARD,
+      matches: [{ ...MATCH, header: null }],
+      headers: () => Promise.resolve(MATCH.header!),
+    });
+
+    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
+    expect(link.textContent).toBe("a match on seed 1234, whose log this console has not read");
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    expect(link.textContent).toBe("bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026");
+    expect(link.getAttribute("href")).toBe(MATCH.viewerUrl);
   });
 
   it("links each series to its own matches in the replay viewer, and no one else's", () => {
@@ -358,12 +375,12 @@ describe("the words the leaderboard speaks", () => {
   it("draws both tables, a broken record and a match link, in plain words", () => {
     // Both tables and one of everything: a series row, a pooled row, a log of
     // each series, and a record the console cannot read.
-    const { text } = drawn({
+    const { el } = drawn({
       ...BOARD,
       unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
     });
 
-    expectPlainWords("leaderboard", text);
+    expectPlainWords("leaderboard", wordsOf(el));
   });
 
   it("says what a directory it cannot name is, rather than printing the directory", () => {

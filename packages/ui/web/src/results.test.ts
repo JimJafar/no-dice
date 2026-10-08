@@ -22,8 +22,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { expectPlainWords } from "./plain-words.ts";
+import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import {
+  createMatchHeaderSource,
+  dateOf,
   fetchResults,
   parseMatchListing,
   parseSeriesListing,
@@ -69,7 +71,7 @@ const MATCH = {
 const HEADER = {
   seats: ["bot:greedy", "bot:random"] as [string, string],
   seed: 1234,
-  playedOn: "2026-10-07T20:19:32.132Z",
+  playedOn: "2026-10-07T12:19:32.132Z",
 };
 
 /** The match row as the page holds it: the listing, and the label read off the log. */
@@ -192,7 +194,6 @@ describe("fetchResults", () => {
     const asked: string[] = [];
     const results = await fetchResults((path) => {
       asked.push(path);
-      if (path === MATCH.url) return Promise.resolve(logAnswer(LOG_HEAD));
       return Promise.resolve(
         Response.json(
           path === "/api/series"
@@ -202,11 +203,11 @@ describe("fetchResults", () => {
       );
     });
 
-    // The two listings, and then one read of each listed log for the label
-    // its row is named by — at the URL the listing gave it, which is the same one
-    // the row links its replay at.
-    expect(asked).toEqual(["/api/series", "/api/matches", MATCH.url]);
-    expect(results).toEqual(RESULTS);
+    // The two listings and nothing else. What a match was is read from the log
+    // afterwards, by whoever is drawing, so that the section is not held back
+    // for a read per log — and the rows arrive labelled from the listing alone.
+    expect(asked).toEqual(["/api/series", "/api/matches"]);
+    expect(results).toEqual({ ...RESULTS, matches: [{ ...MATCH, header: null }] });
   });
 
   it("fails with the console's own line when it refuses", async () => {
@@ -266,6 +267,93 @@ describe("readMatchHeader", () => {
 
     expect(header).toEqual(HEADER);
     expect(cancelled).toBe(true);
+  });
+});
+
+describe("createMatchHeaderSource", () => {
+  it("reads a log once, however many times it is asked for", async () => {
+    const asked: string[] = [];
+    const source = createMatchHeaderSource((url) => {
+      asked.push(url);
+      return Promise.resolve(logAnswer(LOG_HEAD));
+    });
+
+    const [first, second] = await Promise.all([source(MATCH.url), source(MATCH.url)]);
+
+    // The Matches view and the Leaderboard view label the same logs, and a full
+    // series is 150 of them: a second read of each is a second megabyte each.
+    expect(asked).toEqual([MATCH.url]);
+    expect(first).toEqual(HEADER);
+    expect(second).toEqual(HEADER);
+  });
+
+  it("keeps only a few reads going at once, and starts the rest as places free up", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const release: (() => void)[] = [];
+    const source = createMatchHeaderSource(
+      () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        return new Promise<Response>((done) =>
+          void release.push(() => {
+            inFlight -= 1;
+            done(logAnswer(LOG_HEAD));
+          }),
+        );
+      },
+      3,
+    );
+
+    const urls = Array.from({ length: 9 }, (_, at) => `/logs/s/matches/${String(at)}.json`);
+    const reading = urls.map((url) => source(url));
+
+    // Nothing is awaited by the caller, so the queue has to hold its own line.
+    await new Promise((later) => void setTimeout(later, 0));
+    expect(peak).toBe(3);
+
+    // Let them finish one at a time, and the peak never rises above the limit.
+    while (release.length > 0) {
+      release.shift()!();
+      await new Promise((later) => void setTimeout(later, 0));
+    }
+    expect(await Promise.all(reading)).toHaveLength(9);
+    expect(peak).toBe(3);
+  });
+
+  it("carries a failed read to every asker, rather than trying again per view", async () => {
+    const asked: string[] = [];
+    const source = createMatchHeaderSource((url) => {
+      asked.push(url);
+      return Promise.resolve(Response.json({ error: "no match log there" }, { status: 404 }));
+    });
+
+    expect(await source(MATCH.url)).toBeNull();
+    expect(await source(MATCH.url)).toBeNull();
+    expect(asked).toEqual([MATCH.url]);
+  });
+});
+
+describe("dateOf", () => {
+  it("says the day the reader's own clock shows, which is the day the rest of the page speaks", () => {
+    const iso = "2026-10-07T20:19:32.132Z";
+    const at = new Date(iso);
+    // The progress section's "started 12:03:00" is read off the local clock, so the
+    // day beside it has to be read the same way: for anyone east of Greenwich, a
+    // match played after four in the afternoon UTC is already the next morning.
+    // Intl with no zone asked is the reader's zone, which is what the page has.
+    const local = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(at);
+    const utc = new Intl.DateTimeFormat("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    }).format(at);
+
+    expect(dateOf(iso)).toBe(local);
+    // Only a real difference of day proves the direction. In a UTC zone the two
+    // agree and there is nothing to tell apart.
+    if (local !== utc) expect(dateOf(iso)).not.toBe(utc);
   });
 });
 
@@ -363,6 +451,43 @@ describe("renderResults", () => {
     ]);
   });
 
+  it("fills a row's words in when its log's header arrives, and leaves its link alone", async () => {
+    const el = section();
+    renderResults(
+      el,
+      { ...RESULTS, matches: [{ ...MATCH, header: null }] },
+      () => undefined,
+      () => Promise.resolve(HEADER),
+    );
+
+    // The row is on the page before the read answers, and its address never
+    // moves: only the words over it change.
+    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
+    expect(link.textContent).toBe("a match on seed 1234, whose log this console has not read");
+    expect(link.getAttribute("href")).toBe(MATCH.viewerUrl);
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    expect(link.textContent).toBe("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
+    expect(link.getAttribute("href")).toBe(MATCH.viewerUrl);
+  });
+
+  it("says a log could not be read, in words, when the read comes back with nothing", async () => {
+    const el = section();
+    renderResults(
+      el,
+      { ...RESULTS, matches: [{ ...MATCH, header: null }] },
+      () => undefined,
+      () => Promise.resolve(null),
+    );
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    expect(el.querySelector("a.match-viewer")?.textContent).toBe(
+      "a match on seed 1234, whose log this console could not read",
+    );
+  });
+
   it("says what a match was, and not what its log is called", () => {
     const { text } = drawn(RESULTS);
 
@@ -372,11 +497,46 @@ describe("renderResults", () => {
     expect(text).not.toContain("1234-greedy-random");
   });
 
-  it("says when a match log will not say what the match was", () => {
-    const { text } = drawn({ ...RESULTS, matches: [{ ...LABELED, header: null }] });
+  it("says what a match was before its log has been read, from the listing alone", () => {
+    // The row goes up at once, labelled with the one fact the listing carries that
+    // tells two matches apart. It does not claim the log is unreadable, which
+    // would be a guess about a read that has not happened.
+    const { text } = drawn({ ...RESULTS, matches: [{ ...MATCH, header: null }] });
 
-    expect(text).toContain("a match whose log this console could not read");
+    expect(text).toContain("a match on seed 1234, whose log this console has not read");
     expect(text).not.toContain("1234-greedy-random");
+  });
+
+  it("says when a match log will not say what the match was, and still tells the rows apart", async () => {
+    const el = section();
+    renderResults(
+      el,
+      {
+        ...RESULTS,
+        matches: [
+          { ...MATCH, header: null },
+          { ...MATCH, name: "77-greedy-random.json", url: "/logs/alpha/matches/77.json", header: null },
+        ],
+      },
+      () => undefined,
+      () => Promise.resolve(null),
+    );
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    expect(itemsOf(el, "matches")).toEqual([
+      "a match on seed 1234, whose log this console could not read — from alpha",
+      "a match on seed 77, whose log this console could not read — from alpha",
+    ]);
+    // The seed comes out of the listing's own name for the log, which is the one
+    // fact in it that tells two matches apart. The file name is not drawn.
+    expect(el.textContent ?? "").not.toContain("1234-greedy-random");
+  });
+
+  it("says it has no facts about a log whose name does not carry a seed either", () => {
+    const { text } = drawn({ ...RESULTS, matches: [{ ...MATCH, name: "salient-match.json", header: null }] });
+
+    expect(text).toContain("a match this console has no facts about, whose log this console has not read");
   });
 
   it("keeps a record it cannot read on the page, with the line the console gave", () => {
@@ -411,13 +571,14 @@ describe("renderResults", () => {
 describe("the words the results section speaks", () => {
   it("draws a section holding a series, a broken record and a match, in plain words", () => {
     // One of everything the section can draw, so a path or a file name sneaking
-    // in through any one of the three kinds of row fails here.
-    const { text } = drawn({
+    // in through any one of the three kinds of row fails here — including the
+    // resume button's explanation, which is a label with no text under it.
+    const { el } = drawn({
       ...RESULTS,
       unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
     });
 
-    expectPlainWords("results", text);
+    expectPlainWords("results", wordsOf(el));
   });
 
   it("passes the console's own line about a record it cannot read, path and all", () => {
