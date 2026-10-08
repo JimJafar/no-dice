@@ -54,10 +54,12 @@ const FURTHER: RunSnapshot = {
 /**
  * The page `index.html` describes, in this test's document.
  *
- * The head is dropped before parsing. The page's stylesheet and its font link are
- * resources, and happy-dom would fetch them: a page that fetched its own CSS would
- * be a browser rather than a test, which is the same reason `series-line.test.ts`
- * installs only the viewer's `<body>`. Only the body is what this file mounts.
+ * The head is dropped before parsing. Parsing it whole makes happy-dom load the
+ * page's stylesheet and its font link on this test's window — no server is behind
+ * them, and every failed load prints a NetworkError through the run, which is the
+ * same reason `series-line.test.ts` installs only the viewer's `<body>`. Only the
+ * body is what this file mounts; the head is pinned where its own rules belong,
+ * in `scripts/console-design.test.mjs`.
  */
 const page = (): void => {
   const parsed = new DOMParser().parseFromString(INDEX_HTML.replace(/<head>[\s\S]*?<\/head>/, ""), "text/html");

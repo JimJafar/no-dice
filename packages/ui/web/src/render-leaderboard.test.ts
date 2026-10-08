@@ -304,6 +304,18 @@ describe("renderLeaderboard", () => {
     for (const table of tables) {
       expect(table.parentElement?.className, `${table.className} is not in a scroll box`).toBe("table-scroll");
     }
+
+    // And the box is a control rather than just a box. Firefox and Safari leave an
+    // unfocusable scroll container out of the tab order, so without this the
+    // figures past the window's edge — the win rate and the match logs
+    // of the pairing table — would be unreachable without a pointer.
+    const boxes = [...el.querySelectorAll<HTMLDivElement>(".table-scroll")];
+    expect(boxes.map((box) => box.tabIndex)).toEqual([0, 0]);
+    expect(boxes.map((box) => box.getAttribute("role"))).toEqual(["region", "region"]);
+    expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual([
+      "Leaderboard by pairing",
+      "Leaderboard by model",
+    ]);
   });
 
   it("sets a cell that holds nothing but a count in the numeral face", () => {

@@ -5,7 +5,7 @@
  * because that frame is a fixed 1920 × 1080 box. The console is the opposite shape: it is
  * read on a laptop and sometimes on a phone through `tailscale serve`, so it is as wide as
  * the window, and it holds no fixed pixel size that a 375 px screen would have to scroll
- * to reach. Its budget therefore cannot be added up. What can be pinned is the four
+ * to reach. Its budget therefore cannot be added up. What can be pinned is the five
  * things that decide whether it reads as the same tool as the viewer and still works
  * at a phone's width:
  *
@@ -25,6 +25,11 @@
  *
  * **The nav bar wraps.** Four links, one of them named "Providers & models", do not fit in
  * 375 px, and a nav bar that cannot reach its fourth view is a console with three views.
+ *
+ * **Every block the renderers hide by attribute keeps that attribute working.** An
+ * author `display` beats the user agent's `[hidden]{display:none}`, and this is the first
+ * stylesheet the page has ever had, so a class that sets a `display` silently un-hides
+ * whatever the renderers were hiding.
  *
  * happy-dom has no box model, so none of this is measured on a screen. The rules are read
  * out of `console.css` — the base ones, outside every `@media` block, which are what apply
@@ -129,12 +134,12 @@ describe("the console's page", () => {
     expect(fontsHref(HTML)).toContain("Barlow+Semi+Condensed:wght@500;600;700");
   });
 
-  it("is told it is the window's width, which the viewer is not", () => {
+  it("is told it is the window's width", () => {
+    // The viewer's page needs no viewport meta — its frame is a fixed 1920 ×
+    // 1080 box a phone shows shrunk — and the console does, or a phone lays it
+    // out at a desktop's width and shrinks the result to something no one can
+    // tap. What the viewer's own head holds is not this page's business.
     expect(headOf(HTML)).toContain('<meta name="viewport" content="width=device-width,initial-scale=1">');
-    // The viewer has none, and that is right for it: its frame is a fixed
-    // 1920 × 1080 box. Pinning the difference keeps the two pages' one real
-    // layout disagreement on the record.
-    expect(VIEWER_HTML).not.toContain('name="viewport"');
   });
 
   it("wears the viewer's palette, token for token", () => {
@@ -187,10 +192,21 @@ describe("the console at a phone's width", () => {
     }
   });
 
-  it("keeps a hidden view out of the page it is hidden from", () => {
-    // `.view` sets a `display`, which would win over the `hidden` attribute
-    // `views.ts` uses for the three views that are not showing.
-    expect(CSS).toMatch(/\.view\[hidden\]\{[^}]*display:\s*none/);
+  it("keeps a hidden part of the page out of the page it is hidden from", () => {
+    // Each of these classes sets a `display`, and an author `display` always wins
+    // over the user agent's `[hidden]{display:none}` — so every block the
+    // renderers hide by setting the attribute has to have the rule put back.
+    // `views.ts` hides the three views that are not showing; `render-start.ts`
+    // hides the limits fields the chosen Run kind has no flag for, and a `--seed`
+    // left on the page under a kind that has no seed is a form asking for the
+    // wrong run. The viewer puts the same rule back for its own hidden blocks.
+    const guards = [
+      [".view", /\.view\[hidden\]\{[^}]*display:\s*none/],
+      [".field", /\.field\[hidden\]\{[^}]*display:\s*none/],
+    ];
+    for (const [hidden, guard] of guards) {
+      expect(CSS, `${hidden} is hidden by attribute and has no rule for it`).toMatch(guard);
+    }
   });
 
   it("scrolls a wide table inside its own box rather than sideways with the page", () => {

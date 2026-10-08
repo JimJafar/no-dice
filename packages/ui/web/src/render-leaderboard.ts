@@ -103,8 +103,20 @@ const numCell = (n: number): HTMLTableCellElement => {
  * whoever was reading them. In a box that takes the overflow, the table scrolls
  * under its own header and the page keeps the window's width (`console.css`,
  * `.table-scroll`).
+ *
+ * The box is therefore the only way to reach the columns past the window's edge,
+ * which makes it a control, and a plain `<div>` is not one: Firefox and Safari
+ * leave an unfocusable scroll container out of the tab order, so a keyboard or
+ * switch user has nothing to scroll and the right-hand figures of the table are
+ * unreachable without a pointer. It takes focus and is named by the table it
+ * scrolls, which is what a scroll region is called.
  */
-const table = (className: string, headers: readonly string[], rows: readonly (readonly Node[])[]): HTMLElement => {
+const table = (
+  className: string,
+  label: string,
+  headers: readonly string[],
+  rows: readonly (readonly Node[])[],
+): HTMLElement => {
   const el = document.createElement("table");
   el.className = className;
 
@@ -129,6 +141,9 @@ const table = (className: string, headers: readonly string[], rows: readonly (re
 
   const box = document.createElement("div");
   box.className = "table-scroll";
+  box.tabIndex = 0;
+  box.setAttribute("role", "region");
+  box.setAttribute("aria-label", label);
   box.append(el);
   return box;
 };
@@ -251,6 +266,7 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
     el.append(
       table(
         "leaderboard-series",
+        "Leaderboard by pairing",
         [
           "Series",
           "Pairing",
@@ -280,6 +296,7 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
     el.append(
       table(
         "leaderboard-models",
+        "Leaderboard by model",
         [
           "Model",
           "Matches counted",

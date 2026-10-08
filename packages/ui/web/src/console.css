@@ -34,7 +34,7 @@ a:hover{color:#eef1f5}
 /* A keyboard on the page is visible on the page: the viewer's blue, and an offset,
    because these controls are sunk into panels and an outline on their own edge would
    be lost against the panel behind them. */
-a:focus-visible,button:focus-visible,.view-link:focus-visible{outline:2px solid var(--team-a,#2c6fd1);outline-offset:2px}
+a:focus-visible,button:focus-visible,.view-link:focus-visible,.table-scroll:focus-visible{outline:2px solid var(--team-a,#2c6fd1);outline-offset:2px}
 
 /* The one line the page says about itself — what it read, or why it could not. The
    viewer's `.status.bad` is the seat B orange for the same reason: a refusal is the
@@ -78,7 +78,10 @@ ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px
    and a table cannot be squeezed below the width of its own words. So each one goes
    in a box of its own that takes the overflow: at 375 px the table scrolls under its
    own header and the page keeps the window's width, which is the difference between
-   a leaderboard you can read on a phone and a page you cannot scroll. */
+   a leaderboard you can read on a phone and a page you cannot scroll. The box is
+   focusable — `render-leaderboard.ts` gives it `tabindex` and a name, since on
+   browsers that leave an unfocusable scroller out of the tab order the columns past
+   the window's edge would be unreachable without a pointer — so it shows its focus. */
 .table-scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:15px}
 th{padding:8px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid #2c3540;font:600 14px/1.2 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
@@ -102,8 +105,14 @@ button:disabled{background:#1a2028;color:#5c6673;cursor:default}
 .start:disabled,.add-provider:disabled{background:#1a2028;color:#5c6673}
 
 /* The forms: the flag or the field named above the box, in the viewer's label style,
-   and the box itself sunk into the panel rather than raised out of it. */
+   and the box itself sunk into the panel rather than raised out of it. The `[hidden]`
+   rule is not decoration: `render-start.ts` hides the limits fields the chosen Run kind
+   has no flag for by setting the attribute, and an author `display` always wins over the
+   user agent's own, so without this line `--seed` and `--max-pairs` would stay on
+   the page under a Run kind that has neither. The viewer puts the same rule back for its
+   own hidden blocks (`.controls[hidden]`, `.toggle[hidden]`). */
 .field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field[hidden]{display:none}
 .field-label{font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
 input[type="text"],select{min-width:0;max-width:100%;padding:9px 12px;border:1px solid #2c3540;border-radius:6px;background:#12161c;color:#eef1f5;font:400 15px/1.2 'IBM Plex Sans',system-ui,sans-serif}
 input[type="text"]:focus,select:focus{outline:2px solid var(--team-a,#2c6fd1);outline-offset:1px}
