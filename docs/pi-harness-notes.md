@@ -326,3 +326,188 @@ in place of money.
   time at this rate — one seat, so a two-model matchup doubles it. That is the
   number the ceiling has to be set against, and it is wall time on Jim's
   hardware rather than money.
+
+## 8. A seat that stops answering its next command
+
+**The seat was alive, and the harness had nothing to report.** The first attempt
+at seed 479473028 stops in the middle of a match. Its transcript is the earlier
+of the two files in
+`series/marvin-subagent-vs-greedy/sessions/479473028-marvin-subagent-greedy/session-A/`
+— `2026-10-07T23-02-11-254Z_….jsonl`, 174 entries — and it ends:
+
+- entry 168, `23:17:25.970Z` — turn 18's prompt.
+- entry 171, `23:17:53.911Z` — the assistant message that called `submit_orders`,
+  reporting 115,812 tokens.
+- entry 172, `23:17:53.917Z` — the server's `{"accepted":true}`.
+- entry 173, `23:18:03.972Z` — an assistant message with `stopReason: "error"`,
+  `errorMessage: "This operation was aborted"`, no content, and every usage
+  field zero. It lands 10.06 s after the accepted submit, which is brief §6.3's
+  after-submission abort (`packages/runner/src/match.ts:87`,
+  `AFTER_SUBMISSION_MS = 10_000`) doing what it is told to.
+- nothing else. Turn 19's prompt is not in the file — not as a message, not as
+  an error, not as a compaction.
+
+The turn-19 `prompt` command then got no response at all, and `RpcClient`
+threw `Timeout waiting for response to prompt`. That sentence is neither a death
+nor a `MatchVoided`, so `runMatch` wrote no log and the series recorded the
+attempt as failed with it as the reason (`reasonOf`,
+`packages/runner/src/series.ts:303`) and replayed the seed. The rerun in the same
+directory — `2026-10-08T00-28-27-458Z_….jsonl` — played all 25 turns, so this is
+a state the session got into rather than a per-seed bug; its figures are quoted
+below.
+
+The last test of `packages/harness/src/pi-turn.test.ts` plays the whole thing
+against `StubModel` — a 40,000-token window, a turn reporting 30,200 tokens, the
+after-submission abort, and a summary held open past the client's timeout — and
+asserts what the harness does with it today. It is the test the next task flips.
+
+### Which Pi path the transcript and the pinned build point at
+
+**A compaction the prompt has to wait behind.** In RPC mode a `prompt` command is
+answered from one place (`dist/modes/rpc/rpc-mode.js:298-318` of the pinned
+1.0.2): the `preflightResult` callback writes the success line, and the `.catch`
+writes an error line only if that callback never ran. The command goes
+unanswered exactly when `AgentSession.prompt()` neither reaches its preflight
+nor throws.
+
+`prompt()` (`core/agent-session.js:1481`) reaches `preflightResult?.("started")`
+at line 1594, and before it, at line 1550, calls `_checkCompaction(lastAssistant,
+false)` — the comment above that call reads "catches aborted responses". Inside
+`_checkCompaction` (2293):
+
+- `skipAbortedCheck` is `false`, so entry 173 is not skipped;
+- `directContextTokens` is `calculateContextTokens` of an all-zero usage, so the
+  branch at 2387 runs and `estimateContextTokens` (`core/compaction/compaction.js:110`)
+  takes the last assistant message that carries real usage — entry 171, 115,812
+  tokens — and adds a chars/4 estimate of what follows it;
+- that is over the threshold §5 computed for this window, `131,072 − 16,384 =
+  114,688`, so line 2409 calls `_runAutoCompaction("threshold", false)`;
+- `_runAutoCompaction` (2423) emits `compaction_start` at 2442 and asks
+  `_runDefaultCompaction` for the summary — the separate provider request §5
+  describes, no tools offered, summarising system prompt — and appends the
+  compaction entry at 2488 only once that request has returned.
+
+So the answer to turn 19's `prompt` sits behind a provider request. The rerun
+says how long this seat's summary takes: its one compaction entry —
+`tokensBefore: 117,158`, and 77,023 tokens of its own usage — is stamped
+`00:44:17.261Z`, **52.6 s** after the entry before it. `RpcClient.send()` waits
+30,000 ms, hard-coded at `dist/modes/rpc/rpc-client.js:466` with no knob
+anywhere in the pinned build, then deletes the pending request and rejects. The
+child is untouched.
+
+**The same request is harmless on the other path.** The rerun crossed the line a
+turn earlier: its turn 16 ends at 113,298 context tokens and it compacted inside
+turn 17, where the failed attempt's turn 17 ended at 112,047 and it crossed
+inside turn 18. The log for the rerun
+(`series/marvin-subagent-vs-greedy/matches/479473028-marvin-subagent-greedy.json`)
+records that turn as `compacted: true`, `wall_ms: 95933`, `context_tokens:
+43244`. Nothing was waiting on that summary: the mid-turn check has no RPC
+command behind it, and the turn's own 300 s cap had room. It is only the
+*preflight* check, the one `prompt()` runs before it answers, that puts a
+provider request of that length in front of a command with a 30 s patience.
+
+Why the failed attempt's summary should have been slow at all, when the rerun's
+was slow in a place that did not matter: Marvin answers one request at a time
+(`docs/series-notes.md` §3), and an abort cancels Pi's side of a request, not the
+provider's. `vitest.config.ts` records the same shape for this file's own tests —
+a seat starved hard enough "settles an aborted turn when the provider request
+settles rather than when the abort lands". A summary that has to queue behind the
+request the abort just gave up on is a summary that lands after 30 s. That part
+is inference: nothing in the transcript or the log says what Marvin was doing
+while the client waited.
+
+**Why the seat was left in the state that does this.** The check that would have
+compacted at the end of turn 18 is `_handlePostAgentRun`'s `_checkCompaction`
+(line 1409), and the abort returns before it is reached. The check that did fire
+mid-turn — `_compactBeforeNextAssistantResponse` (411, called from
+`prepareNextTurnWithContext` at 528 before each next assistant response) — had
+its summary cancelled by `abort()`'s `abortCompaction()` (1873, 2262), which is
+why no compaction entry was appended. Turn 18 ends with 115,812 tokens of
+context, an aborted answer that reports none of them, and no boundary: the one
+state that makes the *next* prompt compact before it answers. Pi's own comment on
+that preflight says as much — "For error messages or all-zero usage messages,
+estimate from the last valid response. This ensures sessions that hit persistent
+API errors … can still compact".
+
+**The other path, which this transcript rules out.** `prompt()` opens with: if
+`_isEmittingAgentSettled`, push the prompt onto `_deferredSettledActions` and
+return (1482-1485). That leaves a `prompt` unanswered too — the deferred action
+re-enters `prompt()` with the same `preflightResult`, so the answer arrives
+whenever the deferred run gets there. The two throws in the same stretch,
+"Cannot submit a prompt while compaction is in progress…" (1499) and "Agent is
+already processing…" (1517), are answered, because `rpc-mode.js`'s `.catch`
+answers them. Only the deferred path and the preflight-compaction path leave a
+`prompt` hanging, and a deferred prompt still appends its user message when it
+runs. The file has no such message, so the compaction path is what the bytes
+support.
+
+### What the rejection tells the harness, and what it does not
+
+Three things: which command went unanswered, that no response arrived inside
+30 s, and that the child had not exited. The client's death phrases —
+`process exited`, `process error`, `Client not started` — are what `seatIsGone`
+reads (`packages/harness/src/pi-player.ts:184`), and a timeout carries none of
+them, which is why `command()` (547) rethrows it raw instead of voiding the
+match.
+
+It does not say why. The same sentence arrives from a seat compacting before its
+prompt, from a prompt deferred behind an unsettled `agent_settled`, and from a
+child whose event loop stopped reading stdin; the client draws no line between
+"alive and busy" and "alive and stuck", and it says nothing about the provider.
+The harness could ask — a compacting seat answers other commands, and the
+reproduction test catches one making the summarising request *after* the
+rejection, with its process still running — but nothing asks, and the error
+carries no reason. So the turn has no `PassReason` and the match no
+`MatchVoided`, and `runMatch` has nothing to write.
+
+### What a prompt that arrives late does to a turn already passed
+
+The rejection ends the harness's interest, not the seat's work.
+
+- The response, when it comes, has no pending request to resolve: `handleLine`
+  (`rpc-client.js:412-428`) dispatches any line whose `id` is not pending to the
+  event listeners as an event, so a late
+  `{ "type": "response", "command": "prompt", … }` is handed round as if it were
+  an event and dropped, `PiPlayer`'s listener reading only `tool_execution_*`,
+  `compaction_*`, `auto_retry_end`, `message_end` and `agent_settled`
+  (414-464).
+- `playTurn` has unsubscribed in its `finally` (479). If the match stops there —
+  which is what it does today — the run's tool calls, its assistant
+  `message_end` and its `agent_settled` reach nobody, and that turn's record —
+  usage, tool calls, reason — is gone for good.
+- If the harness goes on playing, they reach whoever's listener is installed at
+  that moment. The listener a turn installs counts every `tool_execution_end`
+  and every assistant `message_end` that arrives while it is installed, and
+  there is no turn identity on the wire to sort them by, so a late run's calls
+  and tokens land in the record of the turn now being played.
+- The seat plays the turn against a match that has moved on. `get_state` answers
+  with a later turn's board; a call that arrives while the server is not
+  accepting is refused `turn_not_open` (`games/salient/server/src/session.ts:273`)
+  and handed to the model as a tool error; one that arrives after the next
+  `openTurn` is accepted as *that* turn's orders. The transcript then holds a
+  seat answering turn 19 with turn 20's board, next to a log that says turn 19
+  was not played.
+- Today that window is narrow: the rejection escapes `runMatch`, whose `finally`
+  (771-775) stops both seats and closes the match server, so the deferred prompt
+  dies with the match. It is the fix that widens it — a turn reported
+  `prompt_timeout` and a match that goes on playing is exactly the case
+  where the seat is still compacting while the harness opens turn 20.
+
+### What `prompt_timeout` will have to say
+
+The next task adds `prompt_timeout` as a pass reason — named so it cannot be read
+as brief §6.3's `timeout`, which is the runner's own turn cap — for a seat that
+did not answer the `prompt` command inside the client's response timeout and is
+not gone. Two things follow from the above and belong to that task rather than
+here:
+
+- The turn was not played, so its record carries no provider figures, and the
+  context figures §3's `contextUsage` reports are the ones the turn before it
+  left behind. A `prompt_timeout` turn whose summary lands afterwards changes
+  those figures with no turn having played, which is what §3's turn-by-turn
+  deltas are for.
+- The prompt may still be played later, by a seat the harness has already moved
+  past. A turn the log calls `prompt_timeout` and the transcript calls a played
+  turn is the kind of disagreement §7's `tool_surface` void exists to avoid, and
+  the fix has to say which of the two wins before a 150-match series turns it
+  into a data-quality question.

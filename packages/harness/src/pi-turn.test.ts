@@ -11,6 +11,11 @@
  * turn — and is reported by throwing `MatchVoided` rather than by a turn record,
  * because there is no turn to give a reason to.
  *
+ * A seat that stops answering its next command is a third thing, and the last
+ * test here reproduces it: the seat is alive and still working, and all the
+ * harness has is a bare rejection. Section 8 of docs/pi-harness-notes.md says
+ * why, and what a reason for it would have to say.
+ *
  * What a seat reports and what the log says are not quite the same, and the
  * split is deliberate: a turn that ran out of its time is aborted by the runner,
  * which is the one that knows the clock ran out, so the seat calls it
@@ -32,6 +37,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
 import type { PiPlayerOptions } from "./pi-player.ts";
+import { MatchVoided } from "./player.ts";
 import type { PlayerContext, TurnOutcome } from "./player.ts";
 import {
   StubModel,
@@ -447,7 +453,147 @@ describe("a seat's turn outcomes", () => {
     },
     SEAT_TIMEOUT_MS,
   );
+
+  it(
+    "fails the turn whose prompt Pi never answers, on a seat that is alive and still working",
+    async () => {
+      // What the first attempt at seed 479473028 did, played against a stub, and
+      // what the harness does with it today. Section 8 of docs/pi-harness-notes.md
+      // states the mechanism; this test is the reproduction of it.
+      //
+      // Pi answers a `prompt` command from one place — the `preflightResult`
+      // callback `rpc-mode.js` hands `AgentSession.prompt()` — and `prompt()`
+      // reaches it only after `_checkCompaction(lastAssistant, false)`. When the
+      // conversation is over the compaction line and the last answer reports no
+      // usage, that check compacts first, and a compaction is a provider
+      // request of its own. A summary that does not come back inside the 30 s
+      // `RpcClient.send()` waits for a response leaves the command unanswered
+      // with the child alive and working.
+      //
+      // The window is 40,000 tokens, so Pi's threshold is 40,000 - 16,384 =
+      // 23,616. The turn below reports 4,000 tokens and carries the bulk a cut
+      // point needs; the turn after it reports 30,200 — over the line — and is
+      // aborted while its next provider request is in flight, which is how the
+      // real seat ended turn 18: an aborted answer that reports no
+      // usage, over a context that is over the line.
+      const stub = await startStub([
+        {
+          text: "the map is a hex grid and the map is the territory ".repeat(3_000),
+          toolCalls: [{ name: "get_state", args: {} }],
+          usage: { input: 1_000, output: 3_000, cacheRead: 0, cacheWrite: 0 },
+        },
+        { text: "I will hold this line." },
+      ]);
+      const { player, ctx } = await startSeat("A", stub, {
+        modelsJson: stubModelsJson(stub.baseUrl, { cost: COST, contextWindow: 40_000 }),
+      });
+
+      const first = await player.playTurn(turn);
+      expect(first.passed).toBe("no_submission");
+      expect(first.provider?.compacted).toBe(false);
+
+      // The turn that crosses the line and is then aborted. Pi notices the line
+      // crossing between its own turns — `_compactBeforeNextAssistantResponse`
+      // runs before each next assistant response — so a summarisation request is
+      // already out when the deadline aborts the seat. `session.abort()` calls
+      // `abortCompaction()`, so that compaction ends as aborted and appends
+      // nothing: the seat is left over the line, with an answer that reports
+      // nothing, and a turn record that says it compacted.
+      nextTurn();
+      const abortedTurn = turn;
+      stub.setScript([
+        {
+          toolCalls: [{ name: "get_state", args: {} }],
+          usage: { input: 30_000, output: 200, cacheRead: 0, cacheWrite: 0 },
+        },
+        ...sleepsPastDeadline(120_000),
+      ]);
+      const { outcome, timedOut } = await playWithDeadline(player, ctx, abortedTurn, TURN_DEADLINE_MS);
+      expect(timedOut).toBe(true);
+      expect(outcome.passed).toBe("no_submission");
+      expect(outcome.provider?.compacted).toBe(true);
+      expect(sessionEntries(player.seatHome.sessionDir).some((entry) => entry.type === "compaction")).toBe(
+        false,
+      );
+
+      // The prompt after it. Its preflight wants a summary, and the stub holds
+      // that summary for 90 s — past the 30 s the client waits for a response.
+      nextTurn();
+      stub.setScript(sleepsPastDeadline(90_000, "A summary nobody is left waiting for."));
+      const requestsBefore = stub.requestCount;
+      let rejection: unknown = null;
+      try {
+        await player.playTurn(turn);
+      } catch (error) {
+        rejection = error;
+      }
+
+      // Today: the turn rejects, with whatever `RpcClient` threw.
+      expect(rejection).toBeInstanceOf(Error);
+      const message = rejection instanceof Error ? rejection.message : String(rejection);
+      expect(message).toContain("Timeout waiting for response to prompt");
+      // It is not a death, and the harness cannot call it one: these are the
+      // phrases `seatIsGone` reads, and none of them is in the message, which is
+      // why `PiPlayer.command()` rethrows this rather than voiding the match.
+      expect(message).not.toMatch(/process exited|process error|Client not started/i);
+      // The seat's process is alive, and still working: it made a provider
+      // request after the command was given up on, and that request is still
+      // open. A dead child makes neither.
+      expect(stub.requestCount).toBeGreaterThan(requestsBefore);
+      expect(stub.repliesInFlight).toBeGreaterThan(0);
+      if (existsSync("/proc")) {
+        expect(piChildPid(player.seatHome.cwd), "the Pi child is gone from under a live seat").not.toBeNull();
+      }
+      // And the request it is stuck on is Pi's compaction summary, not the turn:
+      // no tools offered, and the summarising system prompt in front (§5).
+      const stuck = stub.recorded.at(-1);
+      expect(stuck?.toolNames).toEqual([]);
+      expect(stuck?.systemPrompts.join("\n")).toContain("context summarization assistant");
+      // The turn's prompt never reached the session's message list, and the
+      // compaction that has it has appended nothing: the wedge is before Pi
+      // accepts the prompt, which is what the Marvin transcript shows too.
+      const entries = sessionEntries(player.seatHome.sessionDir);
+      expect(JSON.stringify(entries)).toContain(`Turn ${String(abortedTurn)} of 25.`);
+      expect(JSON.stringify(entries)).not.toContain(`Turn ${String(turn)} of 25.`);
+      expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+      // What that leaves the match with, today: no turn record, and a
+      // throw that is not the one match-level failure a player can report a
+      // reason for. `MatchVoided` is how a player says "write no log for
+      // this match, and here is the reason code the series records"; a bare
+      // `Error` escapes `runMatch` before the log is written and reaches the
+      // series record as its raw message, which is how seed 479473028 came to be
+      // played twice. There is no `PassReason` for a seat that was alive and
+      // simply did not answer its prompt, so there is no turn to log either.
+      expect(rejection).not.toBeInstanceOf(MatchVoided);
+      expect((rejection as { reason?: unknown }).reason).toBeUndefined();
+    },
+    // The 30 s the client waits for the prompt, on top of an aborted turn that
+    // a starved box can hold until the 120 s reply it is sitting in lands — the
+    // shape `vitest.config.ts` records for this file.
+    SEAT_TIMEOUT_MS + 120_000,
+  );
 });
+
+/**
+ * The entries of the one session file a seat has written, parsed.
+ *
+ * Pi appends whole lines, so a line that does not parse is one still being
+ * written and is skipped rather than failed on.
+ */
+const sessionEntries = (sessionDir: string): Record<string, unknown>[] => {
+  const [file] = sessionsIn(sessionDir);
+  if (file === undefined) return [];
+  return readFileSync(join(sessionDir, file), "utf-8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
+};
 
 /** The session files Pi has saved in a seat's session directory. */
 const sessionsIn = (sessionDir: string): string[] =>
