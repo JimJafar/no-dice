@@ -17,13 +17,17 @@
  *   takes nineteen minutes and cannot be a fixture.
  *
  * The race the module header describes — two runs stealing one stale lock — is run for
- * real here, with two takes overlapping on one directory, because "only one of them
- * wins" is the whole reason the take is an exclusive create.
+ * real here, with two takes overlapping on one directory, because "only one of
+ * them wins" is the whole reason a claim is a hard link that cannot be seen
+ * half-written, checked against the file the moment it is made.
  */
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Seat } from "@no-dice/log";
@@ -54,6 +58,18 @@ const WIN = {
   margin: 12,
   costUsd: 0.75,
   tokens: { input: 300, output: 30, cache_read: 1200, cache_write: 3 },
+};
+
+const execFileAsync = promisify(execFile);
+
+/** A child process that tries to take one directory's lock, and says how it went. */
+const claimInAProcess = async (
+  modulePath: string,
+  claimPath: string,
+  seriesDir: string,
+): Promise<string> => {
+  const { stdout } = await execFileAsync(process.execPath, [claimPath, modulePath, seriesDir]);
+  return stdout;
 };
 
 /** Where the series directories are, gone when the suite is done. */
@@ -181,6 +197,63 @@ describe("the lock file", () => {
     await releaseSeriesLock(seriesDir);
   });
 
+  it("is taken over when it names a process this system cannot have", async () => {
+    // A hand-written or corrupted lock naming a pid outside the range a process can
+    // have. Read as a live process it would refuse the series for ever, with no stale
+    // path out short of deleting the file by hand; read as naming nothing, it is the
+    // next run's to take.
+    const seriesDir = await seriesAt("impossible-pid");
+    await writeFile(
+      seriesLockPath(seriesDir),
+      `${JSON.stringify({ pid: 2 ** 31, started_at: "2026-01-01T00:00:00.000Z" })}\n`,
+      "utf8",
+    );
+
+    expect(await readSeriesLock(seriesDir)).toEqual({ kind: "free" });
+    const lock = await acquireSeriesLock(seriesDir);
+    expect(lock.pid).toBe(process.pid);
+    await releaseSeriesLock(seriesDir);
+  });
+
+  it("appears complete to a run watching it being taken, never half-written", async () => {
+    // The claim is a hard link, so the path either is not there or holds the whole
+    // lock. A create-then-write leaves a stretch in which the file exists and
+    // holds nothing, and a run that reads it there takes the directory
+    // from under the run that has just claimed it.
+    const seriesDir = await seriesAt("never-half-written");
+    const seen: string[] = [];
+    const watch = (async () => {
+      // Polled for longer than the take takes, so the reads straddle it: some find no
+      // file at all, the rest find the lock.
+      for (let i = 0; i < 200; i++) {
+        try {
+          seen.push(await readFile(seriesLockPath(seriesDir), "utf8"));
+        } catch (error) {
+          if ((error as { code?: string }).code !== "ENOENT") throw error;
+        }
+        await new Promise((done) => setTimeout(done, 0));
+      }
+    })();
+
+    const lock = await acquireSeriesLock(seriesDir);
+    await watch;
+
+    // Every reading of the file, including the first one that found it at all.
+    expect(seen.length).toBeGreaterThan(0);
+    for (const text of seen) {
+      expect(JSON.parse(text) as unknown).toEqual({ pid: process.pid, started_at: lock.started_at });
+    }
+    await releaseSeriesLock(seriesDir);
+  });
+
+  it("leaves only the lock file behind, not the name its bytes travelled by", async () => {
+    const seriesDir = await seriesAt("claim-name");
+    await acquireSeriesLock(seriesDir);
+
+    expect(await readdir(seriesDir)).toEqual(["series.lock"]);
+    await releaseSeriesLock(seriesDir);
+  });
+
   it("reads as free when there is no lock file", async () => {
     expect(await readSeriesLock(await seriesAt("free"))).toEqual({ kind: "free" });
   });
@@ -194,6 +267,37 @@ describe("the lock file", () => {
     await releaseSeriesLock(seriesDir);
 
     expect(JSON.parse((await lockText(seriesDir)) ?? "") as unknown).toEqual(stale);
+  });
+
+  it("is not removed, and says nothing, when removing it cannot be done", async () => {
+    // A release that cannot be done is not the run's failure: `runSeries` calls this in
+    // a `finally`, and an error thrown here would replace the reason the run really
+    // stopped — or turn a series that played all the way through into a failure. The
+    // lock left behind names a process that has gone, and the next run takes it over.
+    const seriesDir = await seriesAt("release-blocked");
+    const ours: SeriesLock = { pid: process.pid, started_at: "2026-01-01T00:00:00.000Z" };
+    await writeFile(seriesLockPath(seriesDir), `${JSON.stringify(ours)}\n`, "utf8");
+    // Ours to remove, in a directory that will not let anything be removed from it.
+    await chmod(seriesDir, 0o500);
+
+    try {
+      await expect(releaseSeriesLock(seriesDir)).resolves.toBeUndefined();
+    } finally {
+      await chmod(seriesDir, 0o700);
+    }
+
+    expect(JSON.parse((await lockText(seriesDir)) ?? "") as unknown).toEqual(ours);
+    await rm(seriesLockPath(seriesDir));
+  });
+
+  it("says nothing when the lock path holds something that is not a lock file", async () => {
+    // Something else sitting at `series.lock` — a directory a person made — is read as
+    // naming nothing, and a release asked of it neither throws nor deletes it.
+    const seriesDir = await seriesAt("release-blocked-path");
+    await mkdir(seriesLockPath(seriesDir), { recursive: true });
+
+    await expect(releaseSeriesLock(seriesDir)).resolves.toBeUndefined();
+    expect(existsSync(seriesLockPath(seriesDir))).toBe(true);
   });
 
   it("lets only one of two runs racing for one stale lock take it", async () => {
@@ -221,6 +325,56 @@ describe("the lock file", () => {
     });
     await releaseSeriesLock(seriesDir);
   });
+
+  it("refuses itself when a claim cannot be read back as its own lock", async () => {
+    // A dangling symlink sitting at `series.lock`. A claim cannot land on a path that
+    // is already there, and a lock this run cannot read back is not a claim it may
+    // believe — so the run is refused rather than playing a series it does not hold.
+    const seriesDir = await seriesAt("dangling-claim");
+    await symlink(join(dir, "nothing-here"), seriesLockPath(seriesDir));
+
+    await expect(acquireSeriesLock(seriesDir)).rejects.toThrow(/changed hands/);
+    expect(await readdir(seriesDir)).toEqual(["series.lock"]);
+    await rm(seriesLockPath(seriesDir));
+  });
+
+  it("lets exactly one of eight processes started at one free directory claim it", async () => {
+    // The claim has to be atomic between processes, not only inside one, and separate
+    // processes are the only way to have two runs at the same moment. A claim that
+    // created the lock path and filled it afterwards would let one of these eight
+    // read the empty file, call it a lock that names nobody, and take the directory
+    // over from the run that had just claimed it — two runs, one series, the failure
+    // the lock exists to prevent.
+    const seriesDir = await seriesAt("processes");
+    const modulePath = fileURLToPath(new URL("./series-lock.ts", import.meta.url));
+    const claimPath = fileURLToPath(new URL("./series-lock-claim.mjs", import.meta.url));
+
+    const started = await Promise.all(
+      Array.from({ length: 8 }, () => claimInAProcess(modulePath, claimPath, seriesDir)),
+    );
+    const claims = started.map((stdout) => JSON.parse(stdout) as {
+      ok: boolean;
+      pid: number;
+      message?: string;
+    });
+
+    const [winner] = claims.filter((claim) => claim.ok);
+    expect(claims.filter((claim) => claim.ok)).toHaveLength(1);
+    // The others were refused because a live process holds the directory, which is
+    // the whole point, and not because their own claim went wrong.
+    for (const claim of claims.filter((each) => !each.ok)) {
+      expect(claim.message).toMatch(/another series run holds .*series\.lock/);
+    }
+    // The directory is held by the one process that got there, and the file says so.
+    expect(JSON.parse((await lockText(seriesDir)) ?? "") as unknown).toMatchObject({
+      pid: winner.pid,
+    });
+    // Nothing else is left in the directory: the name a claim's bytes travelled by is
+    // removed on the way out, whatever the claim itself did.
+    expect(await readdir(seriesDir)).toEqual(["series.lock"]);
+
+    await rm(seriesLockPath(seriesDir));
+  }, 30_000);
 });
 
 describe("a runSeries holds a lock on the directory it plays", () => {

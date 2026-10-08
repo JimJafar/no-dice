@@ -47,6 +47,12 @@ describe("a series lock under a kept series directory", () => {
       const found = checkIgnore(`series/${name}/series.lock`);
       expect(found.ignored, `series/${name}/series.lock is not git-ignored`).toBe(true);
       expect(found.line).toContain("/series/*/series.lock");
+
+      // The name a run's lock bytes travel by: it writes them there and links them
+      // into `series.lock`, so a run killed in between leaves the name behind.
+      const claim = checkIgnore(`series/${name}/series.lock.4242.1`);
+      expect(claim.ignored, `series/${name}/series.lock.4242.1 is not git-ignored`).toBe(true);
+      expect(claim.line).toContain("/series/*/series.lock.*");
     }
   });
 

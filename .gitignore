@@ -11,10 +11,13 @@ matches/
 !/series/marvin-subagent-vs-greedy/
 !/series/marvin-subagent-vs-greedy/matches/
 /series/*/sessions/*/pi-home-*/
-# A run's lock on its own directory. It is a fact about a live process, not part of
-# the series, and a run killed hard enough to leave one behind must not have it
-# committed into a kept baseline series — where the next run reads it as stale anyway.
+# A run's lock on its own directory, and the name its bytes travelled by on the way
+# in (it links them into place rather than writing into the lock path, so the lock is
+# never seen half-written). Both are a fact about a live process, not part of the
+# series, and a run killed hard enough to leave one behind must not have it committed
+# into a kept baseline series — where the next run reads the lock as stale anyway.
 /series/*/series.lock
+/series/*/series.lock.*
 # A measurement run's log and its seat homes; the report beside them is kept.
 reports/*.json
 reports/*-match/

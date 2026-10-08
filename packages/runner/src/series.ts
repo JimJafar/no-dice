@@ -414,9 +414,13 @@ const slots = (n: number): (<R>(task: () => Promise<R>) => Promise<R>) => {
  * is missing, and record every pair after every batch of 5.
  *
  * A run that finds the directory locked by a live process is refused before it plays
- * anything, and a run that gets as far as the plan leaves the seed fields the
- * plan wrote and nothing else. `./series-lock.ts` says why the lock is one small
- * file rather than a claim nobody can check.
+ * anything, and adds nothing of its own to the record. The plan is outside the lock,
+ * which is what the task prescribes, and that has one cost worth naming: two first
+ * runs of one new directory both write their seed list there before one of them is
+ * refused, so the list the winner's record carries can be the loser's — which, if the
+ * two were started with different `--seed-base`, is not the list the winner plays.
+ * `./series-lock.ts` says why the lock is one small file rather than a claim nobody
+ * can check.
  */
 export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
@@ -436,11 +440,11 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
     ...(options.seedBase === undefined ? {} : { seedBase: options.seedBase }),
   });
 
-  // The lock on the directory, taken after the plan — the plan has made the directory
-  // and written the seed fields, which a run refused here leaves as it found them — and
-  // so before the first match and the first record write. It is released in a `finally`,
-  // so a run that throws — an unreadable log, a stop, anything — leaves no lock behind
-  // for the next run to have to steal.
+  // The lock on the directory, taken after the plan — and so before the first match
+  // and the first record write. It is released in a `finally`, so a run that throws — an
+  // unreadable log, a stop, anything — leaves no lock behind for the next run to have to
+  // steal, and that release cannot throw: a lock this run fails to remove is the next
+  // run's to read as stale, not this run's failure.
   await acquireSeriesLock(plan.dir);
   try {
     return await playPlan(plan, options, options.playMatch ?? runMatch, concurrency, ceilings);
