@@ -493,21 +493,46 @@ The rejection ends the harness's interest, not the seat's work.
   `prompt_timeout` and a match that goes on playing is exactly the case
   where the seat is still compacting while the harness opens turn 20.
 
-### What `prompt_timeout` will have to say
+### What the fix does with a prompt that arrives late
 
-The next task adds `prompt_timeout` as a pass reason — named so it cannot be read
-as brief §6.3's `timeout`, which is the runner's own turn cap — for a seat that
-did not answer the `prompt` command inside the client's response timeout and is
-not gone. Two things follow from the above and belong to that task rather than
-here:
+`prompt_timeout` is now a pass reason — named so it cannot be read as brief
+§6.3's `timeout`, which is the runner's own turn cap — and the fix answers the
+question the section above leaves open: **the late run belongs to the turn that
+asked for it**, and the seat is quiet before the next turn starts.
 
-- The turn was not played, so its record carries no provider figures, and the
-  context figures §3's `contextUsage` reports are the ones the turn before it
-  left behind. A `prompt_timeout` turn whose summary lands afterwards changes
-  those figures with no turn having played, which is what §3's turn-by-turn
-  deltas are for.
-- The prompt may still be played later, by a seat the harness has already moved
-  past. A turn the log calls `prompt_timeout` and the transcript calls a played
-  turn is the kind of disagreement §7's `tool_surface` void exists to avoid, and
-  the fix has to say which of the two wins before a 150-match series turns it
-  into a data-quality question.
+`playTurn` sends `abort` and waits for it, then gives a run that has not appeared
+yet a moment to appear and waits out the one that has (`quietTheSeat`,
+`packages/harness/src/pi-player.ts`). The abort alone does not close the window:
+`session.abort()` answers as soon as the session *looks* quiet — `isIdle` is "no
+run and no compaction" (`agent-session.js:1038-1040`) — and a prompt deferred
+behind a cancelled compaction is quiet for a tick before its run starts
+(`agent-session.js:1873-1884`). So the abort is answered, the run appears, and
+without the wait its events reach the listener the next turn has installed. With
+it, the run's tool calls are on the wedged turn's record; if it submits, that turn
+is a played turn, since `prompt_timeout` is what the *command* says and a
+submission the server accepted outranks it.
+
+Both bounds are finite, and a run longer than them outlives the turn that would
+have absorbed it. Nothing here closes that: the runner's own deadline aborts the
+seat again, and a run actually running is stopped by that abort, which does wait
+for it. What the tests pin is the case that happens — the run that starts when the
+summary is cancelled. `packages/harness/src/pi-turn.test.ts` plays a turn after
+the wedge and finds it asked its own prompt, given its own tools and making its
+own calls; `packages/runner/src/model-seat.test.ts` plays a three-turn match whose
+wedged turn carries the late run's call and whose turn after it carries only its
+own.
+
+Two things follow for reading such a log:
+
+- The wedged turn is quiet by the time its `getSessionStats` is asked, so it does
+  carry provider figures — the session's cumulative ones, whose turn-by-turn delta
+  in §3 is the late run's cost. A seat that cannot answer that command is the case
+  with no figures at all, and `withHarness`
+  (`packages/runner/src/match.ts:394-400`) writes noughts for it, which is what a
+  bot's record carries: the reason is then the only thing telling a wedged Pi seat
+  from a bot.
+- A rejection that is not the client's own timeout is not `prompt_timeout` but
+  `no_submission`: Pi answering the command to refuse it — "Agent is already
+  processing…" is the likeliest — is a seat that answered, with nothing left
+  waiting. The message itself is not in the log; the log has no field for why a
+  harness passed a turn, and adding one is a schema change this does not need.

@@ -34,8 +34,9 @@
  * that fails after Pi's own retries passes with `provider_error`, and output
  * tokens over the per-turn budget abort the seat and pass with `token_budget`.
  * A `prompt` command the seat never answers — its client waits 30 s, drops the
- * request and rejects, with the child alive — passes with `prompt_timeout`, and
- * the match goes on. A turn that runs out of its time is aborted by the runner,
+ * request and rejects, with the child alive — passes with `prompt_timeout`, the
+ * seat is stopped before the turn is handed back, and the match goes on. A turn
+ * that runs out of its time is aborted by the runner,
  * which is the one that knows, and the runner says `timeout` on the way to the
  * log. The match-level failure — the Pi process dying — is not a turn, and is
  * thrown as `MatchVoided`. A call to a tool the seat was not given is not a
@@ -174,6 +175,27 @@ const noteOf = (args: unknown, key: "intent" | "prediction"): string => {
   const value = (args as Record<string, unknown> | null)?.[key];
   return typeof value === "string" ? value : "";
 };
+
+/**
+ * What `RpcClient` says when its own wait for a command's response runs out:
+ * `Timeout waiting for response to prompt. Stderr: …` (`rpc-client.js:465`). A
+ * prompt Pi *refused* is not that: an error response's text becomes the
+ * rejection through `getData` (`rpc-client.js:412-428`), and a seat that refused
+ * a command is not a seat that never answered one.
+ */
+const commandTimedOut = (error: unknown): boolean =>
+  /Timeout waiting for response to /.test(error instanceof Error ? error.message : String(error));
+
+/** How long a run that is going to start is given the moment to start in. */
+const RUN_APPEARS_MS = 2_000;
+
+/** How long a run that has started is waited on before the turn is handed back. */
+const RUN_SETTLES_MS = 30_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolveSleep) => {
+    setTimeout(resolveSleep, ms);
+  });
 
 /**
  * Whether a failed command means the seat's Pi process is gone.
@@ -491,8 +513,31 @@ export class PiPlayer implements Player {
         // request and rejects, with the child running and still working. That is
         // not a death, and it is not the runner's turn cap either, so the turn is
         // passed under a reason of its own and the match goes on with the calls
-        // the seat had already made.
-        passed = "prompt_timeout";
+        // the seat had already made. Only the client's own wait is that reason: a
+        // rejection carrying Pi's error text — "Agent is already processing…" is
+        // the likeliest — is a seat that answered the command to refuse it, which
+        // is brief §6.3's plain pass and not a turn nobody answered.
+        passed = commandTimedOut(error) ? "prompt_timeout" : "no_submission";
+        // Stop the seat, and wait for it to say it stopped, before the turn is
+        // handed back. The prompt is queued inside Pi: `session.prompt()` is stuck
+        // in `_checkCompaction` ahead of the `preflightResult` callback that
+        // answers the command, and when that check ends — cancelled or not — the
+        // run starts anyway. Left running, its tool calls and orders would be
+        // counted by the listener the *next* turn installs and accepted by the
+        // server as that turn's, so the log would call a turn unplayed that the
+        // transcript calls played. So the seat is stopped here, and `quietTheSeat`
+        // waits for the run that the stop lets go: the late run finishes inside
+        // the turn that asked for it, and its calls stay in that turn's record.
+        try {
+          await this.command("the abort", () => client.abort());
+          await this.quietTheSeat(client, settled);
+        } catch (abortError) {
+          // The abort can wait the same 30 s on a late run longer than that, and
+          // there is nothing further to do about it: the runner aborts the seat
+          // again at its own deadline, and a run that is actually running is
+          // stopped then.
+          if (abortError instanceof MatchVoided) throw abortError;
+        }
       }
     } finally {
       unsubscribe();
@@ -538,9 +583,11 @@ export class PiPlayer implements Player {
       // A turn the runner aborted is a turn that ran out of its time, but the
       // runner is the one that knows that; the seat only knows it has no orders.
       passed: submitted ? null : passed,
-      // `undefined` rather than a row of noughts: a seat that answered no
-      // command at the end of this turn cannot say what the turn cost it, and
-      // the runner writes noughts only for a seat that runs no provider.
+      // `undefined` rather than a row of noughts, because the seat could not say
+      // what the turn cost it. Note what the absence costs: `withHarness`
+      // (packages/runner/src/match.ts:394-400) writes noughts for usage, cost and
+      // context whenever this is absent, which is what a bot's record carries — so
+      // in the log a wedged Pi seat is told from a bot only by its reason.
       provider: stats === null ? undefined : providerTurn(previous, stats, compacted),
     };
   }
@@ -601,6 +648,26 @@ export class PiPlayer implements Player {
     void client.abort().catch((error: unknown) => {
       if (seatIsGone(error)) this.markGone();
     });
+  }
+
+  /**
+   * Wait for a seat to be quiet again, after its abort has been answered.
+   *
+   * `session.abort()` answers as soon as the session *looks* quiet: `isIdle` is
+   * "no run and no compaction" (`agent-session.js:1038-1040`), and a prompt
+   * deferred behind a cancelled compaction is idle for a tick before its run
+   * starts (`agent-session.js:1873-1884`). The abort alone therefore leaves a
+   * window — the run appears afterwards, and its events reach whichever listener
+   * is installed then, which is the next turn's. So give a run that is going to
+   * appear the moment to appear, and wait out the one that has. Both bounds are
+   * finite, and a run longer than the second is stopped by the runner's own
+   * abort, which finds a run actually running and so does wait for it.
+   */
+  private async quietTheSeat(client: RpcClient, settled: Promise<void>): Promise<void> {
+    await new Promise((resolveQuiet) => setTimeout(resolveQuiet, RUN_APPEARS_MS));
+    const state = await this.command("the seat's state", () => client.getState());
+    if (!state.isStreaming && !state.isCompacting) return;
+    await Promise.race([settled, sleep(RUN_SETTLES_MS)]);
   }
 
   /** End the turn in flight, because the seat's process is gone. */

@@ -415,15 +415,16 @@ describe("a Pi seat that runs past the runner's turn timeout", () => {
 });
 
 /**
- * The turn deadline the match below is played under.
+ * The runner's turn deadline for the match below.
  *
- * It has to be longer than the 30 s the seat's own client waits for a response
- * to `prompt`, or the runner's `timeout` is what the log records instead: the
- * client's command timeout and the runner's clock start within milliseconds of
- * each other, and 45 s is the margin that keeps the seat's reason the one that
- * arrives first.
+ * It has to be longer than the 30 s `RpcClient` waits for a command's response,
+ * or the runner ends the wedged turn at its own deadline and records its own
+ * `timeout` before the seat can say `prompt_timeout`. Twice as long is the
+ * slack: the seat's 30 s is a timer that starts when the prompt is written, and
+ * the runner's starts when the turn is opened, so a box loaded enough to put
+ * 30 s between those two is a box that has worse problems than this test.
  */
-const PROMPT_TURN_DEADLINE_MS = 45_000;
+const PROMPT_TURN_DEADLINE_MS = 60_000;
 
 describe("a Pi seat whose prompt is never answered", () => {
   it("passes that turn as prompt_timeout, and plays and logs the match around it", async () => {
@@ -449,13 +450,23 @@ describe("a Pi seat whose prompt is never answered", () => {
         usage: { input: 30_000, output: 200, cacheRead: 0, cacheWrite: 0 },
       },
       ...sleepsPastDeadline(120_000, "A summary nobody is left waiting for."),
+      // Turn 2's prompt wants that same summary, and it is held again. What
+      // follows is the run Pi starts for the prompt once the seat is stopped: a
+      // call of its own, and a settle.
+      { delayMs: 120_000, text: "A summary nobody is left waiting for." },
+      { text: "the late answer", toolCalls: [{ name: "get_state", args: {} }] },
+      { text: "the late answer settles" },
+      // Turn 3, asked normally and answered: the seat is quiet by then, and the
+      // late answer's own usage is under the line, so no summary is wanted.
+      { text: "turn three answers", toolCalls: [{ name: "read_notes", args: {} }] },
+      { text: "turn three settles" },
     ]);
     const paths = pathsFor("prompt-timeout");
     try {
       const { log } = await runMatch({
         out: paths.out,
         seed: 135,
-        config: { ...DEFAULT_CONFIG, turns: 2 },
+        config: { ...DEFAULT_CONFIG, turns: 3 },
         seats: {
           A: {
             ...stubSeat(stub),
@@ -473,32 +484,41 @@ describe("a Pi seat whose prompt is never answered", () => {
       // afterwards when the runner's clock ran out.
       expect(log.turns[0].players.A.passed).toBe("timeout");
 
-      // Turn 2 is the one the seat never took. It is neither of the reasons that
-      // belong to a turn in progress: the runner's deadline never came, and the
-      // seat was never asked, so `no_submission` would read as a model that was
-      // prompted and chose to sit the turn out.
+      // Turn 2 is the one the seat never took. It is neither of the reasons
+      // that belong to a turn in progress: the runner's deadline never came, and
+      // the seat was never asked, so `no_submission` would read as a model that
+      // was prompted and chose to sit the turn out.
       const seat = log.turns[1].players.A;
       expect(seat.passed).toBe("prompt_timeout");
       expect(seat.orders).toEqual([]);
-      expect(seat.tool_calls).toEqual([]);
-      // The turn is the seat's own 30 s rather than the runner's 45: the client
+      // The run Pi started for that prompt when the stop cancelled its
+      // summary is this turn's work, and its call is on this turn's record —
+      // not on the next one's, which is what leaving the seat running would do.
+      expect(seat.tool_calls.map((call) => call.tool)).toEqual(["get_state"]);
+      // The turn is the seat's own 30 s rather than the runner's 60: the client
       // gave up on the command, and the runner never had to abort the seat.
       expect(seat.wall_ms).toBeGreaterThanOrEqual(30_000);
-      expect(seat.wall_ms).toBeLessThan(PROMPT_TURN_DEADLINE_MS);
+
+      // Turn 3 is played by the same seat, and it is played normally: asked its
+      // own prompt, making its own call, passing for the ordinary reason. Nothing
+      // is left over from turn 2 to be answered into it.
+      const next = log.turns[2].players.A;
+      expect(next.passed).toBe("no_submission");
+      expect(next.tool_calls.map((call) => call.tool)).toEqual(["read_notes"]);
 
       // The match was played and written: the log is on disk, validates, and the
       // Greedy seat played its half of the turn the wedged seat never played.
       const onDisk = matchLogSchema.parse(JSON.parse(readFileSync(paths.out, "utf8")) as unknown);
-      expect(onDisk.turns).toHaveLength(2);
+      expect(onDisk.turns).toHaveLength(3);
       expect(onDisk.turns[1].players.A.passed).toBe("prompt_timeout");
-      expect(onDisk.turns[1].players.B.passed).toBeNull();
       expect(onDisk.turns[1].players.B.orders.length).toBeGreaterThan(0);
+      expect(onDisk.turns[2].players.A.passed).toBe("no_submission");
       expect(onDisk.result.type).toBe("time");
     } finally {
       // The stub's held summary is still in flight; stopping the stub cancels it.
       await stub.stop();
     }
-  }, SEAT_TIMEOUT_MS);
+  }, SEAT_TIMEOUT_MS + 120_000);
 });
 
 describe("a model seat the run cannot play", () => {

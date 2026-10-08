@@ -518,9 +518,15 @@ describe("a seat's turn outcomes", () => {
       );
 
       // The prompt after it. Its preflight wants a summary, and the stub holds
-      // that summary for 90 s — past the 30 s the client waits for a response.
+      // that summary for 45 s — past the 30 s the client waits for a response.
+      // What follows it in the script is the run Pi starts for the prompt once
+      // the abort cancels that summary: a `get_state` call, and a settle.
       nextTurn();
-      stub.setScript(sleepsPastDeadline(90_000, "A summary nobody is left waiting for."));
+      stub.setScript([
+        { delayMs: 45_000, text: "A summary nobody is left waiting for." },
+        { text: "the late run answers", toolCalls: [{ name: "get_state", args: {} }] },
+        { text: "the late run settles" },
+      ]);
       const requestsBefore = stub.requestCount;
       // The turn comes back rather than throwing: a seat that is alive and did
       // not answer is a turn the harness passes, not a match it gives up on.
@@ -530,37 +536,65 @@ describe("a seat's turn outcomes", () => {
       // `timeout`: that one is the runner stopping a seat that was playing, and
       // this seat never took the question at all. `no_submission` would read as
       // a model that was asked and chose to sit the turn out.
-      expect(wedged.turn).toBe(turn);
+      expect(wedged.turn).toBe(abortedTurn + 1);
       expect(wedged.passed).toBe("prompt_timeout");
       expect(wedged.submitted).toBe(false);
-      // The turn is a record with the calls it made, and it made none: the
-      // prompt never reached the session. Whatever a seat had already made before
-      // its client gave up stays with the turn, instead of the turn going missing
-      // along with the match.
-      expect(wedged.toolCalls).toEqual([]);
-      // The seat's process is alive, and still working: it made a provider
-      // request after the command was given up on, and that request is still
-      // open. A dead child makes neither, and a dead child is a void instead.
+      // The turn is a record with the calls it made. The prompt did not reach the
+      // session as a run, but cancelling its summary lets Pi start one anyway, and
+      // the wait after the stop holds this turn open for it — so its
+      // calls belong to the turn that asked for them instead of being picked up by
+      // the turn that follows.
+      expect(wedged.toolCalls.map((call) => call.tool)).toEqual(["get_state"]);
+      // The seat's process is alive, and was working: it made a provider request
+      // after the command was given up on. A dead child makes none, and a dead
+      // child is a void instead.
       expect(stub.requestCount).toBeGreaterThan(requestsBefore);
-      expect(stub.repliesInFlight).toBeGreaterThan(0);
       if (existsSync("/proc")) {
         expect(piChildPid(player.seatHome.cwd), "the Pi child is gone from under a live seat").not.toBeNull();
       }
-      // And the request it is stuck on is Pi's compaction summary, not the turn:
-      // no tools offered, and the summarising system prompt in front (§5).
-      const stuck = stub.recorded.at(-1);
+      // And the request the turn was stuck on is Pi's compaction summary, not the
+      // turn: no tools offered, and the summarising system prompt in front (§5).
+      const stuck = stub.recorded[requestsBefore];
       expect(stuck?.toolNames).toEqual([]);
       expect(stuck?.systemPrompts.join("\n")).toContain("context summarization assistant");
-      // The turn's prompt never reached the session's message list, and the
-      // compaction that has it has appended nothing: the wedge is before Pi
-      // accepts the prompt, which is what the Marvin transcript shows too.
-      const entries = sessionEntries(player.seatHome.sessionDir);
-      expect(JSON.stringify(entries)).toContain(`Turn ${String(abortedTurn)} of 25.`);
-      expect(JSON.stringify(entries)).not.toContain(`Turn ${String(turn)} of 25.`);
-      expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+      // The wedge is before Pi accepts the prompt — no response, and the summary
+      // requested after the rejection with the child still running — and the
+      // compaction that has it has appended nothing, which is what the Marvin
+      // transcript shows too.
+      expect(sessionEntries(player.seatHome.sessionDir).some((entry) => entry.type === "compaction")).toBe(
+        false,
+      );
+
+      // The turn after the wedge, played by the same seat. This is what stopping
+      // the seat before the pass is returned buys: the late run is over by now,
+      // so nothing is left to be answered into this turn. It is asked normally —
+      // its own prompt, its own tools, its own calls — and it is not itself a
+      // `prompt_timeout`: the wedge does not cascade. No summary is wanted here,
+      // because the late run's own answer is the last thing the session holds and
+      // it reports usage under the line.
+      nextTurn();
+      stub.setScript([
+        { text: "turn four answers", toolCalls: [{ name: "read_notes", args: {} }] },
+        { text: "turn four settles" },
+      ]);
+      const after = await player.playTurn(turn);
+      expect(after.turn).toBe(turn);
+      expect(after.passed).toBe("no_submission");
+      expect(after.toolCalls.map((call) => call.tool)).toEqual(["read_notes"]);
+      const asked = stub.recorded
+        .slice(requestsBefore)
+        .filter((request) => JSON.stringify(request.body).includes(`Turn ${String(turn)} of 25.`));
+      expect(asked.length, "the turn after the wedge was never asked").toBeGreaterThan(0);
+      // The transcript does say the wedged turn was played: the run Pi started
+      // late put its prompt in the session. The log says so too now, with that
+      // run's calls on it, and that agreement is the point of the stop.
+      expect(JSON.stringify(sessionEntries(player.seatHome.sessionDir))).toContain(
+        `Turn ${String(abortedTurn + 1)} of 25.`,
+      );
     },
-    // The 30 s the client waits for the prompt, on top of an aborted turn that
-    // a starved box can hold until the 120 s reply it is sitting in lands — the
+    // The 30 s the client waits for the prompt, the late run its abort answers,
+    // and the turn played after them, on top of an aborted turn that a starved
+    // box can hold until the 120 s reply it is sitting in lands — the
     // shape `vitest.config.ts` records for this file.
     SEAT_TIMEOUT_MS + 120_000,
   );
