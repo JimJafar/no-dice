@@ -144,8 +144,7 @@ open from brief §11: the second model for a second pairing, the per-turn output
 (on Marvin the money cost is zero, so the useful number is tokens per turn), the compaction
 decision, and the rules decisions milestone 06's review puts to him. None of it blocks 01–05.
 
-Milestone 11 puts a turn timeout in the start form's advanced block, and there is no such knob: the
-runner gives every turn five minutes (`TURN_TIMEOUT_MS` in `packages/runner/src/match.ts`) and no
-flag changes it. The plan states that cap on the page rather than editing it, and asks whether the
-operator should be allowed to change it — which would mean a flag on the command line, the cap
-threaded through every match, and a log header whose turn cap follows it.
+Milestone 11's turn timeout is settled: the runner gives every turn five minutes
+(`TURN_TIMEOUT_MS` in `packages/runner/src/match.ts`), no flag changes it, and the start form states
+that cap in its advanced block rather than letting an operator edit it. A turn-length flag on the
+command line is out unless it is asked for.

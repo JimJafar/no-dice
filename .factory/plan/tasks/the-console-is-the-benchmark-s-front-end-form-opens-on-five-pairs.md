@@ -26,10 +26,10 @@ the knobs nobody touches on a first run.
   label says in the page's words what is inside. Pairs, Pairs at once, Series name and, for a match,
   its seed stay in the open: they are what a first run is about.
 - **Turn timeout is stated, not edited.** The runner gives every turn five minutes
-  (`TURN_TIMEOUT_MS` in `packages/runner/src/match.ts`) and no flag changes it, so the advanced block
-  says that in one line rather than offering a box. Making it editable would mean a
-  flag on the command line, a cap threaded through every match, and a log header whose turn cap
-  follows it — a different change, and the plan has asked whether it is wanted.
+  (`TURN_TIMEOUT_MS` in `packages/runner/src/match.ts`) and no flag changes it; Jim has settled that
+  it stays that way for this milestone. The advanced block says so in one line rather than offering a
+  box. Making it editable would mean a flag on the command line, a cap threaded through every match,
+  and a log header whose turn cap follows it, and that is not wanted.
 - The estimate paragraph under the button stays where it is; a later task replaces what it says.
 
 ## Acceptance
@@ -62,4 +62,5 @@ for (const ceiling of ["maxCost", "maxTokens", "seedBase"]) {
 '
 pnpm --filter @no-dice/ui build
 pnpm typecheck
+grep -qiE 'five minutes|5 minutes|300 seconds' packages/ui/web/src/render-start.ts
 ```
