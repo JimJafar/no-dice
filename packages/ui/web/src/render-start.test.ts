@@ -199,6 +199,64 @@ describe("the seat pickers", () => {
   });
 });
 
+describe("what the form opens with", () => {
+  it("holds five pairs and one at a time in the boxes, with the ceilings and the seed base blank", () => {
+    // The page shows what it sends: the pair limit is in the box rather than
+    // behind a placeholder, so the run a press of Start asks for is on the
+    // page before anyone types.
+    const { el } = drawn({ ok: true, run: STARTED });
+
+    expect(control<HTMLInputElement>(el, "input.field-max-pairs").value).toBe("5");
+    expect(control<HTMLInputElement>(el, "input.field-concurrency").value).toBe("1");
+    for (const selector of ["input.field-max-cost", "input.field-max-tokens", "input.field-seed-base"]) {
+      expect(control<HTMLInputElement>(el, selector).value).toBe("");
+    }
+  });
+
+  it("reads the pair limit it opens on as a value from the form, not as a default", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+
+    expect(ceilingItems(el)).toEqual([
+      "Pairs: 5",
+      "Pairs at once: 1",
+      "Cost ceiling: none — the runner's default, the field is blank",
+      "Token ceiling: none — the runner's default, the field is blank",
+      "Seed base: 0 — the runner's default, the field is blank",
+    ]);
+  });
+
+  it("says in each placeholder what a blank would mean, rather than what the box holds", () => {
+    // A placeholder is the last place a default can be hidden in, so the ones
+    // that remain explain the blank rather than repeating the number.
+    const { el } = drawn({ ok: true, run: STARTED });
+
+    for (const selector of ["input.field-max-pairs", "input.field-concurrency"]) {
+      expect(control<HTMLInputElement>(el, selector).placeholder).toContain("blank");
+    }
+  });
+
+  it("sends the pair limit it opened with, and omits it once the box is cleared", async () => {
+    const { el, asked, press } = drawn({ ok: true, run: STARTED });
+
+    await press();
+    expect(asked[0]!.body).toEqual({
+      game: "salient",
+      a: "bot:random",
+      b: "bot:random",
+      maxPairs: "5",
+      concurrency: "1",
+    });
+
+    set(el, "input.field-max-pairs", "");
+    // Clearing the box is the case the ceilings block exists for: the page says
+    // whose 75 it now means, and sends no pair limit at all.
+    expect(ceilingItems(el)[0]).toBe("Pairs: 75 — the runner's default, the field is blank");
+
+    await press();
+    expect(asked[1]!.body).toEqual({ game: "salient", a: "bot:random", b: "bot:random", concurrency: "1" });
+  });
+});
+
 describe("the ceilings beside Start", () => {
   it("states the ceilings of the run the form starts on, before anything is pressed", () => {
     const { el } = drawn({ ok: true, run: STARTED });
@@ -211,6 +269,12 @@ describe("the ceilings beside Start", () => {
 
   it("names the runner's defaults for a series whose limits are all blank", () => {
     const { el } = drawn({ ok: true, run: STARTED });
+
+    // The form opens with a pair limit and a concurrency in the boxes, so the all
+    // blank series is the one an operator made by clearing them — and the block
+    // then says whose numbers those are.
+    set(el, "input.field-max-pairs", "");
+    set(el, "input.field-concurrency", "");
 
     expect(ceilingItems(el)).toEqual([
       "Pairs: 75 — the runner's default, the field is blank",
@@ -229,7 +293,7 @@ describe("the ceilings beside Start", () => {
 
     expect(ceilingItems(el)).toEqual([
       "Pairs: 3",
-      "Pairs at once: 1 — the runner's default, the field is blank",
+      "Pairs at once: 1",
       "Cost ceiling: none — the runner's default, the field is blank",
       "Token ceiling: 900000",
       "Seed base: 0 — the runner's default, the field is blank",
@@ -264,6 +328,89 @@ describe("the ceilings beside Start", () => {
   });
 });
 
+describe("the advanced block", () => {
+  /** The disclosure itself, or the reason the page is not the page it should be. */
+  const advancedOf = (el: HTMLElement): HTMLDetailsElement =>
+    control<HTMLDetailsElement>(el, "details.advanced");
+
+  it("starts closed, and opens on a click without leaving the page", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+    const advanced = advancedOf(el);
+    const name = control<HTMLInputElement>(el, "input.field-name");
+    name.value = "alpha";
+
+    expect(advanced.open).toBe(false);
+
+    control<HTMLElement>(el, "details.advanced > summary").click();
+
+    // Opened, and still the same page: no reload, no navigation, and nothing that
+    // was typed went with it — the form was not drawn again.
+    expect(advanced.open).toBe(true);
+    expect(el.querySelector("input.field-name")).toBe(name);
+    expect(name.value).toBe("alpha");
+    expect(el.querySelectorAll("button.start")).toHaveLength(1);
+    expect(el.querySelectorAll("details.advanced")).toHaveLength(1);
+  });
+
+  it("holds the seed base and both ceilings, and leaves the first run's knobs in the open", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+    const advanced = advancedOf(el);
+
+    for (const selector of ["input.field-seed-base", "input.field-max-cost", "input.field-max-tokens"]) {
+      control<HTMLInputElement>(advanced, selector);
+    }
+    for (const selector of ["input.field-max-pairs", "input.field-concurrency", "input.field-name"]) {
+      expect(advanced.querySelector(selector)).toBeNull();
+    }
+
+    // A match's seed is what that run is about, so it is not folded away either.
+    set(el, "select.field-kind", "match");
+    expect(advanced.querySelector("input.field-seed")).toBeNull();
+    control<HTMLInputElement>(el, "input.field-seed");
+  });
+
+  it("names what is inside, in the page's own words, on the line that opens it", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+    const summary = control<HTMLElement>(el, "details.advanced > summary");
+    const said = (summary.textContent ?? "").toLowerCase();
+
+    for (const what of ["seed base", "cost ceiling", "token ceiling"]) {
+      expect(said).toContain(what);
+    }
+    expect(said).not.toContain("--");
+  });
+
+  it("states how long a turn gets, in one line, and offers no box for it", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+    const advanced = advancedOf(el);
+    const lines = [...advanced.querySelectorAll<HTMLElement>(".turn-timeout")];
+
+    expect(lines).toHaveLength(1);
+    const line = lines[0]!.textContent ?? "";
+    expect(line).toMatch(/five minutes/);
+    // The cap is the runner's and no flag reaches it, so there is no field for it:
+    // a box would promise a change the console cannot make.
+    expect(advanced.querySelectorAll("input.field-turn, input.field-turn-timeout")).toHaveLength(0);
+    expect([...advanced.querySelectorAll<HTMLElement>(".field-label")].map((each) => each.textContent)).not.toContain(
+      "Turn timeout",
+    );
+  });
+
+  it("keeps the turn line for a match, whose own ceilings the block has none of", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+    const advanced = advancedOf(el);
+
+    set(el, "select.field-kind", "match");
+
+    // A turn gets five minutes whatever the command was, so the line stays; the
+    // series' ceilings are not a match's flags and go back to hidden.
+    expect(textOf(el, ".turn-timeout")).toMatch(/five minutes/);
+    for (const selector of [".field-seed-base-wrap", ".field-max-cost-wrap", ".field-max-tokens-wrap"]) {
+      expect(control<HTMLElement>(advanced, selector).hidden).toBe(true);
+    }
+  });
+});
+
 describe("pressing Start", () => {
   it("asks the console for the run the form describes, and starts watching it", async () => {
     const { el, asked, started, press } = drawn({ ok: true, run: STARTED });
@@ -275,7 +422,14 @@ describe("pressing Start", () => {
     expect(asked).toEqual([
       {
         kind: "series",
-        body: { game: "salient", a: "bot:random", b: "bot:random", maxPairs: "3", name: "alpha" },
+        body: {
+          game: "salient",
+          a: "bot:random",
+          b: "bot:random",
+          maxPairs: "3",
+          concurrency: "1",
+          name: "alpha",
+        },
       },
     ]);
     expect(started).toEqual([STARTED]);
@@ -368,12 +522,12 @@ describe("the words the start form speaks", () => {
       "Seat A",
       "Seat B",
       "Seed, for one match",
-      "Seed base",
       "Pairs",
-      "Token ceiling",
-      "Cost ceiling",
       "Pairs at once",
       "Series name",
+      "Seed base",
+      "Token ceiling",
+      "Cost ceiling",
     ]);
   });
 

@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { ceilingsOf, payloadOf, seatOf, startRun } from "./start.ts";
+import { DEFAULTS, OPEN_VALUES, ceilingsOf, payloadOf, seatOf, startRun } from "./start.ts";
 import type { StartValues } from "./start.ts";
 import type { RunSnapshot } from "./progress.ts";
 import type { FetchJson } from "./api.ts";
@@ -191,6 +191,55 @@ describe("ceilingsOf", () => {
     // No default stands behind the seed, so the page says what the form holds
     // and lets the console say what it makes of that.
     expect(seed).toEqual({ label: "Seed", value: "none given", source: "fixed" });
+  });
+});
+
+describe("the values the form opens with", () => {
+  it("opens on five pairs, one at a time, with no ceiling and no seed base", () => {
+    // The form is where a two-day run gets started by accident, so what it
+    // opens with is a run someone meant to press Start on rather than
+    // the CLI's own answer for an unset flag.
+    expect(OPEN_VALUES).toEqual({
+      maxPairs: "5",
+      concurrency: "1",
+      seedBase: "",
+      maxCost: "",
+      maxTokens: "",
+    });
+  });
+
+  it("leaves DEFAULTS the runner's own numbers, which is what a blank field falls back to", () => {
+    // The ceilings block quotes these when a box is cleared, and the quote has to
+    // stay what `parseArgs` would do — not what the page opened with.
+    expect(DEFAULTS).toEqual({
+      maxPairs: 75,
+      concurrency: 1,
+      seedBase: 0,
+      maxCost: null,
+      maxTokens: null,
+    });
+  });
+
+  it("reads the limits it opens with as values from the form, and the blanks as the runner's", () => {
+    const ceilings = ceilingsOf(filled(OPEN_VALUES));
+
+    expect(ceilings.map((each) => [each.label, each.value, each.source])).toEqual([
+      ["Pairs", "5", "form"],
+      ["Pairs at once", "1", "form"],
+      ["Cost ceiling", "none", "runner"],
+      ["Token ceiling", "none", "runner"],
+      ["Seed base", "0", "runner"],
+    ]);
+  });
+
+  it("sends the pair limit it opened with, and sends nothing for the ceilings it left blank", () => {
+    expect(payloadOf(filled(OPEN_VALUES)).body).toEqual({
+      game: "salient",
+      a: "bot:random",
+      b: "bot:greedy",
+      maxPairs: "5",
+      concurrency: "1",
+    });
   });
 });
 

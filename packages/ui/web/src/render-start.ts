@@ -3,7 +3,7 @@
  *
  * What the form means is `start.ts`'s business: this file turns its values into
  * controls, keeps the derived parts of the page in step with them, and puts
- * whatever the console answers back on the page. Three rules shape the drawing.
+ * whatever the console answers back on the page. The rules below shape the drawing.
  *
  * **The seat picker lists what the console can seat a run on, and the model id
  * is typed.** `/api/state` names the bots and every provider in
@@ -18,6 +18,22 @@
  * defaults rather than what was typed — a blank pair limit is 75 pairs, not
  * nothing — and under it sits the measured cost of a series at that length. A
  * Start button that says nothing is how a 48-hour run gets started by accident.
+ *
+ * **The boxes hold what the page sends.** The pair limit and the concurrency open
+ * at `OPEN_VALUES` — five pairs, one at a time — rather than blank, because a form
+ * that opens blank opens at the runner's 75 pairs, which is two days of a machine
+ * and the wrong answer to "what happens when I press Start". A blank box is still
+ * the runner's default, and the block still says so when an operator clears one;
+ * what has changed is that the blank is now a thing an operator did rather than
+ * the state the page arrived in.
+ *
+ * **The knobs nobody touches on a first run are folded away.** The seed base and
+ * the two ceilings sit behind a disclosure that starts closed and opens on a click
+ * — a `<details>`, so the browser does the opening and nothing is reloaded
+ * or navigated. The line that opens it names what is inside in the words the fields
+ * inside it are labelled in. The block also states the one cap the form cannot
+ * change: every turn gets five minutes, and there is no box for it
+ * because no flag reaches it.
  *
  * **The form speaks in words, not in the command line's words.** Every field is
  * labelled with what it is for — Pairs, Pairs at once, Cost ceiling, Seed base —
@@ -37,7 +53,7 @@
  * form that rebuilt itself under someone mid-way through typing a model id would
  * be a form that lost what they typed.
  */
-import { GAMES, MEASURED_SERIES, RUN_KINDS, ceilingsOf, isBotSeat, payloadOf } from "./start.ts";
+import { GAMES, MEASURED_SERIES, OPEN_VALUES, RUN_KINDS, ceilingsOf, isBotSeat, payloadOf } from "./start.ts";
 import type { Ceiling, RunKind, StartBody, StartOutcome, StartValues } from "./start.ts";
 import { clear } from "./render-frame.ts";
 import type { RunSnapshot } from "./progress.ts";
@@ -80,12 +96,17 @@ const selectOf = (className: string, values: readonly string[]): HTMLSelectEleme
   return select;
 };
 
-/** A text input, untyped: nothing here decides what a number or an id looks like. */
-const textInput = (className: string, placeholder: string): HTMLInputElement => {
+/**
+ * A text input, untyped: nothing here decides what a number or an id looks like.
+ * `value` is what the box holds before anyone types — a box that opens holding a
+ * value needs no placeholder for it, because the page shows what it will send.
+ */
+const textInput = (className: string, placeholder: string, value = ""): HTMLInputElement => {
   const input = document.createElement("input");
   input.className = className;
   input.type = "text";
   input.placeholder = placeholder;
+  input.value = value;
   return input;
 };
 
@@ -164,6 +185,22 @@ interface LimitField {
 }
 
 /**
+ * What the folded block's own line says, in the words the fields inside it are
+ * labelled in: a disclosure is only folded away from someone who can tell what
+ * they are opening.
+ */
+const ADVANCED_LABEL = "Seed base, cost ceiling, token ceiling — and how long a turn gets";
+
+/**
+ * The turn cap, stated rather than offered. The runner gives every turn five
+ * minutes — `TURN_TIMEOUT_MS` in `packages/runner/src/match.ts` — and no flag
+ * changes it, so the block says the fact instead of drawing a box that would
+ * promise a change the console cannot make.
+ */
+const TURN_TIMEOUT_LINE =
+  "Every turn gets five minutes. That is the runner's own cap, and this page does not change it.";
+
+/**
  * The start section: the form, the ceilings beside its button, and the line the
  * console answered with.
  */
@@ -191,27 +228,58 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
   const seatA = seatPicker("a", options.choices);
   const seatB = seatPicker("b", options.choices);
 
+  // The pair limit and the concurrency open holding `OPEN_VALUES`, so the run a
+  // press of Start asks for is on the page rather than behind a placeholder. The
+  // placeholders that remain say what a *blank* means — the runner's 75, the
+  // runner's one at a time, no ceiling — which is the one thing the box itself
+  // cannot say once it is full.
   const seed = textInput("field-seed", "a whole number");
-  const seedBase = textInput("field-seed-base", "a whole number");
-  const maxPairs = textInput("field-max-pairs", "75");
-  const maxTokens = textInput("field-max-tokens", "no ceiling");
-  const maxCost = textInput("field-max-cost", "no ceiling");
-  const concurrency = textInput("field-concurrency", "1");
+  const seedBase = textInput("field-seed-base", "the runner's own base, when blank", OPEN_VALUES.seedBase);
+  const maxPairs = textInput("field-max-pairs", "the runner's 75, when blank", OPEN_VALUES.maxPairs);
+  const maxTokens = textInput("field-max-tokens", "no ceiling, when blank", OPEN_VALUES.maxTokens);
+  const maxCost = textInput("field-max-cost", "no ceiling, when blank", OPEN_VALUES.maxCost);
+  const concurrency = textInput("field-concurrency", "one at a time, when blank", OPEN_VALUES.concurrency);
   const name = textInput("field-name", "named from the two seats, when blank");
 
-  const limits: readonly LimitField[] = [
+  // The knobs a first run is about stay in the open — a match's seed, the pair
+  // limit, how many pairs at a time, and what the series is called — and the ones
+  // nobody touches on a first run go behind the disclosure below.
+  const openLimits: readonly LimitField[] = [
     { wrap: field("Seed, for one match", seed, "field-seed-wrap"), kinds: ["match"] },
-    { wrap: field("Seed base", seedBase, "field-seed-base-wrap"), kinds: ["series"] },
     { wrap: field("Pairs", maxPairs, "field-max-pairs-wrap"), kinds: ["series"] },
-    { wrap: field("Token ceiling", maxTokens, "field-max-tokens-wrap"), kinds: ["series"] },
-    { wrap: field("Cost ceiling", maxCost, "field-max-cost-wrap"), kinds: ["series"] },
     { wrap: field("Pairs at once", concurrency, "field-concurrency-wrap"), kinds: ["series"] },
     { wrap: field("Series name", name, "field-name-wrap"), kinds: ["series"] },
   ];
 
+  const advancedLimits: readonly LimitField[] = [
+    { wrap: field("Seed base", seedBase, "field-seed-base-wrap"), kinds: ["series"] },
+    { wrap: field("Token ceiling", maxTokens, "field-max-tokens-wrap"), kinds: ["series"] },
+    { wrap: field("Cost ceiling", maxCost, "field-max-cost-wrap"), kinds: ["series"] },
+  ];
+
+  // One list for the drawing, whichever block a field was put in: a field the
+  // chosen Run kind has no flag for is hidden wherever it sits.
+  const limits: readonly LimitField[] = [...openLimits, ...advancedLimits];
+
   const limitsBlock = document.createElement("div");
   limitsBlock.className = "limits";
-  limitsBlock.append(...limits.map((each) => each.wrap));
+  limitsBlock.append(...openLimits.map((each) => each.wrap));
+
+  // A `<details>` is the disclosure the browser already has: the click
+  // that opens it reloads nothing and navigates nowhere, so the form keeps what
+  // was typed in it. It is drawn closed, because the ceilings are not what a first
+  // run is decided on, and it stays on the page for a match — whose turns get the
+  // same five minutes — with only its turn line left showing.
+  const advancedLabel = document.createElement("summary");
+  advancedLabel.textContent = ADVANCED_LABEL;
+
+  const advancedFields = document.createElement("div");
+  advancedFields.className = "limits advanced-fields";
+  advancedFields.append(...advancedLimits.map((each) => each.wrap));
+
+  const advanced = document.createElement("details");
+  advanced.className = "advanced";
+  advanced.append(advancedLabel, advancedFields, paragraph("turn-timeout", TURN_TIMEOUT_LINE));
 
   const start = document.createElement("button");
   start.className = "start";
@@ -237,6 +305,7 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
     seatA.root,
     seatB.root,
     limitsBlock,
+    advanced,
     row,
     measured,
     outcome,

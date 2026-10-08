@@ -35,6 +35,12 @@
  * `exports` map. `DEFAULTS` names the same three numbers `DEFAULT_MAX_PAIRS`,
  * `DEFAULT_CONCURRENCY` and `DEFAULT_SEED_BASE` do, and the comment beside
  * each says where they come from.
+ *
+ * **What the form opens with is a separate thing.** `OPEN_VALUES` is the pair
+ * limit and concurrency the boxes hold before anyone types — five pairs, one at a
+ * time — while `DEFAULTS` stays what a *cleared* box means. The two are kept apart
+ * so the ceilings block can go on quoting the runner's 75 when a field is blank
+ * while the page stops opening on a two-day run.
  */
 import { postJson } from "./api.ts";
 import { parseRun } from "./progress.ts";
@@ -68,6 +74,30 @@ export const DEFAULTS = {
   maxCost: null,
   maxTokens: null,
 } as const;
+
+/** The limit boxes the form opens with a value in, as the page holds them. */
+export type OpenValues = Pick<StartValues, "maxPairs" | "concurrency" | "seedBase" | "maxCost" | "maxTokens">;
+
+/**
+ * The values the form **opens with**, which are not `DEFAULTS` and are not trying
+ * to be: the boxes hold five pairs, one pair at a time, and both ceilings and the
+ * seed base are left blank. `DEFAULTS` is what a *blank* box means, and the
+ * ceilings block quotes it as the runner's own — that quote has to stay what
+ * `parseArgs` would do, however the page opens.
+ *
+ * The reason they differ is what a blank form asks for. 75 pairs is 150 matches,
+ * one at a time, which is about two days of a machine, and a page that opens
+ * there answers "what happens when I press Start" with the wrong thing. Five
+ * pairs, one at a time, is a run someone can look at, and the ceilings block says
+ * so in the same breath as it says what a cleared box would mean.
+ */
+export const OPEN_VALUES: OpenValues = {
+  maxPairs: "5",
+  concurrency: "1",
+  seedBase: "",
+  maxCost: "",
+  maxTokens: "",
+};
 
 /**
  * What a measured model match costs, as the page says it. Where the
