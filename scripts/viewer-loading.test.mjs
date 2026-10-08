@@ -25,6 +25,11 @@
  * This file sits in `scripts/` rather than under the viewer's `src/` for that
  * one reason: the viewer's source is held to no platform module at all, and
  * reading the page off disk needs `node:fs`.
+ *
+ * What is checked below is the page's decision — the `hidden` attribute. That the
+ * attribute keeps a block out of the layout when its class sets a `display` is a
+ * stylesheet question, and happy-dom has no box model to answer it; that is held
+ * by the `[hidden]` guard in `console-design.test.mjs`, over `viewer.css`.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

@@ -49,6 +49,7 @@ const CSS = readFileSync(join(ROOT, "packages/ui/web/src/console.css"), "utf8");
 const HTML = readFileSync(join(ROOT, "packages/ui/web/index.html"), "utf8");
 const VIEWER_CSS = readFileSync(join(ROOT, "games/salient/viewer/src/viewer.css"), "utf8");
 const VIEWER_HTML = readFileSync(join(ROOT, "games/salient/viewer/index.html"), "utf8");
+const VIEWER_MAIN = readFileSync(join(ROOT, "games/salient/viewer/src/main.ts"), "utf8");
 
 /** The narrowest width the console has to hold, and the widest it is asked to. */
 const PHONE = 375;
@@ -77,6 +78,9 @@ function baseOf(css) {
 }
 
 const BASE = baseOf(CODE);
+
+/** The viewer's stylesheet, same treatment: comments out, `@media` blocks out. */
+const VIEWER_BASE = baseOf(VIEWER_CSS.replace(/\/\*[\s\S]*?\*\//g, ""));
 
 /** Every rule block whose selector list names `selector`, joined as declarations. Both
  * stylesheets put each rule at the start of a line, which is what makes this readable. */
@@ -119,6 +123,34 @@ function headOf(html) {
 function fontsHref(html) {
   const link = /<link href="(https:\/\/fonts\.googleapis\.com[^"]*)"/.exec(html);
   return link === null ? null : link[1];
+}
+
+/**
+ * The classes the viewer's own entry hides by attribute.
+ *
+ * `main.ts` holds each block it shows or hides as an `element("#id")`, so the
+ * set is read out of that file rather than written out here: an element the entry
+ * starts hiding is in the list the next time the file is read, which is the point
+ * — a list kept by hand is the convention this check exists to replace.
+ */
+function viewerHiddenClasses() {
+  const held = new Map(
+    [...VIEWER_MAIN.matchAll(/const (\w+) = element<[^>]+>\("#([\w-]+)"\)/g)].map((each) => [
+      each[1],
+      each[2],
+    ]),
+  );
+
+  const classes = new Set();
+  for (const each of VIEWER_MAIN.matchAll(/(\w+)\.hidden\s*=/g)) {
+    const id = held.get(each[1]);
+    if (id === undefined) continue;
+    const tag = new RegExp(`<[a-z]+[^>]*\\bid="${id}"[^>]*>`).exec(VIEWER_HTML);
+    if (tag === null) throw new Error(`the viewer's page has no #${id}`);
+    const carried = /class="([^"]*)"/.exec(tag[0]);
+    for (const name of carried === null ? [] : carried[1].split(/\s+/)) classes.add(name);
+  }
+  return [...classes];
 }
 
 describe("the console's page", () => {
@@ -204,8 +236,24 @@ describe("the console at a phone's width", () => {
       [".view", /\.view\[hidden\]\{[^}]*display:\s*none/],
       [".field", /\.field\[hidden\]\{[^}]*display:\s*none/],
     ];
-    for (const [hidden, guard] of guards) {
-      expect(CSS, `${hidden} is hidden by attribute and has no rule for it`).toMatch(guard);
+    for (const [selector, guard] of guards) {
+      expect(CSS, `${selector} is hidden by attribute and has no rule for it`).toMatch(guard);
+    }
+
+    // The viewer's page, same stylesheet and same trap. Its entry hides the
+    // blocks that wait for a log, and — for a viewer the console opened with
+    // `?log=` — the file picker and the sentence under it. Only a class that
+    // sets a `display` of its own needs the rule put back; the rest are hidden
+    // by the user agent's `[hidden]{display:none}` already.
+    const hidden = viewerHiddenClasses();
+    expect(hidden.length, "the viewer's entry hides nothing by attribute").toBeGreaterThan(0);
+    for (const name of hidden) {
+      const rule = new RegExp(`\\.${name}\\{[^}]*\\bdisplay:`).exec(VIEWER_BASE);
+      if (rule === null) continue;
+      expect(
+        VIEWER_CSS,
+        `.${name} sets a display and the viewer hides it by attribute, so viewer.css has to put [hidden] back`,
+      ).toMatch(new RegExp(`\\.${name}\\[hidden\\]\\{[^}]*display:\\s*none`));
     }
   });
 

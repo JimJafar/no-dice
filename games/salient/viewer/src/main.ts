@@ -276,6 +276,11 @@ const toggle = mountViewToggle(toggleBar, (next) => {
  * sees is what is wrong with the log they were given, and the way back beside it.
  * A viewer opened without `?log=` keeps both, since picking a file is the only
  * way a log from somewhere else gets in.
+ *
+ * The frame's drop handler stays live either way. A viewer the console opened
+ * onto a log it cannot read — a 404, a log that has moved — has no picker left,
+ * and dropping the right file is the only way back from that; what is put away is
+ * the invitation to go looking for a file in the first place.
  */
 const handedOverLog = namesLogUrl(window.location.search);
 filePicker.hidden = handedOverLog;
