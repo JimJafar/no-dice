@@ -551,3 +551,57 @@ Two things follow for reading such a log:
   run for that branch too, so its calls and any orders it makes land on the turn
   that was refused. That is the turn the server plays those orders in, so the log
   and the server agree; it is not the turn that asked for the run.
+
+### What the turn after a passed one asks the seat first
+
+"Prompted again next turn" is only worth having if the seat can take the prompt,
+and a seat that has just missed one may not be able to. The command the harness
+gave up on is still inside Pi, and the stop that turn sent can have been answered
+while a run was still starting — the window the section above describes. A
+streaming seat does not wait for the next prompt, it refuses it:
+`AgentSession.prompt()` throws "Agent is already processing…"
+(`agent-session.js:1517`) and `rpc-mode.js` answers the command with that, which
+the harness reads as `no_submission` — a seat that answered and sat the turn out,
+which is not what happened. Queued messages are worse: they are answered inside a
+run nobody asked for.
+
+So the turn after a missed prompt starts by putting the seat back in order
+(`recoverSeat`, `packages/harness/src/pi-player.ts`), with the three
+commands `rpc-mode.js` answers without a provider round trip — which is the whole
+reason they can be sent to a seat that has just failed to answer a `prompt`:
+
+- `get_state` (`rpc-mode.js:345-360`) for `isStreaming`, `isCompacting` and
+  `pendingMessageCount`;
+- `abort` (`rpc-mode.js:327-330`) when it says the seat is running or compacting;
+- `clear_queue` (`rpc-mode.js:331-332`) when it says anything is queued, which
+  empties the steering and follow-up queues and returns them
+  (`agent-session.js:1846-1854`).
+
+Ask, act, ask again, up to three passes; a seat that says it is neither running
+nor queued is left alone. Each command is waited on for five seconds rather
+than the client's fixed 30 s, because three commands at 30 s each would make the
+recovery longer than the turn it is preparing, and an unanswered or rejected
+command is read as "nothing further to take away" rather than as a failure — a
+recovery that threw on its first unanswered command would turn a survivable seat
+into a lost turn. A seat whose process is gone rejects every command, and the
+recovery does not report that: the next `prompt` is the command whose failure
+means something, and it turns the death into a voided match, which is the only
+thing that ends one.
+
+Nothing in the recovery re-sends a prompt. The passed turn's prompt is already in
+the seat's history, late or not, and brief §6.3 forbids asking a turn twice.
+A seat that is still busy after being asked and stopped as many times as the
+budget allows is asked anyway: if it will not take the prompt, that turn passes
+with `prompt_timeout` too, and the match goes on playing.
+
+`packages/harness/src/pi-turn.test.ts` pins both halves. A fake client proves the
+bounds and the survivability — a seat that is stopped and asked again, a seat that
+never answers, a seat that rejects every command, a seat that stays busy through
+every pass — and a live seat plays the durable version of the wedge: the abort
+cancels the summary the next prompt waits behind without appending one, so a seat
+left over the compaction line is left over it for the turn after that as well,
+and the suite shows two turns in a row passed with `prompt_timeout`, each back
+inside the runner's 5-minute turn cap, and the turn after them played. It also
+shows the rule the recovery exists to keep: each turn's prompt reaches the model
+exactly once, and the turn after a wedge carries its own calls and its own
+submission rather than the wedged run's.

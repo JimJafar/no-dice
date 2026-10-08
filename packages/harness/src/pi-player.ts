@@ -35,8 +35,10 @@
  * tokens over the per-turn budget abort the seat and pass with `token_budget`.
  * A `prompt` command the seat never answers — its client waits 30 s, drops the
  * request and rejects, with the child alive — passes with `prompt_timeout`, the
- * seat is stopped before the turn is handed back, and the match goes on. A turn
- * that runs out of its time is aborted by the runner,
+ * seat is stopped before the turn is handed back, and the match goes on; the
+ * next turn first puts the seat back in order (`recoverSeat`), and if it still
+ * will not take a prompt, that turn passes the same way. A turn that runs out of
+ * its time is aborted by the runner,
  * which is the one that knows, and the runner says `timeout` on the way to the
  * log. The match-level failure — the Pi process dying — is not a turn, and is
  * thrown as `MatchVoided`. A call to a tool the seat was not given is not a
@@ -196,6 +198,20 @@ const RUN_SETTLES_MS = 30_000;
 /** How many times a run that will not settle is stopped before the turn is handed back. */
 const RUN_STOPS = 2;
 
+/**
+ * How long one between-turns recovery command is waited on, and how many times
+ * the seat is asked before the next turn is asked anyway.
+ *
+ * The client's own wait is 30 s and has no knob, and the recovery sends three
+ * commands, so a recovery that used it would be longer than the turn it is
+ * preparing. These commands are answered by `rpc-mode.js` without a provider
+ * round trip, so a seat that is merely busy answers them in milliseconds; five
+ * seconds is room for a loaded box, and three passes is room for a stop that
+ * needs a second look.
+ */
+const RECOVERY_COMMAND_MS = 5_000;
+const RECOVERY_PASSES = 3;
+
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolveSleep) => {
     setTimeout(resolveSleep, ms);
@@ -225,6 +241,115 @@ const settlesWithin = (client: RpcClient, ms: number): Promise<boolean> =>
 const seatIsGone = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error);
   return /process exited|process error|Client not started/i.test(message);
+};
+
+/**
+ * The commands the between-turns recovery sends, as the part of `RpcClient` it
+ * uses.
+ *
+ * Named as a subset because every one of them is answered by `rpc-mode.js`'s
+ * `handleCommand` without a provider round trip — which is the whole reason the
+ * recovery can ask a seat that has just failed to answer a `prompt`.
+ */
+export interface SeatRecoveryClient {
+  getState(): Promise<{
+    isStreaming: boolean;
+    isCompacting: boolean;
+    pendingMessageCount: number;
+  }>;
+  abort(): Promise<void>;
+  clearQueue(): Promise<unknown>;
+}
+
+/** What a recovery found and did, so the cost of it is readable from outside. */
+export interface SeatRecovery {
+  /** Whether the seat was quiet at the end. `null` when it would not say. */
+  quiet: boolean | null;
+  /** Times the seat was asked, times it was stopped, times its queue was taken away. */
+  asks: number;
+  stops: number;
+  clears: number;
+}
+
+/**
+ * Wait for one command on this end's clock, and read not being told as an
+ * answer rather than as a failure.
+ *
+ * The command is not cancelled — `RpcClient` gives no way to cancel one — it is
+ * simply no longer waited on, and its late response is dispatched as an event
+ * and dropped. A recovery that threw on its first unanswered command would be a
+ * recovery that turns a survivable state into a lost turn.
+ */
+const withinBudget = async <T>(run: () => Promise<T>, ms: number): Promise<T | null> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<null>((resolveBudget) => {
+    timer = setTimeout(() => resolveBudget(null), ms);
+  });
+  try {
+    return await Promise.race([run(), budget]);
+  } catch {
+    // A seat whose process is gone rejects every command, and that is not the
+    // recovery's to report: the next `prompt` is a command whose failure
+    // means something, and it turns the death into a voided match.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Put a seat that missed a prompt back in order before the next turn asks it
+ * again — brief §6.3's "prompted again next turn" is only worth having if the
+ * seat can take the prompt.
+ *
+ * The seat may still be working. The command the harness gave up on is still
+ * inside Pi: `AgentSession.prompt()` parks a prompt arriving during
+ * `_emitAgentSettled` in `_deferredSettledActions` and runs it afterwards
+ * (`agent-session.js:1482-1485`), and the stop the passed turn sent can have
+ * been answered while a run was still starting. A streaming seat refuses the
+ * next prompt outright — `prompt()` throws "Agent is already processing…" and
+ * `rpc-mode.js` answers the command with it — so the turn would be passed for a
+ * reason that is not the truth, and a queued message would be answered inside a
+ * run nobody asked for.
+ *
+ * So ask, and act on the answer: `get_state` says whether the seat is streaming
+ * or compacting and how much is queued, `abort` stops what is running, and
+ * `clear_queue` takes away what is queued. Nothing here re-sends a prompt:
+ * brief §6.3 forbids retrying a turn, and the passed turn's prompt is already in
+ * the seat's history, late or not. A seat that is still busy after being asked
+ * and stopped as many times as the budget allows is asked anyway; if it will
+ * not take the prompt, that turn passes too, and the match goes on.
+ */
+export const recoverSeat = async (
+  client: SeatRecoveryClient,
+  budgetMs: number = RECOVERY_COMMAND_MS,
+  passes: number = RECOVERY_PASSES,
+): Promise<SeatRecovery> => {
+  const recovery: SeatRecovery = { quiet: null, asks: 0, stops: 0, clears: 0 };
+  for (let pass = 0; pass < passes; pass += 1) {
+    const state = await withinBudget(() => client.getState(), budgetMs);
+    recovery.asks += 1;
+    // It will not say, and there is nothing further to take away: ask the turn.
+    if (state === null) return recovery;
+    if (state.isStreaming || state.isCompacting) {
+      await withinBudget(() => client.abort(), budgetMs);
+      recovery.stops += 1;
+      continue;
+    }
+    if (state.pendingMessageCount > 0) {
+      await withinBudget(() => client.clearQueue(), budgetMs);
+      recovery.clears += 1;
+      continue;
+    }
+    recovery.quiet = true;
+    return recovery;
+  }
+  // Asked and stopped until the budget ran out, and still busy. The turn is
+  // asked anyway: a refused prompt is a pass, and a pass is a turn the
+  // match survives. Only a process that is gone ends the match, and the prompt
+  // is the command that says so.
+  recovery.quiet = false;
+  return recovery;
 };
 
 /** A turn's tokens, from the cumulative totals either side of it. */
@@ -293,6 +418,13 @@ export class PiPlayer implements Player {
   private totals: SessionStats | null = null;
   /** The bearer token the seat's connection was made with, for the whole match. */
   private token: string | null = null;
+  /**
+   * Whether the last turn's prompt failed to reach a run — the seat never
+   * answered the command, or answered it to refuse it. The next turn is put
+   * through `recoverSeat` before it asks, because a seat in that state may still
+   * be working on the turn that was passed.
+   */
+  private missedPrompt = false;
   /**
    * The context window Pi reported for the seat's model, read from the
    * session stats while the seat was starting. `null` when the seat has not
@@ -430,11 +562,19 @@ export class PiPlayer implements Player {
    * wrong while the seat's process is alive ends the turn as a pass with
    * `prompt_timeout` rather than throwing, because the match has a turn to
    * record and the seat is prompted again next turn; only a seat whose process is
-   * gone ends the match.
+   * gone ends the match. The turn after such a pass starts by putting the seat
+   * back in order, which is what makes "prompted again next turn" mean a turn
+   * that is played rather than a turn that is refused.
    */
   async playTurn(turn: number): Promise<TurnOutcome> {
     const client = this.client;
     if (client === null) throw new Error("the player has not started");
+
+    // A seat that missed the last turn's prompt is put back in order
+    // before this one asks it again. This runs before the turn's listener is
+    // installed, so a run that is still finishing the passed turn cannot have
+    // its tool calls, or any orders it makes, read as this turn's.
+    if (this.missedPrompt) await recoverSeat(client);
 
     const toolCalls: ToolCallRecord[] = [];
     /** The calls Pi has started but not finished, keyed by its own call id. */
@@ -515,6 +655,7 @@ export class PiPlayer implements Player {
       const prompt = `Turn ${String(turn)} of ${String(this.turns)}. Play your turn.`;
       try {
         const disposition = await this.command("the prompt", () => client.prompt(prompt));
+        this.missedPrompt = false;
         // A prompt that Pi handled without starting a run — an extension command,
         // say — never settles, so waiting on it would hang the turn.
         if (disposition === "started") {
@@ -535,6 +676,9 @@ export class PiPlayer implements Player {
         // the likeliest — is a seat that answered the command to refuse it, which
         // is brief §6.3's plain pass and not a turn nobody answered.
         passed = commandTimedOut(error) ? "prompt_timeout" : "no_submission";
+        // The turn is not retried, and this prompt is never sent again; the
+        // seat is put back in order before the *next* turn asks it.
+        this.missedPrompt = true;
         // Stop the seat, and wait for it to say it stopped, before the turn is
         // handed back. The prompt is queued inside Pi: `session.prompt()` is stuck
         // in `_checkCompaction` ahead of the `preflightResult` callback that

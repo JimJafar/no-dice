@@ -11,12 +11,18 @@
  * turn — and is reported by throwing `MatchVoided` rather than by a turn record,
  * because there is no turn to give a reason to.
  *
- * A seat that stops answering its next command is a third thing, and the last
- * test here reproduces it: the seat is alive and still working, and all the
- * harness has is a bare rejection from its own client. That turn is passed, with
- * `prompt_timeout` — a reason of its own, so a reader cannot mistake it for the
- * runner's `timeout`. Section 8 of docs/pi-harness-notes.md says why the seat
- * gets into that state, and what the passed turn leaves for the one after it.
+ * A seat that stops answering its next command is a third thing, and the
+ * last two tests here reproduce it: the seat is alive and still working, and all
+ * the harness has is a bare rejection from its own client. That turn is passed,
+ * with `prompt_timeout` — a reason of its own, so a reader cannot mistake it for
+ * the runner's `timeout` — and the turn after it first puts the seat back in
+ * order, which is what makes "prompted again next turn" a turn that is played
+ * rather than a turn that is refused. Section 8 of docs/pi-harness-notes.md says
+ * why the seat gets into that state, what the passed turn leaves for the one
+ * after it, and what the recovery between them sends. The wedge does not always
+ * clear itself, so one of those tests plays it twice in a row and shows the match
+ * still being played; the describe after them holds the recovery's own bounds
+ * against a seat that answers late, wrongly, or not at all.
  *
  * What a seat reports and what the log says are not quite the same, and the
  * split is deliberate: a turn that ran out of its time is aborted by the runner,
@@ -38,7 +44,8 @@ import { MatchServer, startServer, type RunningServer } from "@no-dice/salient-s
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
-import type { PiPlayerOptions } from "./pi-player.ts";
+import type { PiPlayerOptions, SeatRecoveryClient } from "./pi-player.ts";
+import { recoverSeat } from "./pi-player.ts";
 import type { PlayerContext, TurnOutcome } from "./player.ts";
 import {
   StubModel,
@@ -49,7 +56,7 @@ import {
   sleepsPastDeadline,
   stubModelsJson,
 } from "./stub-model.ts";
-import type { StubScript, StubUsage } from "./stub-model.ts";
+import type { StubReply, StubScript, StubUsage } from "./stub-model.ts";
 
 /** The prompt a seat is played with, which is the one the match gives it. */
 const PLAYER_SYSTEM = join(import.meta.dirname, "../../../games/salient/prompts/player-system.md");
@@ -88,6 +95,12 @@ const COST = { input: 1, output: 2, cacheRead: 4, cacheWrite: 8 };
 
 /** Output tokens a reply reports, well over the budget any budget test sets. */
 const OVER_BUDGET: StubUsage = { input: 100, output: 5_000, cacheRead: 0, cacheWrite: 0 };
+
+/**
+ * What a reply reports to put a 40,000-token window over Pi's compaction line:
+ * the threshold is 40,000 - 16,384 = 23,616 tokens.
+ */
+const OVER_THE_LINE: StubUsage = { input: 30_000, output: 200, cacheRead: 0, cacheWrite: 0 };
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -578,25 +591,54 @@ describe("a seat's turn outcomes", () => {
       );
 
       // The turn after the wedge, played by the same seat. This is what stopping
-      // the seat before the pass is returned buys: the late run is over by now,
-      // so nothing is left to be answered into this turn. It is asked normally —
-      // its own prompt, its own tools, its own calls — and it is not itself a
-      // `prompt_timeout`: the wedge does not cascade. No summary is wanted here,
-      // because the late run's own answer is the last thing the session holds and
-      // it reports usage under the line.
+      // the seat before the pass is returned, and putting it back in order before
+      // this prompt is sent, buys: the late run is over by now, so nothing is left
+      // to be answered into this turn. It is asked normally — its own prompt, its
+      // own tools, its own calls — and it is not itself a `prompt_timeout`: the
+      // wedge does not cascade. No summary is wanted here, because the late run's
+      // own answer is the last thing the session holds and it reports usage
+      // under the line.
       nextTurn();
       stub.setScript([
         { text: "turn four answers", toolCalls: [{ name: "read_notes", args: {} }] },
+        {
+          toolCalls: [
+            {
+              name: "submit_orders",
+              args: {
+                orders: [],
+                intent: "The seat is back on its feet.",
+                prediction: "The other seat moves east.",
+              },
+            },
+          ],
+        },
         { text: "turn four settles" },
       ]);
+      const requestsForTurn = stub.requestCount;
       const after = await player.playTurn(turn);
       expect(after.turn).toBe(turn);
-      expect(after.passed).toBe("no_submission");
-      expect(after.toolCalls.map((call) => call.tool)).toEqual(["read_notes"]);
+      // Played, not passed: it settles with a submission the server accepted.
+      expect(after.passed).toBeNull();
+      expect(after.submitted).toBe(true);
+      // Only this turn's calls, and only the orders this turn's prompt produced.
+      // The wedged run's `get_state` is on the wedged turn's record above, not
+      // here, and nothing that run was still doing when the turn was handed back
+      // is counted as this turn's submission.
+      expect(after.toolCalls.map((call) => call.tool)).toEqual(["read_notes", "submit_orders"]);
+      // Asked once for this turn and no more: the three requests are the turn's
+      // three scripted legs, so no second attempt at the prompt went out and no
+      // summarisation was wanted in front of it.
+      expect(stub.requestCount - requestsForTurn).toBe(3);
       const asked = stub.recorded
         .slice(requestsBefore)
         .filter((request) => JSON.stringify(request.body).includes(`Turn ${String(turn)} of 25.`));
       expect(asked.length, "the turn after the wedge was never asked").toBeGreaterThan(0);
+      // And neither turn's prompt is ever in front of the model twice: a turn the
+      // harness passed is never retried, however late the seat's answer to it is,
+      // which is what brief §6.3's "never retry a single turn" means.
+      expect(promptCopies(stub, `Turn ${String(abortedTurn + 1)} of 25. Play your turn.`)).toBe(1);
+      expect(promptCopies(stub, `Turn ${String(turn)} of 25. Play your turn.`)).toBe(1);
       // The transcript does say the wedged turn was played: the run Pi started
       // late put its prompt in the session. The log says so too now, with that
       // run's calls on it, and that agreement is the point of the stop.
@@ -609,6 +651,128 @@ describe("a seat's turn outcomes", () => {
     // aborted turn that a starved box can hold until the 120 s reply it is
     // sitting in lands — the shape `vitest.config.ts` records for this file.
     SEAT_TIMEOUT_MS + 240_000,
+  );
+
+  it(
+    "passes turn after turn on a seat that never takes a prompt, and plays the match on",
+    async () => {
+      // A wedge that does not clear itself. The harness's abort cancels the
+      // summary the next prompt is waiting behind without appending one, so a
+      // seat left over the compaction line — an answer with real usage in it,
+      // and an aborted answer reporting nothing after it — is left over it for
+      // the turn after that too, and the one after that. Brief §6.3's "the
+      // player stays in the match" then has to mean the turns keep coming back:
+      // each is passed with `prompt_timeout`, well inside the runner's own turn
+      // cap, and the match is still played on.
+      //
+      // The window is 40,000 tokens, so the line is at 23,616, and the first
+      // turn carries the bulk a cut point needs: without it there is nothing for
+      // a summary to summarise, and no wedge to reproduce.
+      const stub = await startStub([
+        {
+          text: "the map is a hex grid and the map is the territory ".repeat(3_000),
+          toolCalls: [{ name: "get_state", args: {} }],
+          usage: { input: 1_000, output: 3_000, cacheRead: 0, cacheWrite: 0 },
+        },
+        { text: "I will hold this line." },
+      ]);
+      const { player, ctx } = await startSeat("B", stub, {
+        modelsJson: stubModelsJson(stub.baseUrl, { cost: COST, contextWindow: 40_000 }),
+      });
+
+      const first = await player.playTurn(turn);
+      expect(first.passed).toBe("no_submission");
+      expect(first.provider?.compacted).toBe(false);
+
+      // The turn that crosses the line and is aborted out of it by the runner's
+      // clock: what seed 479473028's turn 18 left, and the state that puts a
+      // provider request in front of the next prompt's answer.
+      nextTurn();
+      stub.setScript([
+        { toolCalls: [{ name: "get_state", args: {} }], usage: OVER_THE_LINE },
+        ...sleepsPastDeadline(120_000),
+      ]);
+      const { timedOut } = await playWithDeadline(player, ctx, turn, TURN_DEADLINE_MS);
+      expect(timedOut).toBe(true);
+      expect(
+        sessionEntries(player.seatHome.sessionDir).some((entry) => entry.type === "compaction"),
+      ).toBe(false);
+
+      // Two turns in a row that never take their prompt, each scripted the same
+      // way: a summary that arrives after the client has given up on the
+      // command, then a run that crosses the line again and is stopped before it
+      // can settle — which leaves the same state for the turn after it.
+      nextTurn();
+      const wedges: StubReply[] = [
+        { delayMs: 45_000, text: "a summary nobody is left waiting for" },
+        {
+          text: "the late run answers",
+          toolCalls: [{ name: "get_state", args: {} }],
+          usage: OVER_THE_LINE,
+        },
+        { delayMs: 40_000, text: "the late run is stopped mid-stream" },
+      ];
+      for (let wedge = 0; wedge < 2; wedge += 1) {
+        stub.setScript(wedges);
+        const requestsBefore = stub.requestCount;
+        const started = performance.now();
+        const outcome = await player.playTurn(turn);
+        const took = performance.now() - started;
+
+        expect(outcome.turn).toBe(turn);
+        expect(outcome.passed).toBe("prompt_timeout");
+        expect(outcome.submitted).toBe(false);
+        // The turn comes back rather than hanging, and comes back inside the
+        // runner's own turn cap (`TURN_TIMEOUT_MS`, packages/runner/src/match.ts),
+        // which is what keeps a seat that never answers from hanging a match.
+        expect(took, "a wedged turn outlived the runner's turn cap").toBeLessThan(300_000);
+        // Alive and working rather than dead: it made provider requests after the
+        // command was given up on, and the run they belong to is recorded on the
+        // turn that asked for them, both times.
+        expect(stub.requestCount).toBeGreaterThan(requestsBefore);
+        expect(outcome.toolCalls.map((call) => call.tool)).toEqual(["get_state"]);
+        // And it is left in the same state, because the summary that would
+        // have cleared it was cancelled rather than written.
+        expect(
+          sessionEntries(player.seatHome.sessionDir).some((entry) => entry.type === "compaction"),
+        ).toBe(false);
+        if (existsSync("/proc")) {
+          expect(piChildPid(player.seatHome.cwd), "the Pi child is gone from under a live seat").not.toBeNull();
+        }
+
+        // The match takes the turn and goes on. What the server saw of it is the
+        // late run's call and no orders; the pass reason is the runner's to
+        // write, and the outcome above is where it reads it from.
+        const wedgedTurn = turn;
+        nextTurn();
+        const logged = matches.turnRecord(matchId, wedgedTurn);
+        expect(logged.B.tool_calls.map((call) => call.tool)).toEqual(["get_state"]);
+        expect(logged.B.orders).toEqual([]);
+      }
+
+      // The seat is still in the match, and takes a prompt as soon as the
+      // summary it waits behind is one that arrives: the turn after the wedges
+      // is played, with its own calls and a submission of its own.
+      stub.setScript([{ text: "a summary that arrives" }, ...callsToolThenSubmits("get_state")]);
+      const played = await player.playTurn(turn);
+      expect(played.turn).toBe(turn);
+      expect(played.passed).toBeNull();
+      expect(played.submitted).toBe(true);
+      expect(played.toolCalls.map((call) => call.tool)).toEqual(["get_state", "submit_orders"]);
+      // And the match ends on it: the turn resolves, and the record the server
+      // keeps of it is this turn's calls alone — neither wedged run
+      // reaches a turn that was not its own.
+      const playedTurn = turn;
+      nextTurn();
+      expect(matches.turnRecord(matchId, playedTurn).B.tool_calls.map((call) => call.tool)).toEqual([
+        "get_state",
+        "submit_orders",
+      ]);
+    },
+    // Two wedged turns — each the 30 s the client waits for the prompt plus the
+    // two 30 s waits the harness spends on a run it has to stop twice — and the
+    // turns played around them.
+    SEAT_TIMEOUT_MS + 420_000,
   );
 });
 
@@ -638,3 +802,163 @@ const sessionsIn = (sessionDir: string): string[] =>
   readdirSync(sessionDir)
     .filter((entry) => entry.endsWith(".jsonl"))
     .sort();
+
+/**
+ * How many times one turn's prompt sits in the conversation the model was
+ * shown, taking the largest count over every request the stub answered.
+ *
+ * A turn the harness passed and then asked again would put the same position in
+ * front of the model twice, which is what brief §6.3's "never retry a single
+ * turn" forbids, and the conversation is where that would show. Counting the
+ * prompt as its own `user` message, rather than as a substring, is what keeps
+ * the later turns — which carry the whole conversation — out of the total.
+ */
+const promptCopies = (stub: StubModel, prompt: string): number =>
+  Math.max(
+    0,
+    ...stub.recorded.map(
+      (request) =>
+        request.messages.filter(
+          (message) =>
+            message.role === "user" &&
+            (message.content === prompt ||
+              (Array.isArray(message.content) &&
+                (message.content as Record<string, unknown>[]).some((part) => part.text === prompt))),
+        ).length,
+    ),
+  );
+
+/**
+ * The between-turns recovery on its own, driven by a seat that answers — or
+ * does not — on a schedule no live Pi child can be made to keep.
+ *
+ * `recoverSeat` is the part of the harness that runs against a seat which has
+ * just failed to answer a `prompt`, so what has to be proven about it is that it
+ * survives every way that seat can fail to answer again: late, with an error,
+ * or not at all. Every one of its commands goes through the client that just
+ * timed out, so each is waited on for the recovery's own budget rather than the
+ * client's 30 s, and that budget is passed in and measured here. The fake has no
+ * `prompt` to send, which is the shape of the rule it works to: the recovery
+ * puts a seat back in order for the next turn and never asks for the last one
+ * again.
+ */
+describe("the recovery between a passed turn and the next one", () => {
+  /** What a fake seat reports about itself. */
+  const IDLE = { isStreaming: false, isCompacting: false, pendingMessageCount: 0 };
+
+  /** How one command answers: with a value, by never answering, or by rejecting. */
+  type Fake<T> = T | "hang" | "error";
+
+  /**
+   * A seat that answers `get_state`, `abort` and `clear_queue` as a test says,
+   * and counts how many times each was asked. The rejection text is the client's
+   * own, including the one a dead process answers with.
+   */
+  const fakeSeat = (options: {
+    /** What each `get_state` reports, in order, held on the last entry. */
+    states: Fake<Partial<typeof IDLE>>[];
+    abort?: Fake<undefined>;
+    clearQueue?: Fake<unknown>;
+  }): {
+    client: SeatRecoveryClient;
+    calls: { getState: number; abort: number; clearQueue: number };
+  } => {
+    const calls = { getState: 0, abort: 0, clearQueue: 0 };
+    const answer = <T>(what: Fake<T>, value: T, dead = false): Promise<T> => {
+      if (what === "hang") return new Promise<T>(() => undefined);
+      if (what === "error")
+        return Promise.reject(new Error(dead ? "Pi process exited with code 1" : "Agent is already processing"));
+      return Promise.resolve((what ?? value) as T);
+    };
+    const client: SeatRecoveryClient = {
+      getState: () => {
+        const state = options.states[Math.min(calls.getState, options.states.length - 1)];
+        calls.getState += 1;
+        if (state === "hang") return new Promise(() => undefined);
+        if (state === "error") return Promise.reject(new Error("Timeout waiting for response to get_state."));
+        return Promise.resolve({ ...IDLE, ...state });
+      },
+      abort: () => {
+        calls.abort += 1;
+        return answer(options.abort, undefined);
+      },
+      clearQueue: () => {
+        calls.clearQueue += 1;
+        return answer(options.clearQueue, []);
+      },
+    };
+    return { client, calls };
+  };
+
+  /** The budget and pass count the tests below measure against. */
+  const BUDGET_MS = 250;
+  const PASSES = 3;
+
+  it("stops a seat that is still working, and asks again until it says it is quiet", async () => {
+    const seat = fakeSeat({ states: [{ isStreaming: true }, { isCompacting: true }, IDLE] });
+
+    const recovery = await recoverSeat(seat.client, BUDGET_MS, PASSES);
+
+    expect(recovery).toEqual({ quiet: true, asks: 3, stops: 2, clears: 0 });
+    expect(seat.calls).toEqual({ getState: 3, abort: 2, clearQueue: 0 });
+  });
+
+  it("takes away what is queued, and leaves a seat that is idle alone", async () => {
+    const seat = fakeSeat({ states: [{ pendingMessageCount: 2 }, IDLE] });
+
+    const recovery = await recoverSeat(seat.client, BUDGET_MS, PASSES);
+
+    // Queued messages are answered inside a run nobody asked for, so they are
+    // taken away; a seat that is neither running nor queued is not stopped.
+    expect(recovery).toEqual({ quiet: true, asks: 2, stops: 0, clears: 1 });
+    expect(seat.calls).toEqual({ getState: 2, abort: 0, clearQueue: 1 });
+  });
+
+  it("gives up on a command that never answers, inside its own budget, and says nothing", async () => {
+    const seat = fakeSeat({ states: ["hang"] });
+
+    const started = performance.now();
+    const recovery = await recoverSeat(seat.client, BUDGET_MS, PASSES);
+
+    // One unanswered command ends the recovery rather than spending the whole
+    // budget on a seat that is not answering: at the client's 30 s this would be
+    // a recovery longer than the turn it is preparing.
+    expect(performance.now() - started, "the recovery outlasted its budget").toBeLessThan(2_000);
+    expect(recovery).toEqual({ quiet: null, asks: 1, stops: 0, clears: 0 });
+  });
+
+  it("survives a command that rejects, including a seat whose process is gone", async () => {
+    const gone = fakeSeat({ states: ["error"] });
+    await expect(recoverSeat(gone.client, BUDGET_MS, PASSES)).resolves.toEqual({
+      quiet: null,
+      asks: 1,
+      stops: 0,
+      clears: 0,
+    });
+
+    // A stop that is refused does not end the recovery either: the seat is
+    // asked again, and the turn is asked whatever the last answer was.
+    const refusing = fakeSeat({ states: [{ isStreaming: true }, IDLE], abort: "error" });
+    await expect(recoverSeat(refusing.client, BUDGET_MS, PASSES)).resolves.toEqual({
+      quiet: true,
+      asks: 2,
+      stops: 1,
+      clears: 0,
+    });
+  });
+
+  it("asks a bounded number of times, and hands a seat that will not settle to the turn anyway", async () => {
+    const seat = fakeSeat({ states: [{ isStreaming: true }], abort: "hang" });
+
+    const started = performance.now();
+    const recovery = await recoverSeat(seat.client, BUDGET_MS, PASSES);
+
+    // Busy, stopped, busy, stopped, busy: and then the turn is asked anyway,
+    // because a seat that will not take a prompt passes its turn, and only a
+    // process that is gone ends the match.
+    expect(recovery).toEqual({ quiet: false, asks: PASSES, stops: PASSES, clears: 0 });
+    expect(performance.now() - started, "the recovery outlasted its budget").toBeLessThan(
+      2_000,
+    );
+  });
+});
