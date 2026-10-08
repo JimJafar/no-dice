@@ -230,6 +230,9 @@ const FIXTURE: FixtureMatch[] = [
       trouble: [
         { turn: 3, toolErrors: 1 },
         { turn: 9, wasted: ["unknown hex"] },
+        // A seat the harness could not get to take the prompt: its own pass
+        // reason, and so its own row in the per-model table.
+        { turn: 11, passed: "prompt_timeout" },
         { turn: 18, compacted: true, contextTokens: 0 },
         { turn: 20, toolErrors: 2 },
       ],
@@ -669,6 +672,10 @@ describe("the per-model rows", () => {
 
     expect(x.metrics.passes.timeout).toBe(1);
     expect(x.bands["1-8"].passes.timeout).toBe(1);
+    // `prompt_timeout` is a reason of its own, counted in the band its turn
+    // falls in — turn 11 of the 101 seat-A match.
+    expect(x.metrics.passes.prompt_timeout).toBe(1);
+    expect(x.bands["9-17"].passes.prompt_timeout).toBe(1);
     expect(x.metrics.scouts).toBe(2);
     expect(x.bands["1-8"].scouts).toBe(2);
   });
@@ -1039,6 +1046,9 @@ describe("the markdown", () => {
     expect(markdown).toContain("|  | series | turns 1-8 | turns 9-17 | turns 18-25 |");
     expect(markdown).toContain("| tool errors | 5 | 1 | 1 | 3 |");
     expect(markdown).toContain("| turns | 97 | 39 | 34 | 24 |");
+    // Every pass reason the format allows gets its own row, including the one a
+    // seat that never took the prompt passes with.
+    expect(markdown).toContain("| passed: prompt_timeout | 1 | 0 | 1 | 0 |");
     expect(markdown).toContain("Compaction turns: seed 101, marvin/subagent in seat A, turn 18.");
   });
 

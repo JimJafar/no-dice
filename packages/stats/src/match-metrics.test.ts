@@ -9,7 +9,7 @@
  *   figure re-counted from the parsed turns by plain loops in this file — and
  *   that a bot seat's `context_tokens` of 0 is a stated figure, not a missing
  *   one: a bot runs no provider, so its context really is nought.
- * - **A synthetic log** for what a bot match never produces: all six pass
+ * - **A synthetic log** for what a bot match never produces: all seven pass
  *   reasons, wasted orders and their reasons, a refused submission, tool errors,
  *   scouts, `simulate` calls, and two compaction turns — one of them logged with
  *   `context_tokens: 0` because Pi will not state a size it has just rewritten
@@ -44,6 +44,7 @@ import type { BandMetrics, BandName, TurnMetrics } from "./match-metrics.ts";
 const PASS_REASONS: PassReason[] = [
   "no_submission",
   "timeout",
+  "prompt_timeout",
   "token_budget",
   "provider_error",
   "harness_crash",
@@ -443,6 +444,10 @@ const SEAT_A: SyntheticTurn[] = [
       { tool: "scout", error: true },
     ],
   },
+  // A seat the harness gave up on asking: the `prompt` command went unanswered
+  // and the seat's process stayed alive. `prompt_timeout` is that reason, and it
+  // is not the runner's turn cap, which is `timeout` on turn 9.
+  { n: 24, passed: "prompt_timeout" },
   {
     n: 27,
     scouts: ["A1"],
@@ -522,13 +527,13 @@ describe("a synthetic log with compaction and every pass reason", () => {
     expect(seatA.metrics.passes).toEqual({
       no_submission: 1,
       timeout: 1,
-      prompt_timeout: 0,
+      prompt_timeout: 1,
       token_budget: 1,
       provider_error: 1,
       harness_crash: 1,
       tool_surface: 1,
     });
-    expect(seatA.metrics.passedTurns).toBe(6);
+    expect(seatA.metrics.passedTurns).toBe(7);
     expect(seatA.metrics.wastedOrders).toBe(4);
     expect(seatA.metrics.wastedByReason).toEqual({
       "no action points left": 0,
@@ -636,7 +641,7 @@ describe("a synthetic log with compaction and every pass reason", () => {
     expect(bands["18-25"].metrics.passes).toEqual({
       no_submission: 0,
       timeout: 0,
-      prompt_timeout: 0,
+      prompt_timeout: 1,
       token_budget: 0,
       provider_error: 0,
       harness_crash: 1,

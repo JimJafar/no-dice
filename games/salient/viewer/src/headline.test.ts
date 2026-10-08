@@ -123,6 +123,12 @@ describe("headline", () => {
     expect(headline(quietTurn("token_budget", "no_submission"), 16)).toBe(
       "A ran out of output tokens, B sent no orders, and no hex changed hands",
     );
+    // The two timeouts side by side, so the sentence cannot blur them: `timeout`
+    // is the runner cutting off a seat that was playing, `prompt_timeout` a seat
+    // the harness never got an answer from at all.
+    expect(headline(quietTurn("prompt_timeout", "timeout"), 16)).toBe(
+      "A never took the prompt, B ran out of time, and no hex changed hands",
+    );
   });
 
   it("gives a knockout turn a sentence rather than an empty line", () => {

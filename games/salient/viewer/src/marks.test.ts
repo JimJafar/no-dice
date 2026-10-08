@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { matchLogSchema } from "@no-dice/log";
 import type { Seat, TurnPlayerRecord } from "@no-dice/log";
 
-import { marksFor, marksOfTurn } from "./marks.ts";
+import { marksFor, marksOfTurn, markText } from "./marks.ts";
 import golden01 from "../fixtures/golden-01-time-win.json";
 
 const log = matchLogSchema.parse(golden01);
@@ -58,6 +58,24 @@ describe("the marks of a turn", () => {
       player.compacted = true;
     });
     expect(marksOfTurn(turnOf(compacted))[0]?.compacted).toBe(true);
+  });
+
+  it("says a seat that never took the prompt in words that are not the turn cap", () => {
+    // `timeout` is brief §6.3's turn cap: the runner stopping a seat that was
+    // playing. `prompt_timeout` is the harness giving up on the `prompt` command
+    // itself, so the mark says the seat never took the question, and a reader
+    // cannot turn one into the other.
+    const wedged = withTurn("A", (player) => {
+      player.passed = "prompt_timeout";
+    });
+    const [mark] = marksOfTurn(turnOf(wedged));
+    expect(mark).toEqual({ seat: "A", rejected: [], passed: "prompt_timeout", compacted: false });
+    expect(markText(mark!)).toEqual(["passed: never took the prompt"]);
+
+    const capped = withTurn("A", (player) => {
+      player.passed = "timeout";
+    });
+    expect(markText(marksOfTurn(turnOf(capped))[0]!)).toEqual(["passed: ran out of time"]);
   });
 
   it("lists both seats when both are marked, A first", () => {

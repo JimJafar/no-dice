@@ -629,3 +629,35 @@ each — cannot grow into a turn the runner cuts off. It also shows the rule the
 recovery exists to keep: each turn's prompt reaches the model exactly once, and
 the turn after a wedge carries its own calls and its own submission rather than
 the wedged run's.
+
+### What a `prompt_timeout` pass in a report says
+
+The report's per-model table has a row for every reason `passReasonSchema`
+allows, so `prompt_timeout` is in it as soon as the enum is, and the replay says
+the same thing in words: "never took the prompt", which is a different sentence
+from the "ran out of time" the turn cap is shown as. [The series notes
+§4](series-notes.md) is the precedent for reading either: a pass count in that
+table is a story about the machine the seat ran on before it is a story about the
+model that sat in it.
+
+About the seat, the reason says one narrow thing — the process was alive, the
+harness asked it to play, and it never took the question. That is not the model
+declining to play: a seat that answers the command and sits the turn out is
+`no_submission`, one cut off while playing is `timeout`, and a dead child voids
+the match rather than passing a turn. It says the seat was busy or stuck —
+compacting, or still inside a run from the turn before — which is the state the
+recovery above puts back in order before the next prompt. One such turn is
+survivable and the turn after it is played; two in a row, which the durable test
+shows, says the seat was not quiet across a whole turn boundary.
+
+About the server it says more, because the wait that produces the reason is
+fixed: the client gives up on `prompt` after 30 s, and a compaction or a long run
+that outlasts 30 s is likelier on a loaded host than an idle one — the box
+`vitest.config.ts` records for this suite is that host. So a per-model table with
+several `prompt_timeout` rows measures that machine and that wait before it
+measures the model: every turn it counts is a turn the match lost whatever the
+model would have made of it. Two figures have to be read with the row. Those
+turns are still turns — they are in `turns`, so they drag `tokens per turn` and
+`cost per turn` down — and their tokens are the late run's, the cumulative
+delta of §3, unless the seat could not answer `getSessionStats` either, in which
+case the row sits beside noughts and reads like a bot's.
