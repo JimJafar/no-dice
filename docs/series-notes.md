@@ -296,6 +296,18 @@ one of those ten, so there is no lead to change. Only the evidence half of that
 series is kept: its win-rate report says nothing anyone needs, and the counters
 are the half that went missing last time.
 
+`reports/series/greedy-vs-greedy-evidence.md` is a kept copy of a second bot series,
+played for `docs/rules-review.md`'s Centre Node ping-pong section: 10 pairs, 20 matches, 20
+counted, 0 missing. It could not be played by `no-dice series`, which refuses a pairing whose two
+seats fold to one slug — a mirrored pairing has no seat map that tells its two matches apart, so
+both would be written to one log (`planSeries` in `packages/runner/src/series-plan.ts`). It was
+played through `runMatch` at the same 10 seeds a `--seed-base 0` series draws, one log per seat
+order under `series/greedy-vs-greedy/matches/`, with the record written by the runner's own
+`writeSeriesRecord`; `no-dice evidence --series series/greedy-vs-greedy` counted it. Greedy against
+Greedy is a true mirror — every match is a draw, and the two seat orders of a pair give the same
+score — so those 20 matches are 10 positions played twice. Its logs are gitignored like the first
+bot series', and the copy is the only half that survives.
+
 `.gitignore`'s series pattern is anchored to `/series/` for this to work at all:
 unanchored, `series/` matched `reports/series/` too and the report could not be
 tracked. The runner's own series directories are all at the repository root, so

@@ -276,6 +276,7 @@ ten matches.
 | Node hand changes a match | **7.60** (76 over the series) |
 | Node hand changes per turn, by band | **0.46** (1-8) → **0.32** (9-17) → **0.13** (18-25) |
 | the same counter over bot matches | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22; 6.40 hand changes a match |
+| **Greedy against Greedy, 10 pairs** | **0 of 20** — no Node changed owner twice in any match; 4.80 hand changes a match, 0.33 → 0.13 → 0.13 a turn |
 
 It fires. One match in ten had a Node change owner on three turns with two of them consecutive, and
 the bot-vs-bot counters kept beside these fire at the same 1-in-10 rate, so the pattern is not a
@@ -288,11 +289,36 @@ scouts in 250 turns, on terrain that is always known, which is the minimum-force
 describe — and no match ended in a knockout, so neither seat converted the churn into the 93-to-0
 prize.
 
-**Decision:** the watch the rules ask for is done, and what it found goes to the engine rather than
-to the rules. The question "whether attacking a Node with the exact minimum is meant to be
-rewarded" is filed as the proposed task *"The engine's minimum-force attack on a Node is measured,
-and the ping-pong it allows is decided"*, out of this evidence file; the Centre Node ping-pong box
-in `salient/docs/salient-rules-v0.md` stays open until Jim decides it. Nothing in the rerun forces
+The mirror pairing says the engine is not what makes a bot do it. A Greedy-vs-Greedy series — 10
+pairs, 20 matches, kept at
+[`reports/series/greedy-vs-greedy-evidence.md`](../reports/series/greedy-vs-greedy-evidence.md) —
+has **no Node change owner twice in any of its 20 matches**: every one of its 96 Node hand changes
+is a first capture of a neutral Node, and the two seats make each pair of them on the same turn, in
+mirror image. The pairing is a true mirror — every match is a draw, and the two seat orders of a
+pair give the same score — so those 20 matches are 10 positions played twice, and the 0 of 20 is a
+sample of 10. Greedy does take a neutral Node with garrison + 1, the exact minimum the rules name,
+and then keeps `attackers + 1` on a Node it already holds (`duties` in `games/salient/bots/src/greedy.ts`),
+which is what stops it paying the recapture back. The churn the flag caught in run 2 is a
+model's asymmetry, not an engine reward.
+
+What the engine does allow is now stated in a test of its own,
+[`games/salient/engine/src/node-ping-pong.test.ts`](../games/salient/engine/src/node-ping-pong.test.ts):
+**the defence of a Node is the same 3 before and after it is taken.** A neutral Node stands at its
+garrison of 3; a Node taken with the minimum is left with 1 survivor, gains the Node's +1 production
+on the turn it was taken, and defends with the +1 home bonus, so it stands at 2 + 1 = 3. The same
+4 troops that took it from the garrison take it back from the seat that took it a turn ago, and the
+chain can run every turn: nothing raises the garrison again once a Node has been cleared, and a hex
+taken this turn has no defence term it would not have after five turns. What the chain costs is 4
+troops a hand change, against a Node that produces 1 a turn and is worth 3 points at scoring — a
+stalemate that burns troops rather than a profit. One troop short of the minimum and the attack is a
+tie, which destroys both stacks and leaves the Node to its owner, empty.
+
+**Decision:** the watch the rules ask for is done, and the engine question it filed is measured. The
+minimum-force attack and the consecutive recapture it allows are pinned by
+`games/salient/engine/src/node-ping-pong.test.ts`, and the bot rate beside the rerun's 1 of 10 is
+the Greedy-vs-Greedy series' **0 of 20**. Whether the rules are to be left as they stand is a
+change to combat or to the Node garrison, so it is Jim's to make, and the Centre Node
+ping-pong box in `salient/docs/salient-rules-v0.md` carries his answer. Nothing in the rerun forces
 a replay — the flag is a measurement, not a rule. If the answer turns out to be a change to combat
 or to the Node garrison, then every match of both runs is replayed at its seeds: the rerun's 10
 logs are tracked under `series/marvin-subagent-vs-greedy/` and become the old baseline against a
@@ -574,9 +600,11 @@ does not exist". Three things are.
 Two engine questions were deferred in prose above with no task filed behind them, and the rerun
 settles one of them. **The ping-pong flag fired** — 1 of 10 counted matches, seed 313966722, hex
 E5, turns 5, 19, 20 — so the question whether attacking a Node with the exact minimum is meant to
-be rewarded is now filed, as the proposed task *"The engine's minimum-force attack on a Node is
-measured, and the ping-pong it allows is decided"*, and the Centre Node ping-pong section points at
-it. **The depth question is still not filed, and this paragraph is the marker that it is owed one:**
+be rewarded was filed, as the proposed task *"The engine's minimum-force attack on a Node is
+measured, and the ping-pong it allows is decided"*, and that task has now been played: the attack
+and the consecutive recapture are pinned by `games/salient/engine/src/node-ping-pong.test.ts`, the
+Greedy-vs-Greedy series put **0 of 20** beside the rerun's 1 of 10, and the Centre Node ping-pong
+section carries both. **The depth question is still not filed, and this paragraph is the marker that it is owed one:**
 its trigger is Greedy above 50% with the interval excluding 50%, the rerun's interval on the model
 seat runs to 51.0%, so it did not fire. A 10-pair series that puts that upper bound under 50%
 files it.
