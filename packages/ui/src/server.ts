@@ -34,7 +34,9 @@
  * that hold a `series.lock` with the counters their own records carry — the cheap
  * read a page can poll, where `/api/series` reads every match log —,
  * `/api/leaderboard` answers both leaderboard views over those same records in
- * one call (`./leaderboard.ts`),
+ * one call (`./leaderboard.ts`), `/api/estimate` measures what a run of a given
+ * pairing would cost off the series that have already played those seats
+ * (`./estimate.ts`),
  * `/logs/<path>` serves the JSON a listing names and the `report.md` a finished
  * series wrote beside its record, and `/viewer/` serves the built replay viewer,
  * which is what opens one of those logs at
@@ -76,6 +78,7 @@ import { PROVIDERS_FILE, providerRegistry, reloadProviders } from "@no-dice/runn
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
+import { ESTIMATE_PATH, estimateQueryOf, estimateRows } from "./estimate.ts";
 import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
 import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, playingRows, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
@@ -626,6 +629,22 @@ const route = async (
   // are the stats package's rather than a second account of them.
   if (path === LEADERBOARD_PATH) {
     sendJson(response, 200, await leaderboardRows(config, runs.inFlightSeries()));
+    return;
+  }
+
+  // What a run of this pairing would cost, measured off the series under
+  // the root that have already played those seats. The query is read as the
+  // `no-dice series` flags it stands for, so a seat the terminal would refuse is
+  // refused here in the terminal's own words. The walk is the expensive one —
+  // every match log of every series — which is what makes this a route
+  // the page asks once, not one it polls; `./estimate.ts` says what it costs.
+  if (path === ESTIMATE_PATH) {
+    const asked = estimateQueryOf(request.url);
+    if (!asked.ok) {
+      sendJson(response, 400, { error: asked.error });
+      return;
+    }
+    sendJson(response, 200, await estimateRows(config, asked.query, runs.inFlightSeries()));
     return;
   }
 
