@@ -8,8 +8,12 @@ Sources, all of them in the repository:
 
 - **Run 1** —
   [`reports/series/marvin-subagent-vs-greedy.md`](../reports/series/marvin-subagent-vs-greedy.md):
-  the series report, copied verbatim from `series/marvin-subagent-vs-greedy/report.md`. Its
-  `evidence.md` was not copied and its logs went with the task workspace that played them, so run
+  the series report, copied by hand out of that run's own series directory,
+  `/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy/report.md`,
+  which no longer exists. It is the generator's output plus two hand-written notes added
+  afterwards — one under "Missing matches", one under the "Compaction turns:" line
+  ([series-notes §7](series-notes.md)). Its `evidence.md` was not copied and its logs went with
+  the task workspace that played them, so run
   1 contributes a win rate, a margin, a seat split, a depth split and compaction turns, and none
   of the five counters.
 - **Run 2, the rerun** —
@@ -100,7 +104,7 @@ five counters in the repository.
 | margin | mean **18.5**, bootstrap **10.5 – 26.8** (2000 resamples, 95%), against run 1's 33.9 |
 | knockouts | **none** — all 10 ended `time` at turn 25 |
 | stop reason | `max_pairs`, its full length; the interval test needs `MIN_TEST_PAIRS = 10` pairs and the rerun had 5, so it recorded no stopping interval |
-| tokens | 59,967,929 over the 10 counted matches — 5,996,793 a match, 96.9% of it read from Marvin's cache |
+| tokens | 59,967,929 over the 10 counted matches — 5,996,793 a match, 96.9% of all of it read from Marvin's cache (98.3% of its prompt tokens) |
 
 Run 2's model-seat depth split (250 turns = 10 matches × 25):
 
@@ -161,10 +165,14 @@ This is what the rerun's counters are, beside the figures the rules quote for sc
 | a Node ping-ponging | "in some bot matches" | — | **1 of 10** — seed 313966722, hex E5, turns 5, 19, 20 | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22 |
 | re-scouts, one seat a match | — | — | **1.70** for the model seat, 0.00 for Greedy | 0.00 for both seats |
 
-The last two columns are different pairings, printed side by side for scale and never summed: the
-greedy-vs-random column is two scripted bots, which is the kind of match the rules' own
-figures were measured on, and the run-2 column is the model against Greedy. The rules' two columns
-are the prototype engine's bot matches, from before either file existed.
+The last two columns are different pairings, printed side by side for scale and never
+summed: the greedy-vs-random column is two scripted bots, which is the kind of match the rules' own
+figures were measured on, and the run-2 column is the model against Greedy. The bot-vs-bot column
+carries a confound of its own, and the review does not read it straight: that series ran only **227
+turns**, because **5 of its 10 matches ended before turn 25** (turns 18, 19, 21, 22 and 22), so its
+turns 18-25 band is 57 turns rather than 80, and a knockout ends a match with no lead left to
+change. Its 1.67 late-turn flips and 0.00 lead changes are therefore partly a knockout artifact.
+The rules' two columns are the prototype engine's bot matches, from before either file existed.
 
 ---
 
@@ -196,7 +204,9 @@ matches the model won, it won by 2 and by 6; the mean margin is 18.5 with a boot
 10.5 – 26.8. A pairing with one seat ahead in four fifths of its matches has no lead to change —
 the greedy-vs-random counters, computed by the same code
 over ten bot matches, read **0.00** lead changes a match with 0 of 10 matches changing it, which is
-a property of that pairing and not of +1. So 0.60 is as consistent with the bonus suppressing lead
+a property of that pairing and not of +1 — and partly of how that series ended, since 5 of its 10
+matches were knockouts before turn 25 and a knockout leaves no lead to change. So 0.60 is as
+consistent with the bonus suppressing lead
 changes as with a settled lead, and the rerun's own play does not separate the two: the model seat
 submitted on every turn of 9-17 and 18-25 (0 passes in those bands), so this is not run 1's
 confounder again.
@@ -235,8 +245,9 @@ in 80 turns (2.39 a turn) and **7** captures of neutral hexes in 80 turns, 0.09 
 in turns 1-8. The last turn is not where the points move.
 
 And this time the counter is not the harness talking. The model seat passed **2 of its 250
-turns**, both `no_submission` and both in turns 1-8, and submitted on every one of its 90 turns in
-9-17 and 18-25 — run 1's same bands had 16 and 22 passes, which is why run 1 could only say the
+turns**, both `no_submission` and both in turns 1-8, and submitted on every one of its **170 turns
+in 9-17 and 18-25** (90 and 80) — run 1's same bands had 16 and 22 passes, which is why run 1 could
+only say the
 model "stopped acting before" the horizon. It kept working late: 3.04 tool calls and 0.69
 simulations a turn in 18-25 against 4.28 and 0.88 in 1-8. A seat that is still acting on turn 25
 and does not swing hardest there is a seat that found no lunge worth making. Greedy played the same
@@ -300,11 +311,11 @@ could hand it. The rerun has the row.
 | marvin/subagent | 10 | 75 | 17 | 58 | **1.70** |
 
 That is a small tax. **17 of the model seat's 75 scouts were of a hex that seat had already
-scouted** — 22.7% of them, 1.70 a match out of the 150 action points a match carries — and it
-scouted **58 distinct hexes** over the ten matches, about 5.8 new hexes a match, so most of its
-recon was looking at ground it had not looked at. Greedy scouted 0 times and won 8 of the 10, which
-is the same fact run 1 showed: the information advantage in this pairing was not with the seat that
-had the tools.
+scouted** — 22.7% of them, 1.70 a match out of the 150 action points a seat carries in a match —
+and it scouted **58 distinct hexes** over the ten matches, about 5.8 new hexes a match, so most of
+its recon was looking at ground it had not looked at. Greedy scouted 0 times and won 8 of the 10,
+which is the same fact run 1 showed: the information advantage in this pairing was not with the
+seat that had the tools.
 
 What the row cannot say is what a seat that keeps looking would pay. The seat's scout rate still
 collapses with depth — **0.64 → 0.23 → 0.04 a turn**, 3 scouts in the last 80 turns — and this time
@@ -410,10 +421,13 @@ hours of Marvin, not §7's 48.
 Run 2 measures the growth again, higher and with the cache working. Tokens per turn go **114,628 →
 288,100 → 310,859** across the bands, a 2.7× rise, with context means 26,701 → 67,490 → 76,873 and
 a match total of **5,996,793 tokens** (59,967,929 over the 10) — 2.8× run 1's 2,172,486 a match.
-The cache share is **96.9%** (58,125,343 cache-read of 59,967,929), against run 1's 14.2%–80.4% a
-match and §7's 95.1%, so the eviction penalty run 1 measured is not in the rerun. Most of the
-higher total is more work per turn, not a worse cache: 3.57 tool calls a turn against run 1's 2.35,
-and 193 simulations against 52.
+The cache share, the thing that makes re-sending the conversation affordable, is **98.3% of the
+seat's prompt tokens** (58,125,343 cache-read of 59,109,607 prompt tokens; 96.9% of all its tokens
+once output is counted), against run 1's 14.2%–80.4% a match and §7's 95.1%, both of which are the
+same cache-read over prompt tokens — so the eviction penalty run 1 measured is not in the rerun.
+Most of the higher total is more work per turn, not a worse cache: 3.57 tool calls a turn against
+run 1's 2.35,
+and 193 simulations against run 1's 51.
 
 **Decision:** closed as measured, no rules change and nothing to replay. What it changes is the
 budget, not the game: the brief §11 ceiling Jim set for this series, `--max-tokens 60000000`, was
@@ -540,7 +554,8 @@ does not exist". Three things are.
 
 2. **A second and more competitive pairing.** Every rerun counter came from one pairing, and in it
    Greedy won 8 of the 10 matches, only 3 of the 10 matches changed the lead, and the bot-vs-bot
-   counters kept beside them read 0.00 lead changes a match. That is enough to read quietness and
+   counters kept beside them read 0.00 lead changes a match — themselves partly a knockout artifact,
+   since 5 of those 10 bot matches ended before turn 25. That is enough to read quietness and
    not enough to read a rule. The Home bonus section's lead-change row and the Guessing check's
    depth trigger both need a pairing that changes the lead in about half its matches — a second
    model seat, or Greedy against a scripted bot that plays for the Node — and the No last-seen
