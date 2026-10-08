@@ -300,13 +300,24 @@ are the half that went missing last time.
 played for `docs/rules-review.md`'s Centre Node ping-pong section: 10 pairs, 20 matches, 20
 counted, 0 missing. It could not be played by `no-dice series`, which refuses a pairing whose two
 seats fold to one slug — a mirrored pairing has no seat map that tells its two matches apart, so
-both would be written to one log (`planSeries` in `packages/runner/src/series-plan.ts`). It was
-played through `runMatch` at the same 10 seeds a `--seed-base 0` series draws, one log per seat
-order under `series/greedy-vs-greedy/matches/`, with the record written by the runner's own
-`writeSeriesRecord`; `no-dice evidence --series series/greedy-vs-greedy` counted it. Greedy against
-Greedy is a true mirror — every match is a draw, and the two seat orders of a pair give the same
-score — so those 20 matches are 10 positions played twice. Its logs are gitignored like the first
-bot series', and the copy is the only half that survives.
+both would be written to one log (`planSeries` in `packages/runner/src/series-plan.ts`). It is
+played by `scripts/mirror-series.mjs`, which takes the same command line and draws the seeds through
+`planSeries` itself, then plays both seat orders through `runMatch` and writes the record with the
+runner's own `writeSeriesRecord`:
+
+```bash
+node scripts/mirror-series.mjs series --game salient --a bot:greedy --b bot:greedy \
+  --name greedy-vs-greedy --max-pairs 10
+no-dice evidence --series series/greedy-vs-greedy
+```
+
+Greedy against Greedy is a true mirror — every match is a draw, and the two seat orders of a pair
+give the same score — so those 20 matches are 10 positions played twice. Its logs are gitignored
+like the first bot series', so the copy is the only half that survives, and unlike the marvin
+series' it is not covered by the kept-copy drift test (`scripts/kept-series-evidence.test.mjs`),
+which regenerates only from tracked logs. What is reproducible is the series itself: replaying
+the command above on 8 October 2026 wrote 20 logs whose `evidence.md` is identical to the kept copy
+but for the line naming the directory it was pointed at.
 
 `.gitignore`'s series pattern is anchored to `/series/` for this to work at all:
 unanchored, `series/` matched `reports/series/` too and the report could not be

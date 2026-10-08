@@ -1,8 +1,11 @@
 # Rules review: the open questions against the two real series
 
-`salient/docs/salient-rules-v0.md` leaves eight questions open. This file takes each one in
+`salient/docs/salient-rules-v0.md` left eight questions open when this file was written. This file
+takes each one in
 turn, puts the numbers from the two real series of the same pairing beside the numbers the rules
 quote for scripted bots, and ends with either a decision or the evidence that would settle it.
+One of the eight — Centre Node ping-pong — has since been decided and ticked in that file, on
+8 October 2026; the other seven are still open.
 
 Sources, all of them in the repository:
 
@@ -26,6 +29,13 @@ Sources, all of them in the repository:
 - [`reports/series/greedy-vs-random-evidence.md`](../reports/series/greedy-vs-random-evidence.md)
   — the same five counters over a five-pair `bot:greedy` against `bot:random` series, the one
   pairing on this box whose counters are bot figures all the way down.
+- [`reports/series/greedy-vs-greedy-evidence.md`](../reports/series/greedy-vs-greedy-evidence.md)
+  — the same five counters over a ten-pair `bot:greedy` against itself, played by
+  [`scripts/mirror-series.mjs`](../scripts/mirror-series.mjs) for the Centre Node ping-pong
+  question. Its logs are gitignored, so the copy cannot be regenerated from tracked files; the
+  script replays it at the same seeds and writes an `evidence.md` identical to
+  this copy apart from the line naming the directory
+  ([series-notes §7](series-notes.md)).
 - [`docs/series-notes.md`](series-notes.md) — what was actually run: the command, the ceiling, the
   concurrency, the wall time, the missing matches.
 - [`docs/pi-harness-notes.md` §7](pi-harness-notes.md) and
@@ -43,9 +53,11 @@ same five seeds, 572152369, 708123, 479473028, 313966722 and 1003578858 — so r
 maps played again under the later harness, not a continuation of run 1's record. Where a run-1
 figure is quoted it is quoted as run 1's, and run 1's kept report stays where it is.
 
-**How to read the verdicts.** A rules decision is Jim's, so nothing here is ticked in
-`salient/docs/salient-rules-v0.md`: no box has been moved to "Decided", because no decision has
-been made. Where a `**Decision:**` line appears, it is what the numbers support and what to do
+**How to read the verdicts.** A rules decision is Jim's, and only one has been made: the Centre
+Node ping-pong box is ticked in `salient/docs/salient-rules-v0.md` with his decision of
+8 October 2026, and that section is the only place below where a `**Decision:**` line records one.
+Every other box stays open. Where a `**Decision:**` line appears elsewhere, it is what the numbers
+support and what to do
 next, written for him to accept or refuse; where a `**Left open:**` line appears, the
 numbers that would close it are named with it. Every verdict says which matches a change would
 force to be replayed. A decision that changes the engine is not implemented here — it goes to the
@@ -284,7 +296,7 @@ ten matches.
 | Node hand changes a match | **7.60** (76 over the series) |
 | Node hand changes per turn, by band | **0.46** (1-8) → **0.32** (9-17) → **0.13** (18-25) |
 | the same counter over bot matches | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22; 6.40 hand changes a match |
-| **Greedy against Greedy, 10 pairs** | **0 of 20** — no Node changed owner twice in any match; 4.80 hand changes a match, 0.33 → 0.13 → 0.13 a turn |
+| **Greedy against Greedy, 10 pairs** | **0 of 20** — no Node changed owner twice in any match, and the centre Node is never taken in any of them; 4.80 hand changes a match, 0.33 → 0.13 → 0.13 a turn |
 
 It fires. One match in ten had a Node change owner on three turns with two of them consecutive, and
 the bot-vs-bot counters kept beside these fire at the same 1-in-10 rate, so the pattern is not a
@@ -297,17 +309,25 @@ scouts in 250 turns, on terrain that is always known, which is the minimum-force
 describe — and no match ended in a knockout, so neither seat converted the churn into the 93-to-0
 prize.
 
-The mirror pairing says the engine is not what makes a bot do it. A Greedy-vs-Greedy series — 10
-pairs, 20 matches, kept at
-[`reports/series/greedy-vs-greedy-evidence.md`](../reports/series/greedy-vs-greedy-evidence.md) —
-has **no Node change owner twice in any of its 20 matches**: every one of its 96 Node hand changes
-is a first capture of a neutral Node, and the two seats make each pair of them on the same turn, in
-mirror image. The pairing is a true mirror — every match is a draw, and the two seat orders of a
-pair give the same score — so those 20 matches are 10 positions played twice, and the 0 of 20 is a
-sample of 10. Greedy does take a neutral Node with garrison + 1, the exact minimum the rules name,
-and then keeps `attackers + 1` on a Node it already holds (`duties` in `games/salient/bots/src/greedy.ts`),
-which is what stops it paying the recapture back. The churn the flag caught in run 2 is a
-model's asymmetry, not an engine reward.
+The mirror pairing says something sharper, about the hex the rules name. A Greedy-vs-Greedy series
+— 10 pairs, 20 matches, kept at
+[`reports/series/greedy-vs-greedy-evidence.md`](../reports/series/greedy-vs-greedy-evidence.md),
+played by [`scripts/mirror-series.mjs`](../scripts/mirror-series.mjs) because `no-dice series`
+refuses a pairing whose two seats fold to one slug ([series-notes §7](series-notes.md)) — has
+**no Node change owner twice in any of its 20 matches**, and it never takes the centre Node at all.
+**F6 ends all 20 matches neutral with its garrison of 3 intact**, and it is attacked on 9.1 turns a
+match: **182 battles** over the series, every one of them **4 troops against 4 with no owner**,
+because both seats send exactly the minimum onto the same unheld Node on the same turn and step 5
+destroys both stacks before either pays the garrison. That is **72.80 troops a match burned at
+F6 for no hand change**, and the garrison is not worn by a single troop in any turn of any match.
+So the 0 of 20 counts hand changes on other Nodes — D6 and H6 six times each, across 30 hexes in
+all —
+and what the mirror pairing shows is that it cannot produce a hand change at the contested Node, not
+that a bot turned down a recapture. Greedy's `attackers + 1` duty on Nodes it already holds
+(`duties` in `games/salient/bots/src/greedy.ts`) never comes into it at F6, because neither seat
+ever holds it. The rerun's logs do take F6 — 18 captures over its 10 matches, held at the end of all
+ten — so the churn needs an asymmetric pairing of either kind, and the bot flag at seed 1003578858
+shows it does not need a model.
 
 What the engine does allow is now stated in a test of its own,
 [`games/salient/engine/src/node-ping-pong.test.ts`](../games/salient/engine/src/node-ping-pong.test.ts):
@@ -319,19 +339,29 @@ chain can run every turn: nothing raises the garrison again once a Node has been
 taken this turn has no defence term it would not have after five turns. What the chain costs is 4
 troops a hand change, against a Node that produces 1 a turn and is worth 3 points at scoring — a
 stalemate that burns troops rather than a profit. One troop short of the minimum and the attack is a
-tie, which destroys both stacks and leaves the Node to its owner, empty.
+tie, which destroys both stacks and leaves the Node to its owner, empty. The mirror series' F6
+stalemate is that same tie one step earlier: two equal stacks arriving at an unheld Node fight each
+other under step 5 before either pays the garrison, which is why 182 of them change nothing.
 
 **Decision:** the watch the rules ask for is done, and the engine question it filed is measured and
 closed. The minimum-force attack and the consecutive recapture it allows are pinned by
 `games/salient/engine/src/node-ping-pong.test.ts`, and the bot rate beside the rerun's 1 of 10 is
-the Greedy-vs-Greedy series' **0 of 20**. On 8 October 2026 Jim decided the recapture is intended:
-the Node garrison, the home bonus and the combat table stand as they are, no rule changes, and —
-because nothing about the resolution moved — **no series is replayed**. The Centre Node ping-pong
-box in `salient/docs/salient-rules-v0.md` is ticked with that decision and these rates beside it.
-Had the answer been a change to combat or to the Node garrison, every match of both runs would have
-been replayed at its seeds: the rerun's 10 logs tracked under `series/marvin-subagent-vs-greedy/`
-would have become the old baseline against a new series, and run 1's 8 counted matches, which exist
-only as figures, would have stopped being comparable.
+the Greedy-vs-Greedy series' **0 of 20** — which, as above, is a stalemate at the garrison
+rather than a recapture declined.
+
+**Jim decided it on 8 October 2026**, in answer to the question this section filed: the task
+*"The engine's minimum-force attack on a Node is measured, and the ping-pong it allows is decided"*
+put him four options — accept the recapture as intended, raise the Node garrison, add a defence term
+on a hex taken this turn, or leave the box open — and he took the first, "the recapture is intended,
+the question closes as decided, no rule change and no replay". This paragraph and the ticked box
+in `salient/docs/salient-rules-v0.md` are where that answer is recorded; it is the first box
+moved out of `Open questions` since the 4 October block, and every other box stays a recommendation
+for him. The Node garrison, the home bonus and the combat table stand as they are, and — because
+nothing about the resolution moved — **no series is replayed**. Had the answer been a change to
+combat or to the Node garrison, every match of both runs would have been replayed at its seeds: the
+rerun's 10 logs tracked under `series/marvin-subagent-vs-greedy/` would have become the old baseline
+against a new series, and run 1's 8 counted matches, which exist only as figures, would have stopped
+being comparable.
 
 ### No last-seen memory
 
@@ -612,8 +642,10 @@ E5, turns 5, 19, 20 — so the question whether attacking a Node with the exact 
 be rewarded was filed, as the proposed task *"The engine's minimum-force attack on a Node is
 measured, and the ping-pong it allows is decided"*, and that task has now been played: the attack
 and the consecutive recapture are pinned by `games/salient/engine/src/node-ping-pong.test.ts`, the
-Greedy-vs-Greedy series put **0 of 20** beside the rerun's 1 of 10, and the Centre Node ping-pong
-section carries both. **The depth question is still not filed, and this paragraph is the marker that it is owed one:**
+Greedy-vs-Greedy series put **0 of 20** beside the rerun's 1 of 10 — which is a stalemate at the
+garrison rather than a recapture declined, since in that mirror pairing neither seat ever holds F6 —
+and Jim closed the Centre Node ping-pong box on 8 October 2026 with the recapture intended. **The
+depth question is still not filed, and this paragraph is the marker that it is owed one:**
 its trigger is Greedy above 50% with the interval excluding 50%, the rerun's interval on the model
 seat runs to 51.0%, so it did not fire. A 10-pair series that puts that upper bound under 50%
 files it.

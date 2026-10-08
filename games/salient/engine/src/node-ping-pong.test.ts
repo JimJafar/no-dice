@@ -1,7 +1,8 @@
 /**
  * The Node ping-pong: a Node taken and retaken on consecutive turns.
  *
- * `salient/docs/salient-rules-v0.md`'s open question "Centre Node ping-pong"
+ * `salient/docs/salient-rules-v0.md`'s question "Centre Node ping-pong" — open
+ * when these tests were written, decided as below on 8 October 2026 —
  * says the bots change the centre Node's owner on alternate turns "because they
  * attack with the exact minimum", and asks whether that recapture is meant to be
  * rewarded. This file states what the resolution rules actually do about it —
@@ -19,15 +20,26 @@
  * is no defence term for a hex taken this turn, and the garrison is never raised
  * again once a Node has been cleared.
  *
- * What the chain is not is free, and the last suite counts it. A
- * seat that wins the Node four times running pays 4 troops each time and keeps
- * the Node's 1 a turn, so the churn trades troops for the 3 points a Node is
- * worth at scoring time. That is the decision Jim made on 8 October 2026, and
- * what these tests state: the recapture is intended, the garrison and the combat
- * table stand as they are, and no series is replayed. The measurement behind it
- * is the Greedy-vs-Greedy series kept at `reports/series/greedy-vs-greedy-evidence.md`
- * — 0 of 20 matches ping-ponged — beside the model rerun's 1 of 10, both counted
- * by `isPingPong` in `packages/stats/src/rules-evidence.ts`.
+ * What the chain is not is free, and the last suite counts it out of the
+ * resolved states: four hand changes take 16 troops off the two staging hexes,
+ * and the Node never stands with more than 2, so the churn trades troops for the
+ * 3 points a Node is worth at scoring time.
+ *
+ * That is the decision Jim made on 8 October 2026, answering the question the
+ * rules' watch filed — the question, the options put to him and his answer
+ * are recorded in `docs/rules-review.md`'s Centre Node ping-pong section, and
+ * the ticked box in the rules file points at it. The recapture is intended, the
+ * garrison and the combat table stand as they are, and no series is replayed.
+ * The measurement beside it is the Greedy-vs-Greedy series kept at
+ * `reports/series/greedy-vs-greedy-evidence.md` — 0 of 20 matches ping-ponged,
+ * counted by `isPingPong` in `packages/stats/src/rules-evidence.ts` — beside the
+ * model rerun's 1 of 10. Worth knowing before reading the 0 of 20 as a
+ * bot turning down the recapture: in that mirror pairing both seats send 4
+ * troops onto F6 on the same turn every time, the two stacks
+ * tie against each other under step 5 before either pays the garrison, and F6
+ * stays neutral with its garrison intact in all 20 matches. The recapture these
+ * tests state needs a seat that holds the Node first, which is what the model
+ * series had and the mirror pairing never gets.
  */
 import { describe, expect, it } from "vitest";
 
@@ -39,6 +51,8 @@ import type { HexKey, MatchState, Order, Seat } from "./types.ts";
 const F5 = "0,-1"; // plain, A's side of the centre Node
 const G5 = "1,-1"; // plain, B's side of it
 const F6 = "0,0"; // the centre Node the rules name, garrison 3 while neutral
+const E7 = "-1,1"; // plain, one of the Node's other two open neighbours
+const F7 = "0,1"; // plain, the other
 
 /** The rules' constants with production off, so a test about a fight is the fight. */
 const NO_PRODUCTION: Config = { ...DEFAULT_CONFIG, baseProduction: 0, nodeProduction: 0 };
@@ -62,8 +76,11 @@ const held = (state: MatchState, key: HexKey): [Seat | null, number] => [
 
 /**
  * A holds F5 with `a` and B holds G5 with `b`, one step from the centre Node on
- * either side. Seed 135's map has E6 and G6 blocked next to F6, so F5 and G5 are
- * the only two ways onto it, which is what makes the fight here one hex wide.
+ * either side. Seed 135's map has two of F6's six neighbours blocked, E6 and G6,
+ * and the other four open: F5, G5, E7 and F7. E7 and F7 are cleared here — they
+ * start that way on this seed, and saying so keeps the fight one hex wide if the
+ * map ever changes — so the only troops that can reach the Node are the two
+ * stacks this fixture puts next to it.
  */
 function eitherSideOfTheNode(a: number, b: number): MatchState {
   const state = generateMap(135, DEFAULT_CONFIG);
@@ -71,6 +88,10 @@ function eitherSideOfTheNode(a: number, b: number): MatchState {
   state.hexes[F5].troops = a;
   state.hexes[G5].owner = "B";
   state.hexes[G5].troops = b;
+  for (const key of [E7, F7]) {
+    state.hexes[key].owner = null;
+    state.hexes[key].troops = 0;
+  }
   return state;
 }
 
@@ -167,18 +188,26 @@ describe("a Node taken and retaken on consecutive turns", () => {
 describe("what the ping-pong is priced at", () => {
   it("trades 4 troops a hand change for a Node that produces 1 a turn", () => {
     let state = eitherSideOfTheNode(12, 12);
-    for (const seat of ["A", "B", "A", "B"] as const) state = sendToTheNode(state, seat, 4).state;
+    let sent = 0; // troops that left the two staging hexes
+    let standing = 0; // troops standing on the Node at the end of each turn
+    for (const seat of ["A", "B", "A", "B"] as const) {
+      const before = state.hexes[F5].troops + state.hexes[G5].troops;
+      state = sendToTheNode(state, seat, 4).state;
+      sent += before - (state.hexes[F5].troops + state.hexes[G5].troops);
+      standing += state.hexes[F6].troops;
+    }
     // Four hand changes, 4 troops each: each seat has sent 8 out of its 12 and
-    // still holds nothing at the end of the fourth turn but 2 troops on the Node.
+    // holds nothing at the end of the fourth turn but 2 troops on the Node.
     expect(held(state, F5)).toEqual(["A", 4]);
     expect(held(state, G5)).toEqual(["B", 4]);
     expect(held(state, F6)).toEqual(["B", 2]);
-    // The Node has produced 4 troops over those four turns, to whoever held it
-    // when they came in, against the 8 each seat paid. The churn is a stalemate
-    // that burns troops; what it buys is the 3 points a Node is worth at scoring.
-    const produced = DEFAULT_CONFIG.nodeProduction * 4;
-    const paid = 2 * 4 * 4;
-    expect(produced).toBeLessThan(paid);
-    expect(DEFAULT_CONFIG.points.node).toBe(3);
+    // Counted out of the resolved states rather than off the constants: 16 troops
+    // left the staging hexes over the four turns, and the Node's side of the
+    // ledger is 8 troop-turns, never more than 2 standing at once. The
+    // churn pays out less than it takes; what it buys is the 3 points a Node is
+    // worth at scoring time.
+    expect(sent).toBe(16);
+    expect(standing).toBe(8);
+    expect(standing).toBeLessThan(sent);
   });
 });
