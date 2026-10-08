@@ -68,21 +68,22 @@ export const expectPlainWords = (view: string, text: string): void => {
 
 /**
  * Everything a drawn element says, in the order a reader meets it: the text, and
- * the attributes that stand in for text — a field's hint, a button's explanation,
- * a control's accessible name.
+ * the attributes that stand in for text — a field's hint, a button's
+ * explanation, a control's accessible name, a group of choices' heading.
  *
  * `textContent` alone misses the labels most likely to drift back to a flag name,
  * because a placeholder is where someone writes the flag they have in mind. Those
- * three attributes are every one this page uses to label something without
- * drawing words for it.
+ * four attributes are every one this page uses to label something without drawing
+ * words for it: an `<optgroup>` heading is a name a reader sees over a list of
+ * choices, and it is an attribute rather than text.
  */
 export const wordsOf = (el: HTMLElement): string => {
-  // The element itself is part of the walk: a `title` or an `aria-label` can sit
-  // on the very node the view test was handed, and a descendant-only walk would
-  // read straight past it.
+  // The element itself is part of the walk: a `title` or an `aria-label` can
+  // sit on the very node the view test was handed, and a descendant-only walk
+  // would read straight past it.
   const said = [el.textContent ?? ""];
-  for (const each of [el, ...el.querySelectorAll("[placeholder], [title], [aria-label]")]) {
-    for (const name of ["placeholder", "title", "aria-label"]) {
+  for (const each of [el, ...el.querySelectorAll("[placeholder], [title], [aria-label], [label]")]) {
+    for (const name of ["placeholder", "title", "aria-label", "label"]) {
       const value = each.getAttribute(name);
       if (value !== null) said.push(value);
     }

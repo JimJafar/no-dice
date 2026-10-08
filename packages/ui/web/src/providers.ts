@@ -26,6 +26,16 @@
  * The model is formed from the row's provider and an id typed against it, which
  * is what `--a marvin/subagent` has always meant at the terminal.
  *
+ * **The models Pi knows natively are read, not polled.** `/api/models` answers
+ * the models the pinned Pi knows and this console's own environment has a key
+ * for — the seats that need no entry, no endpoint and no variable typed. The
+ * route costs a subprocess of about 0.7 s, so the page asks it once per load and
+ * never on a poll. A row is read field by field, and the five fields kept are
+ * the five the page has a use for: the reference a seat is seated with, and Pi's
+ * four figures as Pi printed them. A read that failed is an error the caller
+ * turns into a line, not an empty list — an empty list says no key is set, which
+ * is the opposite of what happened.
+ *
  * The shapes below are declared here rather than imported from
  * `packages/ui/src/providers.ts`, which imports `@no-dice/runner` and
  * `@no-dice/harness` and reads the filesystem; a browser bundle may not.
@@ -41,6 +51,9 @@ export const PROVIDERS_PATH = "/api/providers";
 
 /** Where the page asks Pi whether a seat's credential resolves. */
 export const PROVIDER_CHECK_PATH = "/api/providers/check";
+
+/** Where the page lists the models the pinned Pi knows and this console has a key for. */
+export const MODELS_PATH = "/api/models";
 
 /** One entry as the console lists it: everything the registry holds, and no value. */
 export interface ProviderRow {
@@ -65,6 +78,28 @@ export interface ProviderRow {
     readonly cacheRead: number;
     readonly cacheWrite: number;
   };
+}
+
+/**
+ * One of Pi's own models as the page is shown it.
+ *
+ * `reference` is the string a seat is seated with — `<provider>/<id>`, spelled as
+ * the terminal spells it and as the estimate looks a seat's figures up by — and
+ * the four figures are what Pi printed, kept as strings because `1M` and `384K`
+ * are rounded figures for a person to read; a seat needs no numbers for them,
+ * because Pi knows that model's real window natively.
+ */
+export interface ModelRow {
+  /** The provider and the model id together: `deepseek/deepseek-flash`. */
+  readonly reference: string;
+  /** Pi's own rounded context window, as Pi printed it, e.g. `"1M"`. */
+  readonly context: string;
+  /** Pi's own rounded output cap, as Pi printed it, e.g. `"384K"`. */
+  readonly maxOut: string;
+  /** Whether the model reasons, as Pi printed it: `"yes"` or `"no"`. */
+  readonly thinking: string;
+  /** Whether the model takes images, as Pi printed it: `"yes"` or `"no"`. */
+  readonly images: string;
 }
 
 /** What Pi said about a credential, as the console handed it over. */
@@ -147,9 +182,48 @@ export const parseProviderRows = (value: unknown): ProviderRow[] => {
   return value.map((each, at) => rowOf(each, `providers[${String(at)}]`));
 };
 
-/** The registry as the console lists it. */
+/**
+ * The registry as the console lists it.
+ *
+ * The entries are the console's — `GET /api/providers` answers out of the same
+ * file a run seats on — and the page adds nothing to them.
+ */
 export const fetchProviders = async (fetchJson: FetchJson = fetch): Promise<ProviderRow[]> =>
   parseProviderRows(await getJson<unknown>(PROVIDERS_PATH, fetchJson));
+
+/** One model of `/api/models`: its reference, and Pi's four figures. */
+const modelRowOf = (value: unknown, what: string): ModelRow => {
+  const row = recordOf(value, what);
+  return {
+    reference: stringOf(row["reference"], `${what}.reference`),
+    context: stringOf(row["context"], `${what}.context`),
+    maxOut: stringOf(row["maxOut"], `${what}.maxOut`),
+    thinking: stringOf(row["thinking"], `${what}.thinking`),
+    images: stringOf(row["images"], `${what}.images`),
+  };
+};
+
+/**
+ * The answer from `/api/models`, in Pi's own order. A row missing a field is
+ * named in the line, because whoever reads it is the one who can go and fix the
+ * console that read Pi wrongly.
+ */
+export const parseModelRows = (value: unknown): ModelRow[] => {
+  const list = recordOf(value, "the answer from /api/models");
+  if (!Array.isArray(list["models"])) throw new Error("models is not a list");
+  return list["models"].map((each, at) => modelRowOf(each, `models[${String(at)}]`));
+};
+
+/**
+ * The models the pinned Pi knows natively that this console's environment has a
+ * key for — the seats that need nothing typed.
+ *
+ * A console whose Pi did not answer throws, and the caller decides what to say:
+ * an empty list would tell the operator that no key is set, which is the
+ * opposite of a Pi that failed to answer.
+ */
+export const fetchModels = async (fetchJson: FetchJson = fetch): Promise<ModelRow[]> =>
+  parseModelRows(await getJson<unknown>(MODELS_PATH, fetchJson));
 
 /**
  * What the add form holds: every field as it was typed, and reasoning as it was

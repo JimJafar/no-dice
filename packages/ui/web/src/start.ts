@@ -11,13 +11,19 @@
  * nothing is started. A second validator here would be a second opinion the CLI
  * can disagree with.
  *
- * **A seat is a name and an id typed by hand.** `bot:random`, `bot:greedy` and
- * every provider in `providers.json` are listed by `/api/state`; the model id is
- * typed against the provider that was picked, and the seat goes as
- * `<provider>/<id>` — which is what `--a marvin/subagent` has always meant at the
- * terminal. There is no call to a provider's `/v1/models`, and no key value
- * anywhere near this file: `/api/state` carries provider names and the *names* of
- * their key variables only.
+ * **A seat is one of three kinds, and only one of them types anything.**
+ * `bot:random`, `bot:greedy` and every provider in `providers.json` are listed by
+ * `/api/state`; the model id is typed against the provider that was picked, and
+ * that seat goes as `<provider>/<id>` — which is what `--a marvin/subagent` has
+ * always meant at the terminal. The third kind is one of Pi's own models, listed
+ * by `/api/models`: its reference is already `<provider>/<id>`, so it is seated
+ * as it stands and nothing is typed anywhere. `seatKindOf` says which of the
+ * three a choice is, in one place, and `seatOf` and the picker's model-id box
+ * both read that answer rather than each guessing from the string.
+ *
+ * There is no call to a provider's `/v1/models`, and no key value anywhere near
+ * this file: `/api/state` carries provider names and the *names* of their key
+ * variables only, and `/api/models` carries model references and Pi's figures.
  *
  * **The ceilings are stated before Start is pressed.** A blank limit is not "no
  * limit": it is the runner's default, and the page names it — 75 pairs, which is
@@ -122,14 +128,35 @@ const BOT_PREFIX = "bot:";
 /** Whether a seat choice names a bot rather than a provider, as the parser reads it. */
 export const isBotSeat = (choice: string): boolean => choice.startsWith(BOT_PREFIX);
 
+/** The three kinds a seat picker offers. */
+export type SeatKind = "bot" | "provider" | "model";
+
+/**
+ * Which kind a picker's choice is, read off the choice alone.
+ *
+ * A bot is `args.ts`'s own rule: the `bot:` prefix. A registered provider's name
+ * is one path segment — `isProviderName` in `packages/runner/src/providers.ts`
+ * refuses one with a slash in it, because a seat is `<name>/<id>` — so a slash in
+ * the choice means it is already a whole `<provider>/<id>`: one of Pi's own model
+ * references, which needs no id typed against it. That is the whole test, and it
+ * is made here once, because the seat line under the picker, the box beside it
+ * and the payload all have to agree on which kind they are drawing.
+ */
+export const seatKindOf = (choice: string): SeatKind =>
+  isBotSeat(choice) ? "bot" : choice.includes("/") ? "model" : "provider";
+
 /**
  * The seat as `--a` and `--b` take it: a bot choice as it stands, a
- * provider choice with the typed model id after a slash. A blank model id is
- * left blank, so the seat goes as `marvin/` and the CLI's own line says what is
- * wrong with it — the page has no opinion to offer instead.
+ * provider choice with the typed model id after a slash, and a Pi model's
+ * reference as it stands — it already names both halves, and an id left in the
+ * box from an earlier choice contributes nothing.
+ *
+ * A blank model id against a provider is left blank, so the seat goes as
+ * `marvin/` and the CLI's own line says what is wrong with it — the page has no
+ * opinion to offer instead.
  */
 export const seatOf = (choice: string, modelId: string): string =>
-  isBotSeat(choice) ? choice : `${choice}/${modelId}`;
+  seatKindOf(choice) === "provider" ? `${choice}/${modelId}` : choice;
 
 /** The limit fields of each command, in the order the terminal takes them. */
 type LimitField = "seed" | "seedBase" | "maxPairs" | "maxTokens" | "maxCost" | "concurrency" | "name";
@@ -143,9 +170,9 @@ const LIMITS: Record<RunKind, readonly LimitField[]> = {
 export interface StartValues {
   kind: RunKind;
   game: string;
-  /** Seat A's picker: `bot:random`, `bot:greedy`, or a provider name. */
+  /** Seat A's picker: `bot:random`, `bot:greedy`, a provider name, or a Pi model's reference. */
   seatA: string;
-  /** Seat A's model id, typed by hand; unused for a bot seat. */
+  /** Seat A's model id, typed by hand; unused for a bot seat and for one of Pi's models. */
   modelA: string;
   seatB: string;
   modelB: string;

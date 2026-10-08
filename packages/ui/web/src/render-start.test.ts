@@ -10,6 +10,12 @@
  * line has to be the string that will be posted, and a refusal has to be the
  * console's own line with nothing started.
  *
+ * A seat is one of three kinds, and the pickers have to make that visible:
+ * a bot, a registered provider with an id typed against it, and one of Pi's
+ * own models with nothing typed at all. Which of them a choice is decides
+ * whether the model-id box shows, and the line under the picker says what will
+ * be sent either way.
+ *
  * `onStart` is a stub rather than a server: which route the payload goes to
  * and what the page makes of the answer are `start.ts`'s tests, and what is under
  * test here is the drawing and the wiring — which control appears when, and what
@@ -35,10 +41,29 @@ const CHOICES: SeatChoices = {
     { name: "marvin", apiKeyEnv: null },
     { name: "openai", apiKeyEnv: "OPENAI_API_KEY" },
   ],
+  models: [
+    {
+      reference: "deepseek/deepseek-flash",
+      context: "1M",
+      maxOut: "384K",
+      thinking: "yes",
+      images: "yes",
+    },
+    {
+      reference: "deepseek/deepseek-v4-pro",
+      context: "1M",
+      maxOut: "384K",
+      thinking: "yes",
+      images: "no",
+    },
+  ],
 };
 
+/** The models a console whose Pi answered offers, in Pi's own order. */
+const MODELS = ["deepseek/deepseek-flash", "deepseek/deepseek-v4-pro"];
+
 /** Every seat either picker should list, in order. */
-const SEATS = ["bot:random", "bot:greedy", "marvin", "openai"];
+const SEATS = ["bot:random", "bot:greedy", "marvin", "openai", ...MODELS];
 
 /** The run a successful start answers with. */
 const STARTED: RunSnapshot = {
@@ -96,6 +121,7 @@ interface Asked {
 /** Draw the form over a stub that answers every start the same way. */
 const drawn = (
   answer: StartOutcome,
+  choices: SeatChoices = CHOICES,
 ): {
   el: HTMLElement;
   asked: Asked[];
@@ -108,7 +134,7 @@ const drawn = (
   const started: RunSnapshot[] = [];
 
   renderStart(el, {
-    choices: CHOICES,
+    choices,
     onStart: (kind, body) => {
       asked.push({ kind, body });
       return Promise.resolve(answer);
@@ -129,7 +155,7 @@ const drawn = (
 };
 
 describe("the seat pickers", () => {
-  it("lists the bots and then every provider the registry names, in both seats", () => {
+  it("lists the bots, then every registered provider, then Pi's models, in both seats", () => {
     const { el } = drawn({ ok: true, run: STARTED });
 
     const pickers = [...el.querySelectorAll<HTMLSelectElement>("select.field-seat")];
@@ -137,6 +163,37 @@ describe("the seat pickers", () => {
     for (const picker of pickers) {
       expect([...picker.options].map((option) => option.value)).toEqual(SEATS);
     }
+  });
+
+  it("groups each picker's choices by kind, so a choice is picked for what it is", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+
+    for (const picker of [...el.querySelectorAll<HTMLSelectElement>("select.field-seat")]) {
+      const groups = [...picker.querySelectorAll("optgroup")].map((group) => [
+        group.label,
+        [...group.querySelectorAll("option")].map((option) => option.value),
+      ]);
+      expect(groups).toEqual([
+        ["Bots", ["bot:random", "bot:greedy"]],
+        ["Registered providers", ["marvin", "openai"]],
+        ["Pi's models", MODELS],
+      ]);
+    }
+  });
+
+  it("names each model choice by its reference, which is what the run is sent", () => {
+    // The option's value is the string the seat is seated with, and the same
+    // string the estimate looks a seat's measured figures up by. Pi's figures are
+    // the label beside it, not part of what is sent.
+    const { el } = drawn({ ok: true, run: STARTED });
+    const choices = [
+      ...control<HTMLSelectElement>(el, "select.field-seat-a").querySelectorAll("option"),
+    ];
+    const models = choices.filter((option) => option.value.includes("/"));
+
+    expect(models.map((each) => each.value)).toEqual(MODELS);
+    expect(models[0]!.textContent).toContain("1M context");
+    expect(models[0]!.textContent).toContain("384K output");
   });
 
   it("offers the one game there is", () => {
@@ -161,6 +218,21 @@ describe("the seat pickers", () => {
 
     set(el, "select.field-seat-a", "bot:greedy");
     expect(model.hidden).toBe(true);
+  });
+
+  it("asks for no model id at all for one of Pi's models", () => {
+    // A Pi model's reference already names a provider and a model, so the box a
+    // registered provider needs is not offered: this kind is the one that types
+    // nothing anywhere.
+    const { el } = drawn({ ok: true, run: STARTED });
+    const model = control<HTMLInputElement>(el, "input.field-model-a");
+
+    set(el, "select.field-seat-a", "marvin");
+    set(el, "input.field-model-a", "subagent");
+    set(el, "select.field-seat-a", "deepseek/deepseek-flash");
+
+    expect(model.hidden).toBe(true);
+    expect(textOf(el, ".seat-sent-a")).toBe("seat a — deepseek/deepseek-flash");
   });
 
   it("states the seat it is about to send, as `<provider>/<id>`", () => {
@@ -196,6 +268,74 @@ describe("the seat pickers", () => {
     await press();
 
     expect(asked[0]!.body.a).toBe("marvin/");
+  });
+
+  it("sends a Pi model picked in seat A as its reference, with nothing typed in any box", async () => {
+    const { el, asked, press } = drawn({ ok: true, run: STARTED });
+
+    set(el, "select.field-seat-a", "deepseek/deepseek-flash");
+    set(el, "select.field-seat-b", "bot:greedy");
+    await press();
+
+    expect(asked[0]!.body.a).toBe("deepseek/deepseek-flash");
+    expect(asked[0]!.body.b).toBe("bot:greedy");
+    // Nothing was typed, and nothing was invented: the two boxes the form could
+    // have sent an id from are still blank.
+    expect(control<HTMLInputElement>(el, "input.field-model-a").value).toBe("");
+    expect(control<HTMLInputElement>(el, "input.field-model-b").value).toBe("");
+  });
+
+  it("offers only the two kinds `/api/state` gave when the model list could not be read, and says so", () => {
+    const { el } = drawn({ ok: true, run: STARTED }, { ...CHOICES, models: null });
+
+    for (const picker of [...el.querySelectorAll<HTMLSelectElement>("select.field-seat")]) {
+      expect([...picker.options].map((option) => option.value)).toEqual([
+        "bot:random",
+        "bot:greedy",
+        "marvin",
+        "openai",
+      ]);
+      expect([...picker.querySelectorAll("optgroup")].map((group) => group.label)).toEqual([
+        "Bots",
+        "Registered providers",
+      ]);
+    }
+
+    // Said, rather than left as a missing group an operator has to notice.
+    expect(textOf(el, ".models-none")).toContain("model list could not be read");
+  });
+
+  it("still starts a run on the two kinds it has when the model list could not be read", async () => {
+    // A Pi that failed to answer is not a reason an operator cannot seat a bot.
+    const { el, asked, press } = drawn({ ok: true, run: STARTED }, { ...CHOICES, models: null });
+
+    set(el, "select.field-seat-a", "bot:greedy");
+    set(el, "select.field-seat-b", "marvin");
+    set(el, "input.field-model-b", "subagent");
+    await press();
+
+    expect(asked[0]!.body).toEqual({
+      game: "salient",
+      a: "bot:greedy",
+      b: "marvin/subagent",
+      maxPairs: "5",
+      concurrency: "1",
+    });
+    expect(el.querySelector(".models-none")).not.toBeNull();
+  });
+
+  it("says nothing about the third kind when Pi answered and no key is set", () => {
+    // An empty list is a console started without a key, not a failed read: the
+    // group is simply absent, and the section has no failure to report.
+    const { el } = drawn({ ok: true, run: STARTED }, { ...CHOICES, models: [] });
+
+    expect(el.querySelector(".models-none")).toBeNull();
+    expect([...control<HTMLSelectElement>(el, "select.field-seat-a").options].map((o) => o.value)).toEqual([
+      "bot:random",
+      "bot:greedy",
+      "marvin",
+      "openai",
+    ]);
   });
 });
 
@@ -486,13 +626,37 @@ describe("what the section says about the run's life", () => {
   it("says when the console named no seat at all, rather than drawing empty pickers", () => {
     const el = section();
     renderStart(el, {
-      choices: { bots: [], providers: [] },
+      choices: { bots: [], providers: [], models: [] },
       onStart: () => Promise.resolve({ ok: true, run: STARTED }),
       onStarted: () => undefined,
     });
 
     expect(textOf(el, ".seats-none")).toContain("no seat");
     expect(el.querySelector("button.start")).toBeNull();
+  });
+
+  it("still offers a picker when only Pi's models are there to seat on", () => {
+    // A console whose state names no bots and no registry is not a console with
+    // nothing to run: Pi's own models are seats too, and the guard that decides
+    // whether to draw a form at all counts all three kinds.
+    const el = section();
+    renderStart(el, {
+      choices: {
+        bots: [],
+        providers: [],
+        models: [
+          { reference: "deepseek/deepseek-flash", context: "1M", maxOut: "384K", thinking: "yes", images: "yes" },
+        ],
+      },
+      onStart: () => Promise.resolve({ ok: true, run: STARTED }),
+      onStarted: () => undefined,
+    });
+
+    expect(el.querySelector(".seats-none")).toBeNull();
+    const options = [
+      ...control<HTMLSelectElement>(el, "select.field-seat-a").options,
+    ];
+    expect(options.map((option) => option.value)).toEqual(["deepseek/deepseek-flash"]);
   });
 
   it("keeps the heading and replaces the form whole, so a redraw leaves one form", () => {
@@ -504,7 +668,7 @@ describe("what the section says about the run's life", () => {
     };
 
     renderStart(el, options);
-    renderStart(el, { ...options, choices: { bots: CHOICES.bots, providers: [] } });
+    renderStart(el, { ...options, choices: { bots: CHOICES.bots, providers: [], models: [] } });
 
     expect(el.querySelectorAll("h2")).toHaveLength(1);
     expect(el.querySelectorAll("button.start")).toHaveLength(1);
@@ -544,6 +708,25 @@ describe("the words the start form speaks", () => {
   it("draws a match run's ceilings in plain words too", () => {
     const { el } = drawn({ ok: true, run: STARTED });
     set(el, "select.field-kind", "match");
+
+    expectPlainWords("runs", wordsOf(el));
+  });
+
+  it("draws the three kinds of seat, and the group headings over them, in plain words", () => {
+    // A picker is where a kind's name is most likely to come back as the command
+    // line's words for it, and a model choice is drawn with Pi's figures beside
+    // its reference.
+    const { el } = drawn({ ok: true, run: STARTED });
+    set(el, "select.field-seat-a", "deepseek/deepseek-flash");
+    set(el, "select.field-seat-b", "marvin");
+
+    expectPlainWords("runs", wordsOf(el));
+  });
+
+  it("says the model list could not be read in plain words", () => {
+    // The line has to explain a missing kind without naming the route, the
+    // subprocess or the file the models would have come out of.
+    const { el } = drawn({ ok: true, run: STARTED }, { ...CHOICES, models: null });
 
     expectPlainWords("runs", wordsOf(el));
   });

@@ -5,13 +5,23 @@
  * controls, keeps the derived parts of the page in step with them, and puts
  * whatever the console answers back on the page. The rules below shape the drawing.
  *
- * **The seat picker lists what the console can seat a run on, and the model id
- * is typed.** `/api/state` names the bots and every provider in
- * `providers.json`; picking a provider uncovers a text input for the model id,
- * and the seat the page sends is `<provider>/<id>` — `marvin/subagent`,
- * which is what `--a marvin/subagent` has always meant at the terminal. No call
- * goes to a provider's `/v1/models`, and no key value is ever drawn: the state
- * carries provider names and the *names* of their key variables only.
+ * **The seat picker lists what the console can seat a run on, in three kinds.**
+ * `/api/state` names the bots and every provider in `providers.json`, and
+ * `/api/models` names the models the pinned Pi knows that this console has a key
+ * for. The three sit in one control, sorted into groups so the kind a
+ * choice belongs to is visible on the page: a bot seats as `bot:greedy`, a
+ * registered provider uncovers a text input for the model id and seats as
+ * `<provider>/<id>` — `marvin/subagent`, which is what `--a marvin/subagent` has
+ * always meant at the terminal — and one of Pi's models seats as its reference
+ * with nothing typed anywhere. No call goes to a provider's `/v1/models`, and no
+ * key value is ever drawn: the state carries provider names and the *names* of
+ * their key variables, and the model list carries references and Pi's figures.
+ *
+ * **A model list that could not be read is said, and costs one kind.** The route
+ * asks Pi, and a Pi that did not answer is a failed read rather than an empty
+ * list. The pickers then offer the two kinds `/api/state` gave and the section
+ * says the list could not be read: a Pi that failed to answer is not a reason an
+ * operator cannot seat a bot.
  *
  * **The ceilings are beside the Start button, before it is pressed.** The block
  * names what the run will be bounded by and says which of those are the runner's
@@ -53,16 +63,32 @@
  * form that rebuilt itself under someone mid-way through typing a model id would
  * be a form that lost what they typed.
  */
-import { GAMES, MEASURED_SERIES, OPEN_VALUES, RUN_KINDS, ceilingsOf, isBotSeat, payloadOf } from "./start.ts";
-import type { Ceiling, RunKind, StartBody, StartOutcome, StartValues } from "./start.ts";
+import {
+  GAMES,
+  MEASURED_SERIES,
+  OPEN_VALUES,
+  RUN_KINDS,
+  ceilingsOf,
+  payloadOf,
+  seatKindOf,
+  seatOf,
+} from "./start.ts";
+import type { Ceiling, RunKind, SeatKind, StartBody, StartOutcome, StartValues } from "./start.ts";
 import { clear } from "./render-frame.ts";
 import type { RunSnapshot } from "./progress.ts";
+import type { ModelRow } from "./providers.ts";
 import type { ProviderOption } from "./state.ts";
 
-/** What the seat pickers are built from: `/api/state`'s bots and providers. */
+/** What the seat pickers are built from: `/api/state`'s bots and providers, and `/api/models`. */
 export interface SeatChoices {
   readonly bots: readonly string[];
   readonly providers: readonly ProviderOption[];
+  /**
+   * The models this console's Pi has a key for, or `null` when that list could
+   * not be read — which is a different fact from an empty list, since an empty
+   * list means no key is set and the pickers say nothing about it.
+   */
+  readonly models: readonly ModelRow[] | null;
 }
 
 /** What the form needs from outside itself. */
@@ -83,7 +109,11 @@ const paragraph = (className: string, text: string): HTMLElement => {
   return el;
 };
 
-/** A `<select>` with one option per value, the value also being the label. */
+/**
+ * A `<select>` with one option per value, the value also being the label. The
+ * seat pickers do not use it: their choices are grouped, and a group heading is
+ * the one thing an option list cannot say.
+ */
 const selectOf = (className: string, values: readonly string[]): HTMLSelectElement => {
   const select = document.createElement("select");
   select.className = className;
@@ -94,6 +124,62 @@ const selectOf = (className: string, values: readonly string[]): HTMLSelectEleme
     select.append(option);
   }
   return select;
+};
+
+/** One choice: the string it sends, and the words that name it. */
+const optionOf = (value: string, label = value): HTMLOptionElement => {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
+};
+
+/** A run of choices under a heading, so the kind they are is on the page. */
+const groupOf = (label: string, options: readonly HTMLOptionElement[]): HTMLOptGroupElement => {
+  const group = document.createElement("optgroup");
+  group.label = label;
+  group.append(...options);
+  return group;
+};
+
+/**
+ * What each group of the seat pickers is called: the three kinds in the words an
+ * operator meets elsewhere on the page, so a choice is picked for what it is
+ * rather than for where it sits in a list.
+ */
+const GROUP_LABELS: Record<SeatKind, string> = {
+  bot: "Bots",
+  provider: "Registered providers",
+  model: "Pi's models",
+};
+
+/**
+ * One of Pi's models as a picker names it: the reference a seat is seated with,
+ * and Pi's own four figures beside it, spelled as Pi spelled them. The reference
+ * comes first because it is the string the run is started with and the label
+ * the estimate's figures are looked up by; the figures are there to choose on.
+ */
+const modelLabel = (model: ModelRow): string =>
+  `${model.reference} — ${model.context} context, ${model.maxOut} output, ` +
+  `thinking ${model.thinking}, images ${model.images}`;
+
+/**
+ * The picker's choices, in three groups: the bots, the registered providers, and
+ * Pi's models. A group with nothing in it is left off rather than drawn as an
+ * empty heading, and a model list that could not be read leaves its group out
+ * altogether — the section says why, once, above the pickers.
+ */
+const seatGroups = (choices: SeatChoices): HTMLOptGroupElement[] => {
+  const groups: readonly (readonly [SeatKind, readonly HTMLOptionElement[]])[] = [
+    ["bot", choices.bots.map((bot) => optionOf(bot))],
+    ["provider", choices.providers.map((each) => optionOf(each.name))],
+    ...(choices.models === null
+      ? []
+      : [["model", choices.models.map((each) => optionOf(each.reference, modelLabel(each)))] as const]),
+  ];
+  return groups
+    .filter(([, options]) => options.length > 0)
+    .map(([kind, options]) => groupOf(GROUP_LABELS[kind], options));
 };
 
 /**
@@ -133,14 +219,16 @@ interface SeatPicker {
 }
 
 /**
- * One seat picker: the bots first and every provider the registry names after
- * them, then a text input for the model id that only a provider needs. The line
- * under it is the seat as it will be sent, so what the page says it is about to
- * send and what it sends are one string read off the same two controls.
+ * One seat picker: the bots, the registered providers and Pi's models in one
+ * grouped control, then a text input for the model id that only a registered
+ * provider needs. The line under it is the seat as it will be sent, read off
+ * `seatOf` — the same function the payload is built with — so what the page
+ * says it is about to send and what it sends are one string.
  */
 const seatPicker = (which: "a" | "b", choices: SeatChoices): SeatPicker => {
-  const names = [...choices.bots, ...choices.providers.map((provider) => provider.name)];
-  const select = selectOf(`field-seat field-seat-${which}`, names);
+  const select = document.createElement("select");
+  select.className = `field-seat field-seat-${which}`;
+  select.append(...seatGroups(choices));
   const model = textInput(`field-model field-model-${which}`, "model id");
   const sent = paragraph(`seat-sent seat-sent-${which}`, "");
 
@@ -148,17 +236,20 @@ const seatPicker = (which: "a" | "b", choices: SeatChoices): SeatPicker => {
   root.className = `seat seat-${which}`;
   root.append(field(`Seat ${which.toUpperCase()}`, select, `seat-picker-${which}`), model, sent);
 
-  const seat = (): string =>
-    isBotSeat(select.value) ? select.value : `${select.value}/${model.value.trim()}`;
+  const seat = (): string => seatOf(select.value, model.value.trim());
 
   const draw = (): void => {
-    const provider = !isBotSeat(select.value);
-    model.hidden = !provider;
-    // A model id typed against a bot is left in the box rather than cleared: it
-    // is what the operator typed, and switching the seat back should not lose it.
-    // The hint shows the shape a seat takes — `provider/model` — without
-    // dressing it up as a command.
-    model.placeholder = provider ? `model id, as ${select.value}/<id>` : "model id";
+    // Which of the three kinds the choice is decides whether a model id is asked
+    // for at all: a provider needs one typed, a bot has none, and a Pi model's
+    // reference already names both halves. `seatKindOf` is where that is settled,
+    // once, for this line, for the box and for the payload.
+    const needsId = seatKindOf(select.value) === "provider";
+    model.hidden = !needsId;
+    // A model id typed against a seat that wants none is left in the box rather
+    // than cleared: it is what the operator typed, and switching the seat back
+    // should not lose it. The hint shows the shape a seat takes —
+    // `provider/model` — without dressing it up as a command.
+    model.placeholder = needsId ? `model id, as ${select.value}/<id>` : "model id";
     sent.textContent = `seat ${which} — ${seat()}`;
   };
 
@@ -201,6 +292,25 @@ const TURN_TIMEOUT_LINE =
   "Every turn gets five minutes. That is the runner's own cap, and this page does not change it.";
 
 /**
+ * What the section says when the model list is missing because the read failed:
+ * which kinds the pickers do offer, and no route, subprocess or config file — the
+ * operator cannot act on any of those, and the form starts a run without them.
+ */
+const MODELS_UNREAD =
+  "The model list could not be read, so these pickers offer the bots and the " +
+  "providers the console names.";
+
+/**
+ * Whether there is any seat to offer at all: a bot, a registered provider, or a
+ * model of a console whose Pi answered. With none of the three there is nothing
+ * to start, and a form that cannot be started is worse than a line saying so.
+ */
+const hasSeats = (choices: SeatChoices): boolean =>
+  choices.bots.length > 0 ||
+  choices.providers.length > 0 ||
+  (choices.models !== null && choices.models.length > 0);
+
+/**
  * The start section: the form, the ceilings beside its button, and the line the
  * console answered with.
  */
@@ -215,7 +325,7 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
     ),
   );
 
-  if (options.choices.bots.length === 0 && options.choices.providers.length === 0) {
+  if (!hasSeats(options.choices)) {
     el.append(paragraph("seats-none", "The console named no seat this page can start a run with."));
     return;
   }
@@ -304,6 +414,10 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
     field("Game", game, "field-game-wrap"),
     seatA.root,
     seatB.root,
+    // The third kind is missing because a read failed, and the page says so
+    // rather than leaving an operator to wonder whether the console has no such
+    // models. The form still starts a run on the two kinds it does have.
+    ...(options.choices.models === null ? [paragraph("models-none", MODELS_UNREAD)] : []),
     limitsBlock,
     advanced,
     row,

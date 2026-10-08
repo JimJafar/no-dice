@@ -17,11 +17,18 @@
  * that same reason: `GET /api/leaderboard` answers both of its tables out of one
  * walk of every series' every log, which is the most expensive read the page makes.
  *
- * The provider registry is a fourth read, and the rarest: `/api/providers` when
- * the page opens and after an entry has been added. It is not polled and not
+ * The provider registry is a fourth read, and the rarest: `/api/providers`
+ * when the page opens and after an entry has been added. It is not polled and not
  * drawn by the frame, because that section holds the add form and the credential
  * check an operator asked for, and only the module that drew them knows when a
  * redraw is safe.
+ *
+ * The models the pinned Pi knows natively are read at that same rare moment:
+ * `/api/models` when the page opens, once, beside the state read. The route asks
+ * Pi and costs a subprocess of about 0.7 s, so nothing polls it and no key is
+ * expected to appear while the console runs. It has to be read *with* the state
+ * rather than after it: the start form is built once per page load, and a form
+ * that arrived twice would be a form that lost what someone had typed into it.
  *
  * A fifth read keeps a series somebody else is playing honest: `/api/playing` on
  * the run poller's cadence, and only while its answer names a playing
@@ -31,10 +38,11 @@
  * operator stops believing. That poll asks the one route that reads no match log,
  * and writes one span of one row; the listings it would replace stay put.
  *
- * The start form is built out of the state read, because its seat pickers are the
- * bots and providers `/api/state` names. It is built once: the frame replaces
- * everything under every heading, so the form and the run the poller is watching
- * both go straight back under the headings they own.
+ * The start form is built out of the state read and the model list, because its
+ * seat pickers are the bots and providers `/api/state` names and the models
+ * `/api/models` names. It is built once: the frame replaces everything under
+ * every heading, so the form and the run the poller is watching both go
+ * straight back under the headings they own.
  *
  * The three reads draw into the same sections, so the order matters: `renderFrame`
  * replaces everything under every heading, and the run it cannot see is put back
@@ -48,7 +56,8 @@ import type { FetchJson } from "./api.ts";
 import { fetchLeaderboard } from "./leaderboard.ts";
 import { createRunPoller, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
-import { addProvider, checkCredential, fetchProviders } from "./providers.ts";
+import { addProvider, checkCredential, fetchModels, fetchProviders } from "./providers.ts";
+import type { ModelRow } from "./providers.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
 import { renderLeaderboard } from "./render-leaderboard.ts";
 import { renderProviders } from "./render-providers.ts";
@@ -253,12 +262,39 @@ const refreshProviders = async (added?: string): Promise<void> => {
 };
 
 /**
+ * The models the pinned Pi knows that this console has a key for — the seats that
+ * need nothing typed — or `null` when that list could not be read.
+ *
+ * The failure is returned rather than thrown, and the start section says it: a Pi
+ * that did not answer is not a reason an operator cannot seat a bot, and the form
+ * goes on working with the two kinds `/api/state` gave. The status line carries
+ * the console's own line as every other failed read does.
+ *
+ * This is one of the page's rare reads. The route asks Pi and costs a subprocess,
+ * so it is asked once per page load, beside the state read and never on a poll.
+ */
+const readModels = async (): Promise<readonly ModelRow[] | null> => {
+  try {
+    return await fetchModels(fetchJson);
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), true);
+    return null;
+  }
+};
+
+/**
  * Read the console's state and redraw the frame from it. A console that cannot
  * be reached leaves the frame standing with one bad line rather than half a
  * frame: the page is a view of the console, and a console that is not answering
  * is the fact worth showing.
+ *
+ * The two seat reads go out together and are both waited for before the start
+ * form is drawn: the pickers hold all three kinds of seat, and a form drawn again
+ * when the model list arrived would be a form drawn under someone mid-way
+ * through typing a model id.
  */
 const refresh = async (): Promise<void> => {
+  const models = readModels();
   try {
     const state = parseState(await getJson<unknown>("/api/state", fetchJson));
     renderFrame(sections);
@@ -267,10 +303,10 @@ const refresh = async (): Promise<void> => {
     // provider entries with the credential check asked of each of them all go
     // straight back under the one they belong to.
     renderProgress(sections.progress, poller.last());
-    drawStart({ bots: state.bots, providers: state.providers });
+    drawStart({ bots: state.bots, providers: state.providers, models: await models });
     void refreshProviders();
   } catch (error) {
-    drawStart({ bots: [], providers: [] });
+    drawStart({ bots: [], providers: [], models: null });
     say(error instanceof Error ? error.message : String(error), true);
   }
 };

@@ -103,13 +103,35 @@ describe("the words a drawn element says", () => {
     expect(breachesOf(wordsOf(el))).toEqual(["shows an absolute path: /repo/series/alpha"]);
   });
 
+  it("reads the heading over a group of choices, which is an attribute and not text", () => {
+    // A seat picker groups its choices by kind, and a group heading is drawn from
+    // an attribute — the one place a kind's name can be spelled in the command
+    // line's words without appearing in `textContent` at all.
+    const el = document.createElement("section");
+    const select = document.createElement("select");
+    const group = document.createElement("optgroup");
+    group.label = "Registered providers (--provider)";
+    const option = document.createElement("option");
+    option.value = "marvin";
+    group.append(option);
+    select.append(group);
+    el.append(select);
+
+    expect(wordsOf(el)).toContain("Registered providers (--provider)");
+    expect(breachesOf(wordsOf(el))).toEqual(["names a CLI flag: --provider"]);
+  });
+
   it("passes an element whose text and hints are all in words", () => {
     const el = document.createElement("section");
     const input = document.createElement("input");
     input.placeholder = "the name before the slash, as in marvin/subagent";
     const button = document.createElement("button");
     button.title = "Play the matches of alpha that have no log, with the pairing its record holds";
-    el.append(input, button, document.createTextNode("Pairs: 75 — the runner's default, the field is blank"));
+    const select = document.createElement("select");
+    const group = document.createElement("optgroup");
+    group.label = "Pi's models";
+    select.append(group);
+    el.append(input, button, select, document.createTextNode("Pairs: 75 — the runner's default, the field is blank"));
 
     expectPlainWords("example", wordsOf(el));
   });

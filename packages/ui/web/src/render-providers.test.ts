@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 /**
  * The Providers section, on the page: the shape the page accepts from
- * `/api/providers` and `/api/providers/check`, the body it posts to add an
- * entry, and what it draws from all three.
+ * `/api/providers`, `/api/providers/check` and `/api/models`, the body it posts
+ * to add an entry, and what it draws from all of them.
  *
  * What the registry itself allows is the runner's rule and
  * `packages/runner/src/providers.test.ts` owns it; what the console answers is
@@ -20,9 +20,11 @@ import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import {
   addProvider,
   checkCredential,
+  fetchModels,
   fetchProviders,
   modelOf,
   parseAuth,
+  parseModelRows,
   parseProviderRows,
   providerBodyOf,
 } from "./providers.ts";
@@ -57,6 +59,17 @@ const OPENAI = {
 
 /** What Pi said about a credential that resolves. */
 const READY = { ok: true, provider: "openai", reason: null, message: "credential resolves" };
+
+/** A model the pinned Pi knows and this console has a key for, as `/api/models` answers it. */
+const FLASH = {
+  provider: "deepseek",
+  id: "deepseek-flash",
+  reference: "deepseek/deepseek-flash",
+  context: "1M",
+  maxOut: "384K",
+  thinking: "yes",
+  images: "yes",
+};
 
 /** What Pi said about one that does not. */
 const MISSING = {
@@ -159,6 +172,51 @@ describe("fetchProviders", () => {
       Promise.resolve(Response.json({ error: "providers.json is not JSON" }, { status: 500 }));
 
     await expect(fetchProviders(refuses)).rejects.toThrow("providers.json is not JSON");
+  });
+});
+
+describe("the model list the page reads", () => {
+  it("keeps the reference and Pi's four figures, which is all a seat needs", () => {
+    // The provider and the model id arrive as separate fields and are not kept:
+    // the reference is the string a seat is seated with, and the only one the
+    // estimate's figures are looked up by.
+    expect(parseModelRows({ models: [FLASH] })).toEqual([
+      { reference: "deepseek/deepseek-flash", context: "1M", maxOut: "384K", thinking: "yes", images: "yes" },
+    ]);
+  });
+
+  it("names the field when a row is missing one, rather than drawing undefined", () => {
+    const { maxOut, ...withoutCap } = FLASH;
+    expect(maxOut).toBeTypeOf("string");
+    expect(() => parseModelRows({ models: [withoutCap] })).toThrow("models[0].maxOut is not a string");
+    expect(() => parseModelRows([FLASH])).toThrow("the answer from /api/models is not an object");
+    expect(() => parseModelRows({ models: FLASH })).toThrow("models is not a list");
+  });
+
+  it("reads the list from /api/models, in Pi's own order", async () => {
+    const asked: string[] = [];
+    const rows = await fetchModels((path) => {
+      asked.push(path);
+      return Promise.resolve(Response.json({ models: [FLASH] }));
+    });
+
+    expect(asked).toEqual(["/api/models"]);
+    expect(rows.map((row) => row.reference)).toEqual(["deepseek/deepseek-flash"]);
+  });
+
+  it("fails with the console's line when Pi did not answer, rather than answering no models", async () => {
+    // An empty list tells the operator that no key is set. A Pi that failed to
+    // answer is the opposite fact, and it has to arrive as an error.
+    const refuses = (): Promise<Response> =>
+      Promise.resolve(Response.json({ error: "the pinned Pi's --list-models exited 1" }, { status: 500 }));
+
+    await expect(fetchModels(refuses)).rejects.toThrow("--list-models exited 1");
+  });
+
+  it("answers no rows when this console was started with no key", async () => {
+    const rows = await fetchModels(() => Promise.resolve(Response.json({ models: [] })));
+
+    expect(rows).toEqual([]);
   });
 });
 

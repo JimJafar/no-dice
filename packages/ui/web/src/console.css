@@ -138,6 +138,12 @@ input[type="checkbox"]{width:18px;height:18px;accent-color:var(--team-a,#2c6fd1)
 .seat-a{border-left:3px solid var(--team-a,#2c6fd1)}
 .seat-b{border-left:3px solid var(--team-b,#e06f35)}
 .seat-sent{font-size:14px;color:#aab3bf}
+/* The three kinds inside each picker, under a heading: the bots, the registered
+   providers, Pi's models. The heading sits back from the choices the way a
+   section note does, and both are kept on the select's own ground so the list a
+   browser opens stays legible against the dark page. */
+optgroup{color:#aab3bf;background:#12161c}
+option{color:#eef1f5;background:#12161c}
 /* The ceilings beside the Start button: what the run will be bounded by, whose value
    it is. A runner's default is secondary, because it is a fact about the command
    rather than something the operator chose. */
@@ -184,7 +190,7 @@ input[type="checkbox"]{width:18px;height:18px;accent-color:var(--team-a,#2c6fd1)
 .run-lines{margin:0;padding:14px 16px;background:#12161c;border-radius:6px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:13px;line-height:1.4;color:#c9d1dc;white-space:pre}
 /* The sections' one-line notes about where they were read from — about the page
    rather than about the run, so they sit back from the ink. */
-.roots,.leaderboard-roots,.providers-note,.granularity,.no-record,.start-measured,.start-lifetime,.seats-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
+.roots,.leaderboard-roots,.providers-note,.granularity,.no-record,.start-measured,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
 
 /* The one breakpoint. From 760 px the two forms stop being one long column: the start
    form's fields go two to a row with the limits and the button row across the

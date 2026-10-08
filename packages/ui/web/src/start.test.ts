@@ -5,7 +5,8 @@
  *
  * The two things these tests hold the page to are that it sends what the
  * terminal would be given — a model seat typed as `subagent` against `marvin`
- * goes as `marvin/subagent`, and a field left blank contributes nothing at all,
+ * goes as `marvin/subagent`, one of Pi's own models goes as its reference with
+ * nothing typed, and a field left blank contributes nothing at all,
  * which is what makes it the runner's default rather than a zero — and
  * that it never invents a verdict: a payload the console refuses comes back as
  * the console's own line, and a blank limit is reported as the default it is.
@@ -15,7 +16,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { DEFAULTS, OPEN_VALUES, ceilingsOf, payloadOf, seatOf, startRun } from "./start.ts";
+import { DEFAULTS, OPEN_VALUES, ceilingsOf, payloadOf, seatKindOf, seatOf, startRun } from "./start.ts";
 import type { StartValues } from "./start.ts";
 import type { RunSnapshot } from "./progress.ts";
 import type { FetchJson } from "./api.ts";
@@ -76,6 +77,35 @@ describe("seatOf", () => {
     expect(seatOf("bot:random", "subagent")).toBe("bot:random");
     expect(seatOf("marvin", "deepseek/deepseek-r1")).toBe("marvin/deepseek/deepseek-r1");
   });
+
+  it("sends one of Pi's own models as its reference, with nothing typed", () => {
+    // The reference already names a provider and a model, so there is nothing to
+    // type: this is the string the estimate looks its figures up by.
+    expect(seatOf("deepseek/deepseek-flash", "")).toBe("deepseek/deepseek-flash");
+  });
+
+  it("ignores an id left in the box against one of Pi's models", () => {
+    // The box is hidden for that kind of seat, and whatever an operator
+    // typed at an earlier choice cannot turn the reference into a path.
+    expect(seatOf("deepseek/deepseek-flash", "subagent")).toBe("deepseek/deepseek-flash");
+  });
+});
+
+describe("seatKindOf", () => {
+  it("names a bot by the prefix the parser names it by", () => {
+    expect(seatKindOf("bot:random")).toBe("bot");
+    expect(seatKindOf("bot:greedy")).toBe("bot");
+  });
+
+  it("names a registered provider, whose name is one path segment", () => {
+    expect(seatKindOf("marvin")).toBe("provider");
+    expect(seatKindOf("openai")).toBe("provider");
+  });
+
+  it("names one of Pi's models by the slash its reference carries", () => {
+    expect(seatKindOf("deepseek/deepseek-flash")).toBe("model");
+    expect(seatKindOf("deepseek/deepseek-v4-pro")).toBe("model");
+  });
 });
 
 describe("payloadOf", () => {
@@ -110,6 +140,17 @@ describe("payloadOf", () => {
       seedBase: "135",
       name: "alpha",
     });
+  });
+
+  it("sends a Pi model seat as its reference, with no id typed anywhere", () => {
+    // The reference is the whole seat, and it is the same string the estimate
+    // looks a seat's measured figures up by.
+    const payload = payloadOf(
+      filled({ seatA: "deepseek/deepseek-flash", seatB: "bot:greedy", modelA: "" }),
+    );
+
+    expect(payload.body["a"]).toBe("deepseek/deepseek-flash");
+    expect(payload.body["b"]).toBe("bot:greedy");
   });
 
   it("sends nothing for a field left blank, which is what leaves it the runner's default", () => {
