@@ -180,22 +180,39 @@ const noteOf = (args: unknown, key: "intent" | "prediction"): string => {
  * What `RpcClient` says when its own wait for a command's response runs out:
  * `Timeout waiting for response to prompt. Stderr: …` (`rpc-client.js:465`). A
  * prompt Pi *refused* is not that: an error response's text becomes the
- * rejection through `getData` (`rpc-client.js:412-428`), and a seat that refused
+ * rejection through `getData` (`rpc-client.js:488-492`), and a seat that refused
  * a command is not a seat that never answered one.
  */
 const commandTimedOut = (error: unknown): boolean =>
   /Timeout waiting for response to /.test(error instanceof Error ? error.message : String(error));
 
-/** How long a run that is going to start is given the moment to start in. */
-const RUN_APPEARS_MS = 2_000;
+/** How often a run that is going to start is looked for, and for how long. */
+const RUN_APPEARS_MS = 1_000;
+const RUN_APPEARS_SAMPLES = 8;
 
-/** How long a run that has started is waited on before the turn is handed back. */
+/** How long a run that has started is waited on before the seat is stopped again. */
 const RUN_SETTLES_MS = 30_000;
+
+/** How many times a run that will not settle is stopped before the turn is handed back. */
+const RUN_STOPS = 2;
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolveSleep) => {
     setTimeout(resolveSleep, ms);
   });
+
+/**
+ * Whether the seat settles within `ms`. `waitForIdle` waits for the *next*
+ * `agent_settled` event (`rpc-client.js:366-380`), so a settle from a run that
+ * ended before this one cannot answer for the run in flight. A seat whose process
+ * is gone emits nothing and so reads as "did not settle"; the command that comes
+ * after it is the one that notices the death.
+ */
+const settlesWithin = (client: RpcClient, ms: number): Promise<boolean> =>
+  client
+    .waitForIdle(ms)
+    .then(() => true)
+    .catch(() => false);
 
 /**
  * Whether a failed command means the seat's Pi process is gone.
@@ -530,12 +547,11 @@ export class PiPlayer implements Player {
         // the turn that asked for it, and its calls stay in that turn's record.
         try {
           await this.command("the abort", () => client.abort());
-          await this.quietTheSeat(client, settled);
+          await this.quietTheSeat(client);
         } catch (abortError) {
           // The abort can wait the same 30 s on a late run longer than that, and
-          // there is nothing further to do about it: the runner aborts the seat
-          // again at its own deadline, and a run that is actually running is
-          // stopped then.
+          // there is nothing further to do about it: the seat has been told to
+          // stop, and `waitOutRun` has stopped it again since.
           if (abortError instanceof MatchVoided) throw abortError;
         }
       }
@@ -585,7 +601,7 @@ export class PiPlayer implements Player {
       passed: submitted ? null : passed,
       // `undefined` rather than a row of noughts, because the seat could not say
       // what the turn cost it. Note what the absence costs: `withHarness`
-      // (packages/runner/src/match.ts:394-400) writes noughts for usage, cost and
+      // (packages/runner/src/match.ts:532-546) writes noughts for usage, cost and
       // context whenever this is absent, which is what a bot's record carries — so
       // in the log a wedged Pi seat is told from a bot only by its reason.
       provider: stats === null ? undefined : providerTurn(previous, stats, compacted),
@@ -658,16 +674,49 @@ export class PiPlayer implements Player {
    * deferred behind a cancelled compaction is idle for a tick before its run
    * starts (`agent-session.js:1873-1884`). The abort alone therefore leaves a
    * window — the run appears afterwards, and its events reach whichever listener
-   * is installed then, which is the next turn's. So give a run that is going to
-   * appear the moment to appear, and wait out the one that has. Both bounds are
-   * finite, and a run longer than the second is stopped by the runner's own
-   * abort, which finds a run actually running and so does wait for it.
+   * is installed then, which is the next turn's. So look for the run here, while
+   * this turn's listener is still installed, and wait it out: its calls land on
+   * the turn that asked for them.
+   *
+   * Looking is sampling, not one sample: on a loaded box the run can appear
+   * seconds after the abort was answered, and `vitest.config.ts` records that box
+   * for this suite. Waiting it out is bounded, and a run that outlasts the bound
+   * is stopped and waited on again — the second `session.abort()` finds
+   * `_isAgentRunActive` true and answers only once the session has gone quiet, so
+   * that stop is what usually ends it. The runner does *not* cover what is
+   * left: it aborts a seat only when the turn is still pending at its own
+   * deadline (`packages/runner/src/match.ts:453-457`), and this turn is
+   * handed back long before that. What survives is a run that ignores an abort
+   * for the whole of the second wait, and docs/pi-harness-notes.md §8 says what
+   * such a turn's record is then.
    */
-  private async quietTheSeat(client: RpcClient, settled: Promise<void>): Promise<void> {
-    await new Promise((resolveQuiet) => setTimeout(resolveQuiet, RUN_APPEARS_MS));
-    const state = await this.command("the seat's state", () => client.getState());
-    if (!state.isStreaming && !state.isCompacting) return;
-    await Promise.race([settled, sleep(RUN_SETTLES_MS)]);
+  private async quietTheSeat(client: RpcClient): Promise<void> {
+    for (let sample = 0; sample < RUN_APPEARS_SAMPLES; sample += 1) {
+      await sleep(RUN_APPEARS_MS);
+      const state = await this.command("the seat's state", () => client.getState());
+      if (state.isStreaming || state.isCompacting) {
+        await this.waitOutRun(client);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Wait for the run in flight to settle, stopping the seat when it will not.
+   *
+   * A stop that is answered has itself waited for the session to go quiet, so the
+   * wait after it is the belt: the run may have been told to stop and still be
+   * winding down. Every command is answered or timed out by the client inside
+   * 30 s (`rpc-client.js:463-466`), so the whole of this is bounded — at
+   * `RUN_STOPS` stops, well inside the runner's own turn cap, which matters
+   * because a turn that outlasts that cap is recorded as the runner's `timeout`
+   * rather than this seat's `prompt_timeout`.
+   */
+  private async waitOutRun(client: RpcClient): Promise<void> {
+    for (let stop = 0; stop < RUN_STOPS; stop += 1) {
+      if (await settlesWithin(client, RUN_SETTLES_MS)) return;
+      await this.command("the abort", () => client.abort());
+    }
   }
 
   /** End the turn in flight, because the seat's process is gone. */

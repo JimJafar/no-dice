@@ -520,16 +520,20 @@ describe("a seat's turn outcomes", () => {
       // The prompt after it. Its preflight wants a summary, and the stub holds
       // that summary for 45 s — past the 30 s the client waits for a response.
       // What follows it in the script is the run Pi starts for the prompt once
-      // the abort cancels that summary: a `get_state` call, and a settle.
+      // the abort cancels that summary: a `get_state` call, and a second leg that
+      // streams for longer than the harness is willing to wait for a settle. That
+      // run is therefore stopped rather than settled — the case where one wait is
+      // not enough and the seat has to be aborted again before the pass returns.
       nextTurn();
       stub.setScript([
         { delayMs: 45_000, text: "A summary nobody is left waiting for." },
         { text: "the late run answers", toolCalls: [{ name: "get_state", args: {} }] },
-        { text: "the late run settles" },
+        { delayMs: 40_000, text: "the late run is stopped mid-stream" },
       ]);
       const requestsBefore = stub.requestCount;
       // The turn comes back rather than throwing: a seat that is alive and did
       // not answer is a turn the harness passes, not a match it gives up on.
+      const wedgedFrom = Date.now();
       const wedged = await player.playTurn(turn);
 
       // Brief §6.3's row for this case, under a reason that is not the runner's
@@ -541,10 +545,18 @@ describe("a seat's turn outcomes", () => {
       expect(wedged.submitted).toBe(false);
       // The turn is a record with the calls it made. The prompt did not reach the
       // session as a run, but cancelling its summary lets Pi start one anyway, and
-      // the wait after the stop holds this turn open for it — so its
-      // calls belong to the turn that asked for them instead of being picked up by
-      // the turn that follows.
+      // the harness stops that run before handing the turn back rather than
+      // leaving it for the next turn's listener — so its calls belong
+      // to the turn that asked for them.
       expect(wedged.toolCalls.map((call) => call.tool)).toEqual(["get_state"]);
+      // And the turn outlives both of the harness's waits: the client's 30 s on
+      // the command, and the 30 s it then spends waiting for a run that will not
+      // settle before stopping the seat again. A harness that gave up after the
+      // first bound would be back here in half the time — with the run still
+      // going, for the next turn to absorb.
+      expect(Date.now() - wedgedFrom, "the wedged turn was handed back too soon").toBeGreaterThanOrEqual(
+        60_000,
+      );
       // The seat's process is alive, and was working: it made a provider request
       // after the command was given up on. A dead child makes none, and a dead
       // child is a void instead.
@@ -592,11 +604,11 @@ describe("a seat's turn outcomes", () => {
         `Turn ${String(abortedTurn + 1)} of 25.`,
       );
     },
-    // The 30 s the client waits for the prompt, the late run its abort answers,
-    // and the turn played after them, on top of an aborted turn that a starved
-    // box can hold until the 120 s reply it is sitting in lands — the
-    // shape `vitest.config.ts` records for this file.
-    SEAT_TIMEOUT_MS + 120_000,
+    // The 30 s the client waits for the prompt, the 30 s the harness waits for a
+    // run it then has to stop, and the turn played after them, on top of an
+    // aborted turn that a starved box can hold until the 120 s reply it is
+    // sitting in lands — the shape `vitest.config.ts` records for this file.
+    SEAT_TIMEOUT_MS + 240_000,
   );
 });
 

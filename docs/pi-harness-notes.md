@@ -512,11 +512,20 @@ it, the run's tool calls are on the wedged turn's record; if it submits, that tu
 is a played turn, since `prompt_timeout` is what the *command* says and a
 submission the server accepted outranks it.
 
-Both bounds are finite, and a run longer than them outlives the turn that would
-have absorbed it. Nothing here closes that: the runner's own deadline aborts the
-seat again, and a run actually running is stopped by that abort, which does wait
-for it. What the tests pin is the case that happens — the run that starts when the
-summary is cancelled. `packages/harness/src/pi-turn.test.ts` plays a turn after
+Both bounds are finite, and a run longer than the first wait is stopped rather
+than handed on: `quietTheSeat` samples the seat's state for eight seconds — one
+sample is a coin-flip on a loaded box, and `vitest.config.ts` records that box for
+this suite — and `waitOutRun` waits 30 s for the next settle, sends `abort`, and
+waits again. The second `session.abort()` finds `_isAgentRunActive` true and
+answers only once the session has gone quiet, so that stop is what usually ends
+the run. Nothing downstream covers for what survives both stops: the runner aborts
+a seat only when the turn is *still pending* at its own deadline
+(`packages/runner/src/match.ts:453-457`), and this turn is handed back long before
+that deadline. A run that ignores an abort for the whole of the second wait is
+therefore still running when the turn is returned, and the next turn absorbs its
+calls and any orders it makes. What the tests pin is the case that happens — the
+run that starts when the summary is cancelled.
+`packages/harness/src/pi-turn.test.ts` plays a turn after
 the wedge and finds it asked its own prompt, given its own tools and making its
 own calls; `packages/runner/src/model-seat.test.ts` plays a three-turn match whose
 wedged turn carries the late run's call and whose turn after it carries only its
@@ -528,7 +537,7 @@ Two things follow for reading such a log:
   carry provider figures — the session's cumulative ones, whose turn-by-turn delta
   in §3 is the late run's cost. A seat that cannot answer that command is the case
   with no figures at all, and `withHarness`
-  (`packages/runner/src/match.ts:394-400`) writes noughts for it, which is what a
+  (`packages/runner/src/match.ts:532-546`) writes noughts for it, which is what a
   bot's record carries: the reason is then the only thing telling a wedged Pi seat
   from a bot.
 - A rejection that is not the client's own timeout is not `prompt_timeout` but
@@ -536,3 +545,9 @@ Two things follow for reading such a log:
   processing…" is the likeliest — is a seat that answered, with nothing left
   waiting. The message itself is not in the log; the log has no field for why a
   harness passed a turn, and adding one is a schema change this does not need.
+- That refusal is also the one case where "the late run belongs to the turn that
+  asked for it" does not describe the record. Pi refuses a prompt because a run is
+  already in flight, and that run belongs to the turn *before*; the stop and wait
+  run for that branch too, so its calls and any orders it makes land on the turn
+  that was refused. That is the turn the server plays those orders in, so the log
+  and the server agree; it is not the turn that asked for the run.
