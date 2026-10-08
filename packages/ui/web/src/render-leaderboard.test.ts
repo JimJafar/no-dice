@@ -291,4 +291,27 @@ describe("renderLeaderboard", () => {
     expect(el.querySelectorAll("a.series-report")).toHaveLength(1);
     expect(el.querySelectorAll("a.match-viewer")).toHaveLength(1);
   });
+
+  it("puts each table in a box that scrolls on its own", () => {
+    // The pairing table is nine columns of figures and the pooled one is eight,
+    // and a table cannot be squeezed below the width of its own words. Loose in
+    // the section, either would push the page itself sideways at a phone's width
+    // and take the nav bar off the top of the screen with it; in a box of its own
+    // it scrolls under its own header (`console.css`, `.table-scroll`).
+    const { el } = drawn(BOARD);
+    const tables = [...el.querySelectorAll("table")];
+    expect(tables).toHaveLength(2);
+    for (const table of tables) {
+      expect(table.parentElement?.className, `${table.className} is not in a scroll box`).toBe("table-scroll");
+    }
+  });
+
+  it("sets a cell that holds nothing but a count in the numeral face", () => {
+    // The two counts of the pooled table are figures, not sentences, and the
+    // viewer sets its figures in Barlow Semi Condensed so a column of them
+    // lines up (`console.css`, `.num`).
+    const { el } = drawn(BOARD);
+    const counts = [...el.querySelectorAll<HTMLTableCellElement>("td.num")].map((td) => td.textContent);
+    expect(counts).toEqual(["10", "2", "3", "0"]);
+  });
 });

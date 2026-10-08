@@ -83,7 +83,27 @@ const cell = (...content: readonly (string | Node)[]): HTMLTableCellElement => {
   return td;
 };
 
-/** A table with one header row and the body rows whoever built them handed over. */
+/** A cell that holds nothing but a count. It is set in the viewer's numeral face
+ * (`console.css`, `.num`) rather than in the face its sentences are set in, so a
+ * column of counts lines up the way the viewer's scores do. */
+const numCell = (n: number): HTMLTableCellElement => {
+  const td = cell(String(n));
+  td.className = "num";
+  return td;
+};
+
+/**
+ * A table with one header row and the body rows whoever built them handed over,
+ * inside a box of its own.
+ *
+ * The box is not decoration. The pairing table is nine columns of figures and the
+ * pooled one is eight, and a table cannot be squeezed below the width of its own
+ * words: loose in the section, either of them would push the page itself sideways
+ * on a phone, and the nav bar and the rest of the view would slide out from under
+ * whoever was reading them. In a box that takes the overflow, the table scrolls
+ * under its own header and the page keeps the window's width (`console.css`,
+ * `.table-scroll`).
+ */
 const table = (className: string, headers: readonly string[], rows: readonly (readonly Node[])[]): HTMLElement => {
   const el = document.createElement("table");
   el.className = className;
@@ -106,7 +126,11 @@ const table = (className: string, headers: readonly string[], rows: readonly (re
   }
 
   el.append(thead, body);
-  return el;
+
+  const box = document.createElement("div");
+  box.className = "table-scroll";
+  box.append(el);
+  return box;
 };
 
 /** A rate as the report writes it. */
@@ -185,8 +209,8 @@ const modelCells = (row: ModelRow): Node[] => {
 
   return [
     cell(code(row.label)),
-    cell(String(row.matches)),
-    cell(String(row.missing)),
+    numCell(row.matches),
+    numCell(row.missing),
     cell(rateOf(row.result)),
     cell(seatCell("A", row.seatSplit.A)),
     cell(seatCell("B", row.seatSplit.B)),

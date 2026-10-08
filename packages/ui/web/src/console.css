@@ -1,0 +1,175 @@
+/* The console's page: its frame, its nav bar, and the five sections the view
+   modules fill. The colours and the type are the replay viewer's, carried over from
+   `games/salient/viewer/src/viewer.css` rather than invented beside it — the two
+   pages are the same tool read from either end of a run, and
+   `scripts/console-design.test.mjs` compares the palette and the two families
+   between the files so they cannot drift apart. What is deliberately *not* the
+   viewer's is the frame: that page is a fixed 1920 × 1080 box whose every row
+   is added up by `scripts/viewer-frame-budget.test.mjs`, and this one is read on a
+   laptop and sometimes on a phone through `tailscale serve`. So it is as wide as the
+   window and no wider, and it holds no fixed pixel size that a 375 px screen has to
+   scroll to.
+
+   The base rules below are the whole layout at every width; the one `@media`
+   block at the foot only sits things *beside* each other once there is room. That
+   ordering is what makes the narrow case the tested one: at 375 px nothing but
+   the base applies, and the base is a single column, a wrapping nav, and wide
+   content scrolling inside its own box. */
+body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',system-ui,sans-serif;--team-a:#2c6fd1;--team-b:#e06f35}
+
+/* The page's column. `max-width` rather than the viewer's `width`: at 1440 px the
+   sentences are kept to a measure they can be read at, and at 375 px the box is the
+   window itself. */
+.frame{max-width:1100px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:16px}
+h1{margin:0;font:600 30px/1.1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.06em}
+h2{margin:0;font:600 22px/1.1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.06em}
+/* A table's heading: the viewer's panel label — small, letterspaced, secondary. */
+h3{margin:0;font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+p{margin:0;font-size:15px;line-height:1.45}
+/* Paths, model ids, provider names. Monospace, as the viewer sets them, because they
+   are what the operator types into a terminal. */
+code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc;overflow-wrap:anywhere}
+a{color:#a8c6f0;text-decoration:underline;text-decoration-color:#2c6fd1}
+a:hover{color:#eef1f5}
+/* A keyboard on the page is visible on the page: the viewer's blue, and an offset,
+   because these controls are sunk into panels and an outline on their own edge would
+   be lost against the panel behind them. */
+a:focus-visible,button:focus-visible,.view-link:focus-visible{outline:2px solid var(--team-a,#2c6fd1);outline-offset:2px}
+
+/* The one line the page says about itself — what it read, or why it could not. The
+   viewer's `.status.bad` is the seat B orange for the same reason: a refusal is the
+   page saying no, and it is the one line that has to be noticed from across the room. */
+.status{margin:0;font-size:15px;line-height:1.4;color:#c9d1dc}
+.status.bad{color:var(--team-b,#e06f35)}
+
+/* The nav bar: the four views, drawn by `views.ts` as the viewer draws its own
+   controls — a panel per link, ink on the one showing.
+
+   It wraps rather than scrolls. At 375 px "Providers & models" is the fourth link
+   and there is no row wide enough for four of them, and a nav bar that pushed the
+   page sideways would be a nav bar whose last view you could not reach without
+   sliding the whole page out from under yourself. */
+.nav{display:flex;flex-wrap:wrap;gap:8px}
+.view-link{padding:9px 16px;border:0;border-radius:6px;background:#232a33;color:#c9d1dc;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;text-decoration:none}
+.view-link:hover{background:#2c3540;color:#eef1f5}
+.view-link[aria-current="true"]{background:#eef1f5;color:#12161c}
+
+/* One view: the sections it holds, stacked. `views.ts` hides the three that are not
+   showing rather than removing them, and an author `display` would win over the
+   `hidden` attribute's own rule — so it is put back here, as the viewer puts it back
+   for its own hidden blocks (`.frame[hidden]`, `.series-view[hidden]`). */
+.view{display:flex;flex-direction:column;gap:16px}
+.view[hidden]{display:none}
+
+/* A section: the viewer's panel, and its boxes' radius. */
+.section{padding:20px;background:#1a2028;border-radius:8px;display:flex;flex-direction:column;gap:14px}
+
+/* Every list on the page is a record — series, matches, providers, counters — not
+   prose with bullets, so they are all one column of boxes with a gap. */
+ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+/* A row of one of the listings: the viewer's box. */
+.series-row,.match-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;padding:14px 16px;background:#232a33;border-radius:6px}
+.series-head,.match-row,.provider-head{font-size:15px;line-height:1.4}
+/* A series or a match this console could not read: the seat B edge, so the row that
+   is missing from the listing beside it is visible as missing. */
+.series-unreadable-row,.leaderboard-unreadable-row{padding:12px 16px;border-left:3px solid var(--team-b,#e06f35);background:#1a2028;border-radius:0 6px 6px 0;font-size:15px;line-height:1.45;color:#c9d1dc}
+
+/* The two tables. They are wide — the pairing view is nine columns of figures —
+   and a table cannot be squeezed below the width of its own words. So each one goes
+   in a box of its own that takes the overflow: at 375 px the table scrolls under its
+   own header and the page keeps the window's width, which is the difference between
+   a leaderboard you can read on a phone and a page you cannot scroll. */
+.table-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th{padding:8px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid #2c3540;font:600 14px/1.2 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+td{padding:8px 12px;vertical-align:top;border-bottom:1px solid #232a33;line-height:1.4}
+/* A cell that holds nothing but a figure: the viewer's numeral face, tabular and
+   letterspaced the way its scores are, so a column of counts lines up. */
+.num{font:600 17px/1.4 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.04em;font-variant-numeric:tabular-nums}
+/* The lists that live inside a cell — a series' match logs, a model's pooled series.
+   They are a column of links, not a second table. */
+.series-matches,.model-series{gap:6px}
+
+/* The buttons: the viewer's control exactly — a panel, Barlow Semi Condensed,
+   letterspaced — and the two the page commits to with `Start` and `Add provider`
+   inverted to ink on light, which is how the viewer marks the control that is
+   showing. A disabled one is the viewer's disabled step: the action is not offered
+   rather than offered and refused. */
+button{padding:9px 16px;border:0;border-radius:6px;background:#232a33;color:#c9d1dc;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;cursor:pointer}
+button:hover:not(:disabled){background:#2c3540;color:#eef1f5}
+button:disabled{background:#1a2028;color:#5c6673;cursor:default}
+.start,.add-provider{background:#eef1f5;color:#12161c}
+.start:disabled,.add-provider:disabled{background:#1a2028;color:#5c6673}
+
+/* The forms: the flag or the field named above the box, in the viewer's label style,
+   and the box itself sunk into the panel rather than raised out of it. */
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field-label{font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
+input[type="text"],select{min-width:0;max-width:100%;padding:9px 12px;border:1px solid #2c3540;border-radius:6px;background:#12161c;color:#eef1f5;font:400 15px/1.2 'IBM Plex Sans',system-ui,sans-serif}
+input[type="text"]:focus,select:focus{outline:2px solid var(--team-a,#2c6fd1);outline-offset:1px}
+input[type="checkbox"]{width:18px;height:18px;accent-color:var(--team-a,#2c6fd1)}
+/* The start form and the add form: one column of fields at a phone's width, and the
+   blocks that are not fields — the note, the button, the answer — full width. */
+.start-form,.provider-add{display:flex;flex-direction:column;gap:14px}
+.provider-add{padding:16px;background:#232a33;border-radius:6px}
+.provider-add-note{color:#aab3bf}
+.limits{display:flex;flex-wrap:wrap;gap:12px}
+.limits .field{flex:1 1 150px}
+.start-row{display:flex;flex-wrap:wrap;align-items:center;gap:16px}
+/* The two seat pickers, each in its seat's colour: the same two colours the viewer
+   paints its hexes and its score bar with, so the seat a run is seated in and the
+   seat a match log is read in are visibly one thing. */
+.seat{display:flex;flex-direction:column;gap:8px;padding:14px 16px;background:#232a33;border-radius:6px}
+.seat-a{border-left:3px solid var(--team-a,#2c6fd1)}
+.seat-b{border-left:3px solid var(--team-b,#e06f35)}
+.seat-sent{font-size:14px;color:#aab3bf}
+/* The ceilings beside the Start button: what the run will be bounded by, whose value
+   it is. A runner's default is secondary, because it is a fact about the command
+   rather than something the operator chose. */
+.ceilings{flex:1 1 240px}
+.ceiling{font-size:14px;line-height:1.4;color:#c9d1dc}
+.ceiling-runner{color:#aab3bf}
+
+/* One provider: its name and endpoint, its fields, and the credential check asked of
+   it — a row of the listing that holds a form, so it stacks. */
+.providers{gap:12px}
+.provider-row{display:flex;flex-direction:column;gap:10px;padding:14px 16px;background:#232a33;border-radius:6px}
+.provider-fields{font-size:14px;line-height:1.4;color:#aab3bf}
+.provider-check{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
+.provider-check .field{flex:1 1 220px}
+
+/* What the page answered: a start, an add, a credential check. The wording is the
+   console's own line, so it is set as a sentence; the colour says which way it went.
+   A refusal is the seat B tints, a going-ahead is the seat A ones — the
+   same two the viewer's rejected and compacted chips use. */
+.start-outcome,.add-outcome,.check-outcome{font-size:15px;line-height:1.4}
+.bad,.start-refused,.add-refused,.check-refused,.check-not-ready{color:#f0b18a}
+.start-started,.check-ready{color:#a8c6f0}
+
+/* The run in flight. The state line is the section's answer, so it is ink; a run that
+   failed is the seat B tint, and a running one carries the seat A edge so the section
+   reads as live from the top of the page down. */
+.run{font-size:15px;line-height:1.45}
+.run-running{padding-left:12px;border-left:3px solid var(--team-a,#2c6fd1)}
+.run-failed{color:#f0b18a}
+.counters li{font-size:15px;line-height:1.4}
+/* The lines the run printed, verbatim. Monospace, and scrolling inside their own box:
+   they are the CLI's lines, with its column alignment, and a long seed line is not
+   something the page should re-flow or push itself sideways for. */
+.run-lines{margin:0;padding:14px 16px;background:#12161c;border-radius:6px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:13px;line-height:1.4;color:#c9d1dc;white-space:pre}
+/* The sections' one-line notes about where they were read from — about the page
+   rather than about the run, so they sit back from the ink. */
+.roots,.leaderboard-roots,.providers-note,.granularity,.no-record,.start-measured,.start-lifetime,.seats-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
+
+/* The one breakpoint. From 760 px the two forms stop being one long column: the start
+   form's fields go two to a row with the limits and the button row across the
+   whole width, and the add form's twelve fields go three to a row. Below it the base
+   rules above are the whole layout — which is why the narrow case needs no rule of
+   its own, and why this block only ever *adds* width. */
+@media (min-width:760px){
+.start-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.start-form .seat,.start-form .limits,.start-form .start-row,.start-form .start-measured,.start-form .start-outcome{grid-column:1 / -1}
+.start-form .limits{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.provider-add{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.provider-add .provider-add-note,.provider-add .add-provider,.provider-add .add-outcome{grid-column:1 / -1}
+}

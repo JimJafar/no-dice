@@ -51,9 +51,16 @@ const FURTHER: RunSnapshot = {
   counters: { ...RUNNING.counters!, pairsPlayed: 10, pairsRemaining: 2, matchesPlayed: 20, costUsd: 3 },
 };
 
-/** The page `index.html` describes, in this test's document. */
+/**
+ * The page `index.html` describes, in this test's document.
+ *
+ * The head is dropped before parsing. The page's stylesheet and its font link are
+ * resources, and happy-dom would fetch them: a page that fetched its own CSS would
+ * be a browser rather than a test, which is the same reason `series-line.test.ts`
+ * installs only the viewer's `<body>`. Only the body is what this file mounts.
+ */
 const page = (): void => {
-  const parsed = new DOMParser().parseFromString(INDEX_HTML, "text/html");
+  const parsed = new DOMParser().parseFromString(INDEX_HTML.replace(/<head>[\s\S]*?<\/head>/, ""), "text/html");
   document.body.replaceChildren();
   for (const child of [...parsed.body.children]) {
     // The page's own module script is the thing this test is not running.

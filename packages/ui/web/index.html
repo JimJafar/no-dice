@@ -2,7 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- The one meta the viewer's page does not need and this one does: that page is a
+     fixed 1920 × 1080 frame, so a phone shows it shrunk and there is nothing to fit;
+     this page is as wide as the window it is read in, and without this it is laid out
+     at a desktop's width and shrunk to a phone's, at a size no one can tap. -->
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>No Dice console</title>
+<!-- The viewer's own fonts link, character for character: `IBM Plex Sans` 400/500/600
+     for the page's sentences, `Barlow Semi Condensed` 500/600/700 for its headings, its
+     buttons and the figures in its tables. The console wears the replay viewer's design
+     rather than a second one beside it, and asks for the same faces to do it. -->
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/src/console.css">
 </head>
 <body>
 <div id="frame" class="frame">
