@@ -77,8 +77,11 @@ export const expectPlainWords = (view: string, text: string): void => {
  * drawing words for it.
  */
 export const wordsOf = (el: HTMLElement): string => {
+  // The element itself is part of the walk: a `title` or an `aria-label` can sit
+  // on the very node the view test was handed, and a descendant-only walk would
+  // read straight past it.
   const said = [el.textContent ?? ""];
-  for (const each of el.querySelectorAll("[placeholder], [title], [aria-label]")) {
+  for (const each of [el, ...el.querySelectorAll("[placeholder], [title], [aria-label]")]) {
     for (const name of ["placeholder", "title", "aria-label"]) {
       const value = each.getAttribute(name);
       if (value !== null) said.push(value);

@@ -2,6 +2,17 @@ import { cpus } from "node:os";
 
 import { defineConfig } from "vitest/config";
 
+// The console's front end labels a match with the day its log header names, and
+// it reads that day off the clock of the machine it runs on — the same clock the
+// progress section's "started 12:03:00" is read off. Those labels are asserted
+// against fixtures that sit on a particular day, so a machine east of UTC+11
+// would read the fixture into the next day and fail tests about wording.
+// The zone is therefore pinned, and pinned over an ambient one: a suite
+// that means something different depending on where it was run is
+// a suite whose failures cannot be reproduced. A test that wants another
+// zone asks for one itself, by formatting through `Intl` with a `timeZone`.
+process.env.TZ = "UTC";
+
 // Every game's tests live next to the code they test; add a pattern here when a
 // new top-level area appears.
 //

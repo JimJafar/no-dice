@@ -405,6 +405,20 @@ export const createMatchHeaderSource = (
       }
     })();
     asked.set(url, started);
+    // A read that came back with nothing is not remembered. A log can be
+    // missing for a moment — a listing read while the runner was still closing
+    // it, one failed fetch — and a page that labelled it "could not read" until
+    // the reader reloaded the page would be holding onto a moment. A read that
+    // worked is kept: that one will not change, and asking again costs the whole
+    // log a second time.
+    void started.then(
+      (header) => {
+        if (header === null) asked.delete(url);
+      },
+      () => {
+        asked.delete(url);
+      },
+    );
     return started;
   };
 };
@@ -600,7 +614,7 @@ const matchItem = (row: MatchRow, headers?: MatchHeaderReader): HTMLLIElement =>
   link.className = "match-viewer";
   link.href = row.viewerUrl;
   link.textContent = matchLabel(row);
-  fillWhenRead(headers, row, link);
+  fillMatchLabel(link, row, headers);
   li.append(
     link,
     document.createTextNode(row.series === null ? " — a match played on its own" : ` — from ${row.series}`),
@@ -613,15 +627,21 @@ const matchItem = (row: MatchRow, headers?: MatchHeaderReader): HTMLLIElement =>
  * could not be read as, when it does not.
  *
  * Nothing is awaited: the row is on the page with what the listing supports, and
- * this is a later change to one text node. A row drawn out from
- * under the answer by a later render simply loses the write — the newer render
- * asked for the same header and will have its own link to fill.
+ * this is a later change to one text node. A row drawn out from under the answer
+ * by a later render simply loses the write — the newer render asked for the same
+ * header and will have its own link to fill.
+ *
+ * Both views that label a match call this, so the failure path is in one place:
+ * a reader that rejects leaves the row on the words it already had rather than
+ * raising an unhandled rejection out of a render.
  */
-const fillWhenRead = (headers: MatchHeaderReader | undefined, row: MatchRow, link: HTMLAnchorElement): void => {
+export const fillMatchLabel = (link: HTMLAnchorElement, row: MatchRow, headers?: MatchHeaderReader): void => {
   if (headers === undefined) return;
-  void headers(row.url).then((header) => {
-    link.textContent = header === null ? unreadMatchLabel(row) : matchLabel({ ...row, header });
-  });
+  void headers(row.url)
+    .then((header) => {
+      link.textContent = header === null ? unreadMatchLabel(row) : matchLabel({ ...row, header });
+    })
+    .catch(() => undefined);
 };
 
 /**

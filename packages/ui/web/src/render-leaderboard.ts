@@ -44,7 +44,7 @@
  * repeated as it was written.
  */
 import { clear } from "./render-frame.ts";
-import { matchLabel, unreadMatchLabel } from "./results.ts";
+import { fillMatchLabel, matchLabel } from "./results.ts";
 import type { Interval, Leaderboard, ModelRow, ResultCell, SeriesRow } from "./leaderboard.ts";
 import type { MatchHeaderReader, MatchRow } from "./results.ts";
 
@@ -218,11 +218,7 @@ const matchLinks = (row: SeriesRow, matches: readonly MatchRow[], headers?: Matc
   for (const each of ofSeries) {
     const li = document.createElement("li");
     const anchor = link("match-viewer", each.viewerUrl, matchLabel(each));
-    if (headers !== undefined) {
-      void headers(each.url).then((header) => {
-        anchor.textContent = header === null ? unreadMatchLabel(each) : matchLabel({ ...each, header });
-      });
-    }
+    fillMatchLabel(anchor, each, headers);
     li.append(anchor);
     ul.append(li);
   }

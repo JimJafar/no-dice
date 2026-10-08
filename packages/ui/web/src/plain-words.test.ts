@@ -90,6 +90,19 @@ describe("the words a drawn element says", () => {
     expect(breachesOf(said)).toEqual(["names a CLI flag: --a", "shows an absolute path: /repo/series/alpha"]);
   });
 
+  it("reads the hints on the element it is handed, not only on what is inside it", () => {
+    // A view test is handed the section, and a `title` can sit on one of its
+    // direct children — a walk that only descends reads past the label on the
+    // node it was standing on.
+    const el = document.createElement("section");
+    const button = document.createElement("button");
+    button.title = "Play the matches under /repo/series/alpha";
+    el.append(button);
+
+    expect(wordsOf(el)).toContain("Play the matches under /repo/series/alpha");
+    expect(breachesOf(wordsOf(el))).toEqual(["shows an absolute path: /repo/series/alpha"]);
+  });
+
   it("passes an element whose text and hints are all in words", () => {
     const el = document.createElement("section");
     const input = document.createElement("input");

@@ -321,27 +321,60 @@ describe("createMatchHeaderSource", () => {
     expect(peak).toBe(3);
   });
 
-  it("carries a failed read to every asker, rather than trying again per view", async () => {
+  it("carries one failed read to everyone asking at the same time", async () => {
     const asked: string[] = [];
     const source = createMatchHeaderSource((url) => {
       asked.push(url);
       return Promise.resolve(Response.json({ error: "no match log there" }, { status: 404 }));
     });
 
+    // The Matches view and the Leaderboard view ask in the same breath, and
+    // they are given the same answer rather than two requests.
+    const [first, second] = await Promise.all([source(MATCH.url), source(MATCH.url)]);
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(asked).toEqual([MATCH.url]);
+  });
+
+  it("tries again on a later listing read a log it could not read", async () => {
+    const asked: string[] = [];
+    let answers = 0;
+    const source = createMatchHeaderSource((url) => {
+      asked.push(url);
+      answers += 1;
+      return Promise.resolve(answers === 1 ? Response.json({ error: "not written yet" }, { status: 404 }) : logAnswer(LOG_HEAD));
+    });
+
     expect(await source(MATCH.url)).toBeNull();
-    expect(await source(MATCH.url)).toBeNull();
+    // A log missing for a moment — a listing read while the runner was still
+    // closing it — is not a sentence the page holds until the reader reloads.
+    expect(await source(MATCH.url)).toEqual(HEADER);
+    expect(asked).toEqual([MATCH.url, MATCH.url]);
+  });
+
+  it("keeps a header it did read, so a later listing read does not pay for the log again", async () => {
+    const asked: string[] = [];
+    const source = createMatchHeaderSource((url) => {
+      asked.push(url);
+      return Promise.resolve(logAnswer(LOG_HEAD));
+    });
+
+    expect(await source(MATCH.url)).toEqual(HEADER);
+    expect(await source(MATCH.url)).toEqual(HEADER);
     expect(asked).toEqual([MATCH.url]);
   });
 });
 
 describe("dateOf", () => {
-  it("says the day the reader's own clock shows, which is the day the rest of the page speaks", () => {
+  it("says the day on the clock the reader's machine runs, the clock the page uses throughout", () => {
     const iso = "2026-10-07T20:19:32.132Z";
     const at = new Date(iso);
-    // The progress section's "started 12:03:00" is read off the local clock, so the
-    // day beside it has to be read the same way: for anyone east of Greenwich, a
-    // match played after four in the afternoon UTC is already the next morning.
-    // Intl with no zone asked is the reader's zone, which is what the page has.
+    // The progress section's "started 12:03:00" is read off the machine's own
+    // clock, so the day beside it is read off the same one: for anyone east of
+    // Greenwich, a match played after four in the afternoon UTC is already the
+    // next morning there. `vitest.config.ts` pins the zone to UTC so this means
+    // the same thing on every machine; the oracle is the reader's own formatter,
+    // which is what the page's other times go by.
     const local = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(at);
     const utc = new Intl.DateTimeFormat("en-GB", {
       day: "numeric",
@@ -351,8 +384,8 @@ describe("dateOf", () => {
     }).format(at);
 
     expect(dateOf(iso)).toBe(local);
-    // Only a real difference of day proves the direction. In a UTC zone the two
-    // agree and there is nothing to tell apart.
+    // Only a real difference of day proves the direction, and under the pinned
+    // zone there is none to tell apart.
     if (local !== utc) expect(dateOf(iso)).not.toBe(utc);
   });
 });
@@ -485,6 +518,24 @@ describe("renderResults", () => {
 
     expect(el.querySelector("a.match-viewer")?.textContent).toBe(
       "a match on seed 1234, whose log this console could not read",
+    );
+  });
+
+  it("leaves a row's words alone when the reader fails outright, rather than raising out of a render", async () => {
+    const el = section();
+    renderResults(
+      el,
+      { ...RESULTS, matches: [{ ...MATCH, header: null }] },
+      () => undefined,
+      () => Promise.reject(new Error("the socket dropped")),
+    );
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    // The row keeps the words it was drawn with. An unhandled rejection out of a
+    // render is a page that stops working, which is worse than a plain label.
+    expect(el.querySelector("a.match-viewer")?.textContent).toBe(
+      "a match on seed 1234, whose log this console has not read",
     );
   });
 
