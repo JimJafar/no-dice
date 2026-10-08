@@ -17,7 +17,10 @@
  *   that names no bot) reported as one line naming the problem, with a non-zero
  *   exit and no log left behind;
  * - a seat given a model played through the Pi harness, and a provider with no
- *   credential reported as one line before a turn is played.
+ *   credential reported as one line before a turn is played;
+ * - a mirrored pairing — one bot in both seats — played as two logs named by the
+ *   seat the pairing's first seat plays, counted by `stats` and `evidence`, and
+ *   resumed without replaying what is already on disk.
  *
  * The series tests run real bot matches, which is what the acceptance brief
  * asks for and what proves the CLI drives the real `runMatch` rather than a
@@ -457,6 +460,101 @@ describe("no-dice series between two bots", () => {
     expect(result.code).toBe(0);
     expect(result.out[0]).toBe(`series: ${join(cwd, "series", "quick")}`);
     expect(existsSync(join(cwd, "series", "quick", "series.json"))).toBe(true);
+  }, 120_000);
+});
+
+/**
+ * A mirrored pairing: one bot in both seats. Brief §6.5's seat map is the same
+ * string in both seat orders, so the pair's two matches are named by the seat the
+ * pairing's first seat plays — `<seed>-greedy-greedy-A.json` and `-B.json`, the
+ * letter the record's `seat` field carries — and both are played, counted and
+ * resumed like any other pair's.
+ */
+const MIRROR = [
+  "series",
+  "--game",
+  "salient",
+  "--a",
+  "bot:greedy",
+  "--b",
+  "bot:greedy",
+  "--max-pairs",
+  "1",
+];
+
+describe("no-dice series with one bot in both seats", () => {
+  it("plays both seat orders of its pair to two logs, and reports the series over both", async () => {
+    const seriesDir = join(dir, "series", "mirror-greedy");
+
+    const result = await run([...MIRROR, "--dir", seriesDir]);
+
+    expect(result.code).toBe(0);
+    expect(result.err).toEqual([]);
+
+    // Two logs, not one written over itself, and each named by the seat X plays.
+    const logs = await readLogs(seriesDir);
+    const names = Object.keys(logs).sort();
+    expect(names).toHaveLength(2);
+    expect(names[0]).toMatch(/^\d+-greedy-greedy-A\.json$/);
+    expect(names[1]).toMatch(/^\d+-greedy-greedy-B\.json$/);
+    // One seed played twice, which is what a pair is.
+    const seedOf = (name: string): string => /^(-?\d+)-/.exec(name)![1]!;
+    expect(seedOf(names[0]!)).toBe(seedOf(names[1]!));
+    for (const text of Object.values(logs)) {
+      const log = matchLogSchema.parse(JSON.parse(text) as unknown);
+      expect([log.players.A, log.players.B].map((player) =>
+        player.kind === "bot" ? player.bot : player.model,
+      )).toEqual(["greedy", "greedy"]);
+    }
+
+    // The record holds both matches, each under its own path.
+    const record = await readSeriesRecord(seriesDir);
+    expect(record.pairing).toEqual({
+      a: { kind: "bot", bot: "greedy" },
+      b: { kind: "bot", bot: "greedy" },
+    });
+    expect(record.pairs).toHaveLength(1);
+    expect(record.pairs[0]!.matches.map((match) => match.seat)).toEqual(["A", "B"]);
+    expect(record.pairs[0]!.matches.map((match) => match.path)).toEqual(
+      names.map((name) => join(seriesDir, "matches", name)),
+    );
+    expect(record.state.pairs_played).toBe(1);
+    expect(record.state.matches_played).toBe(2);
+
+    // The pair line still tells its two matches apart, even though both seat
+    // orders name the same two players: the seat X plays is said, which is the
+    // letter the log name ends in.
+    expect(result.out[1]).toMatch(
+      new RegExp(
+        "^seed -?\\d+: bot:greedy in A, bot:greedy in B \\(bot:greedy in seat A\\) — .+ \\| " +
+          "bot:greedy in A, bot:greedy in B \\(bot:greedy in seat B\\) — .+ " +
+          "bot:greedy win rate .+ over 2 matches$",
+      ),
+    );
+
+    // Both matches are counted, by the report and by the rules evidence.
+    const stats = await run(["stats", "--series", seriesDir]);
+    expect(stats.code).toBe(0);
+    expect(stats.out.join("\n")).toContain("**2 counted**, **0 missing**");
+    const evidence = await run(["evidence", "--series", seriesDir]);
+    expect(evidence.code).toBe(0);
+    expect(evidence.out.join("\n")).toContain("2 matches: **2 counted**, **0 missing**");
+  }, 120_000);
+
+  it("plays nothing already on disk when it is run again", async () => {
+    const seriesDir = join(dir, "series", "mirror-resumed");
+    const first = await run([...MIRROR, "--dir", seriesDir]);
+    expect(first.code).toBe(0);
+    const before = await readLogs(seriesDir);
+
+    const again = await run([...MIRROR, "--dir", seriesDir]);
+
+    expect(again.code).toBe(0);
+    expect(again.out.join("\n")).toContain("this run played 0, skipped 2, failed 0");
+    // The same two logs, byte for byte: the resume rule reads a mirrored pair's
+    // logs by their seat-letter names rather than replaying over them.
+    expect(await readLogs(seriesDir)).toEqual(before);
+    expect((await readSeriesRecord(seriesDir)).state.matches_played).toBe(2);
   }, 120_000);
 });
 

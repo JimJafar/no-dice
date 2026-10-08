@@ -11,7 +11,10 @@
  *   names, each with a `matchDir` of its own under `sessions/` so a Pi seat's
  *   home never lands beside the log in `matches/`;
  * - a pair whose logs are already on disk is skipped, and a pair with one log
- *   plays only the match that is missing, so a pair is never left half played.
+ *   plays only the match that is missing, so a pair is never left half played;
+ * - a mirrored pairing — both seats folding to one slug, a bot against itself —
+ *   names its two matches by the seat the pairing's first seat plays, since its
+ *   seat map is the same string in both seat orders.
  *
  * Nothing here plays a match: the plan is paths and seat orders, which is what
  * the series runner and its resume test are written against.
@@ -30,6 +33,9 @@ const X: SeatArg = { kind: "model", provider: "marvin", model: "subagent" };
 
 /** The opponent every pair is played against. */
 const OPPONENT: SeatArg = { kind: "bot", bot: "greedy" };
+
+/** A mirrored pairing: one bot against itself, both seats folding to `greedy`. */
+const GREEDY: SeatArg = { kind: "bot", bot: "greedy" };
 
 /** Where a series is run, in a directory that is gone when the suite is done. */
 let dir: string;
@@ -183,14 +189,34 @@ describe("a pair is two matches with the seats swapped", () => {
     expect(plan.matches).toHaveLength(4);
   });
 
-  it("refuses a pairing whose two seat orders fold to one file name", async () => {
+  it("names a mirrored pairing's two matches by the seat its first seat plays", async () => {
     const seriesDir = await seriesAt("mirror");
 
-    // The layout names a match by its seat map, so a mirror pairing has no way
-    // to tell its two seat orders apart: one log would be written over the other.
-    await expect(planSeries({ dir: seriesDir, a: X, b: X, maxPairs: 2 })).rejects.toThrow(
-      /marvin-subagent/,
-    );
+    // A mirrored pairing's seat map is one string in both seat orders, so the
+    // seat map alone cannot name its two matches. They are named by the seat the
+    // pairing's first seat plays — the same letter the record's `seat` field
+    // carries, and the naming `scripts/mirror-series.mjs` already used for the
+    // Greedy-vs-Greedy series `docs/series-notes.md` §7 keeps the evidence for.
+    const plan = await planSeries({ dir: seriesDir, a: GREEDY, b: GREEDY, maxPairs: 1, seedBase: 7 });
+    expect(plan.pairs).toHaveLength(1);
+    const [first, second] = plan.pairs[0]!.matches;
+    const seed = String(plan.pairs[0]!.seed);
+
+    // Both seat orders are still planned: the swap is what the pair exists
+    // for, even when the two seats are played by the same bot.
+    expect(first.seat).toBe("A");
+    expect(second.seat).toBe("B");
+    expect(first.seats).toEqual({ A: GREEDY, B: GREEDY });
+    expect(second.seats).toEqual({ A: GREEDY, B: GREEDY });
+
+    expect(first.out).toBe(join(seriesDir, "matches", `${seed}-greedy-greedy-A.json`));
+    expect(second.out).toBe(join(seriesDir, "matches", `${seed}-greedy-greedy-B.json`));
+    expect(first.matchDir).toBe(join(seriesDir, "sessions", `${seed}-greedy-greedy-A`));
+    expect(second.matchDir).toBe(join(seriesDir, "sessions", `${seed}-greedy-greedy-B`));
+
+    // Two names, so two logs, and both are still to play.
+    expect(first.out).not.toBe(second.out);
+    expect(plan.matches).toHaveLength(2);
   });
 });
 
@@ -213,6 +239,24 @@ describe("a pair is never left half played", () => {
     expect(resumed.pairs[0]?.matches.every((match) => match.played)).toBe(true);
     expect(resumed.pairs[1]?.matches.every((match) => !match.played)).toBe(true);
     expect(resumed.matches).toEqual(untouched.matches);
+  });
+
+  it("plans only the missing match of a mirrored pair that has one log", async () => {
+    const seriesDir = await seriesAt("mirror-one-log");
+
+    const plan = await planSeries({ dir: seriesDir, a: GREEDY, b: GREEDY, maxPairs: 1, seedBase: 7 });
+    const [first, second] = plan.pairs[0]!.matches;
+    await mkdir(join(seriesDir, "matches"), { recursive: true });
+    await writeFile(first.out, "{}\n", "utf8");
+
+    const resumed = await planSeries({ dir: seriesDir, a: GREEDY, b: GREEDY, maxPairs: 1, seedBase: 7 });
+
+    // The seat-letter names are the resume rule's handle: the log on disk is
+    // the seat-A match, and only the seat-B one is played again.
+    expect(resumed.pairs[0]!.matches.map((match) => match.played)).toEqual([true, false]);
+    expect(resumed.matches).toHaveLength(1);
+    expect(resumed.matches[0]?.out).toBe(second.out);
+    expect(resumed.matches[0]?.seat).toBe("B");
   });
 
   it("plans only the missing match of a pair that has one log", async () => {

@@ -313,7 +313,7 @@ The mirror pairing says something sharper, about the hex the rules name. A Greed
 — 10 pairs, 20 matches, kept at
 [`reports/series/greedy-vs-greedy-evidence.md`](../reports/series/greedy-vs-greedy-evidence.md),
 played by [`scripts/mirror-series.mjs`](../scripts/mirror-series.mjs) because `no-dice series`
-refuses a pairing whose two seats fold to one slug ([series-notes §7](series-notes.md)) — has
+refused a pairing whose two seats fold to one slug ([series-notes §7](series-notes.md)) — has
 **no Node change owner twice in any of its 20 matches**, and it never takes the centre Node at all.
 **F6 ends all 20 matches neutral with its garrison of 3 intact**, and it is attacked on 9.1 turns a
 match: **182 battles** over the series, every one of them **4 troops against 4 with no owner**,

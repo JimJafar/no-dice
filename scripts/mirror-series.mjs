@@ -1,19 +1,25 @@
 #!/usr/bin/env node
 /**
- * A series whose two seats are the same bot, which `no-dice series` refuses to
- * play.
+ * A series whose two seats are the same bot — the pairing `no-dice series` used
+ * to refuse.
  *
  * Brief §6.5 names a match by its seat map — `<seed>-<seatA>-<seatB>.json` — and
  * both seat orders of a mirrored pairing fold to one file name, so `planSeries`
- * throws rather than write one match's log over the other's
+ * once threw rather than write one match's log over the other's
  * (`packages/runner/src/series-plan.ts`). The refusal is right for a model
- * against itself, whose two seats are different players. It still blocks the
+ * against itself, whose two seats are different players. It still blocked the
  * measurement a mirrored pairing is worth taking: one bot playing the same map
  * from both sides, which is how `docs/rules-review.md`'s Centre Node ping-pong
  * section got a bot-only ping-pong rate.
  *
- * This script plays that pairing. It draws the seed list through `planSeries`
- * itself, pointed at a stand-in opponent: the draw is a stream off `--seed-base`
+ * `no-dice series` plays that pairing now, naming a mirrored pair's two matches
+ * by the seat the pairing's first seat plays — the naming this script worked out
+ * first — so a series started by either is resumed by the other. This script is
+ * kept because the Greedy-vs-Greedy series `docs/series-notes.md` §7 and
+ * `docs/rules-review.md` quote was played by it.
+ *
+ * It draws the seed list through `planSeries` itself, pointed at a
+ * stand-in opponent: the draw is a stream off `--seed-base`
  * and takes no seat, so planning the pairing's first seat against a
  * stand-in at the same pair limit draws exactly the seeds a real series of that
  * size would play. It then plays both seat orders of every seed through the

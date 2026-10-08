@@ -298,10 +298,11 @@ are the half that went missing last time.
 
 `reports/series/greedy-vs-greedy-evidence.md` is a kept copy of a second bot series,
 played for `docs/rules-review.md`'s Centre Node ping-pong section: 10 pairs, 20 matches, 20
-counted, 0 missing. It could not be played by `no-dice series`, which refuses a pairing whose two
-seats fold to one slug — a mirrored pairing has no seat map that tells its two matches apart, so
-both would be written to one log (`planSeries` in `packages/runner/src/series-plan.ts`). It is
-played by `scripts/mirror-series.mjs`, which takes the same command line and draws the seeds through
+counted, 0 missing. When it was first run `no-dice series` could not play it: `planSeries`
+refused a pairing whose two seats fold to one slug — a mirrored pairing has no seat map that tells
+its two matches apart, so both would be written to one log (`planSeries` in
+`packages/runner/src/series-plan.ts`). It was played by `scripts/mirror-series.mjs`, which takes the
+same command line and draws the seeds through
 `planSeries` itself, then plays both seat orders through `runMatch` and writes the record with the
 runner's own `writeSeriesRecord`:
 
@@ -310,6 +311,20 @@ node scripts/mirror-series.mjs series --game salient --a bot:greedy --b bot:gree
   --name greedy-vs-greedy --max-pairs 10
 no-dice evidence --series series/greedy-vs-greedy
 ```
+
+**`no-dice series` plays a mirrored pairing now, and names its logs the way that script did.**
+A pairing whose two seats fold to one slug has a seat map that reads the same in both seat orders,
+so its two matches carry the seat the pairing's first seat plays as well:
+`<seed>-greedy-greedy-A.json` and `-B.json` — the same letter the record's `seat` field already
+carries, and the name the resume rule reads. So the command below plays the same 20 matches on the
+same seeds, and a series either of the two started is resumed by the other:
+
+```bash
+no-dice series --game salient --a bot:greedy --b bot:greedy --name greedy-vs-greedy --max-pairs 10
+```
+
+The script stays, because the kept copy above was played by it and
+`docs/rules-review.md` points at it.
 
 Greedy against Greedy is a true mirror — every match is a draw, and the two seat orders of a pair
 give the same score — so those 20 matches are 10 positions played twice. Its logs are gitignored

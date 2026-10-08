@@ -170,9 +170,18 @@ const matchWord = (match: SeriesMatchRecord): string => {
     : `seat ${winner} wins by ${String(margin)} (${type})`;
 };
 
-/** The two seats of one match of a pair, as the board saw them. */
+/**
+ * The two seats of one match of a pair, as the board saw them. A mirrored
+ * pairing — one bot in both seats — reads the same in both seat
+ * orders, so its matches are told apart by the seat the pairing's first seat
+ * plays, which is the letter its log name ends in (`matchOf` in `./series-plan.ts`).
+ */
 const seatMapWord = (x: string, opponent: string, seat: Seat): string =>
-  seat === "A" ? `${x} in A, ${opponent} in B` : `${opponent} in A, ${x} in B`;
+  x === opponent
+    ? `${x} in A, ${opponent} in B (${x} in seat ${seat})`
+    : seat === "A"
+      ? `${x} in A, ${opponent} in B`
+      : `${opponent} in A, ${x} in B`;
 
 /**
  * One pair as it finished: the seed, both seat orders, both results, and the

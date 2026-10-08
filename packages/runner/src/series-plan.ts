@@ -15,8 +15,13 @@
  *   maps instead of drawing new ones. Raising `maxPairs` appends to the recorded
  *   list rather than replacing it.
  * - **Layout.** `<dir>/matches/<seed>-<seat-map>.json`, with Pi's saved
- *   conversations under `<dir>/sessions/<seed>-<seat-map>/`. That second path is
- *   handed to `runMatch` as `matchDir`: left to itself it puts a seat's home and
+ *   conversations under `<dir>/sessions/<seed>-<seat-map>/`. A pairing whose two
+ *   seats fold to one slug — a bot against itself — has a seat map that reads the
+ *   same in both seat orders, so its matches carry the seat the pairing's
+ *   first seat plays as well: `<seed>-greedy-greedy-A.json` and `-B.json`, the
+ *   same letter the record's `seat` field carries, and the name a mirrored pair
+ *   resumes on. The sessions path is handed to `runMatch` as `matchDir`: left to
+ *   itself it puts a seat's home and
  *   transcripts beside the log, inside `matches/`, where brief §6.5 says only
  *   logs belong.
  *
@@ -70,7 +75,7 @@ export interface PlannedMatch {
   seat: Seat;
   /** Who plays each seat, which is the pair seen from the board rather than from X. */
   seats: Record<Seat, SeatArg>;
-  /** `<dir>/matches/<seed>-<seat-map>.json`. */
+  /** `<dir>/matches/<seed>-<seat-map>.json`, plus `-<seat>` for a mirrored pairing. */
   out: string;
   /** `<dir>/sessions/<seed>-<seat-map>/`, where a Pi seat's transcripts go. */
   matchDir: string;
@@ -235,11 +240,14 @@ const hasLog = async (path: string): Promise<boolean> => {
 
 /**
  * One match of a pair: the seats as the board sees them, and brief §6.5's two
- * paths named by its seat map.
+ * paths named by its seat map — by the seat `a` plays as well, when the pairing
+ * is mirrored and its seat map is one string whichever way the seats are read.
  */
 const matchOf = (dir: string, a: SeatArg, b: SeatArg, seed: number, seat: Seat): PlannedMatch => {
   const seats: Record<Seat, SeatArg> = seat === "A" ? { A: a, B: b } : { A: b, B: a };
-  const name = `${String(seed)}-${seatSlug(seats.A)}-${seatSlug(seats.B)}`;
+  const slugA = seatSlug(seats.A);
+  const slugB = seatSlug(seats.B);
+  const name = `${String(seed)}-${slugA}-${slugB}${slugA === slugB ? `-${seat}` : ""}`;
   return {
     seed,
     seat,
@@ -262,18 +270,6 @@ export async function planSeries(options: SeriesPlanOptions): Promise<SeriesPlan
   const maxPairs = options.maxPairs ?? DEFAULT_MAX_PAIRS;
   if (!Number.isInteger(maxPairs) || maxPairs < 1) {
     throw new Error(`--max-pairs takes a whole number of pairs from 1 up, not ${String(maxPairs)}`);
-  }
-
-  // The two seat orders of one pair have to name two files. A pairing whose
-  // seats fold to the same slug — a model against itself — has no seat map that
-  // tells them apart, and one match's log would be written over the other's.
-  const slugA = seatSlug(options.a);
-  const slugB = seatSlug(options.b);
-  if (slugA === slugB) {
-    throw new Error(
-      `a series of "${slugA}" against itself cannot be planned: brief §6.5 names a match by its ` +
-        "seat map, and both seat orders of that pairing fold to the same file name",
-    );
   }
 
   const recorded = await readRecord(options.dir);

@@ -28,7 +28,9 @@ pnpm exec no-dice showcase --series series/greedy-vs-random
 A series plays each seed twice, once with the two seats swapped, in batches of 5
 pairs, and stops when the 99% Wilson interval for `--a`'s win rate excludes 50%
 or `--max-pairs` (default 75) is reached. It prints one line per pair as it goes
-and writes `series/<name>/matches/<seed>-<seat-map>.json` for every match,
+and writes `series/<name>/matches/<seed>-<seat-map>.json` for every match
+(a pairing whose two seats fold to one slug adds the seat `--a` plays, so a bot
+against itself gets `<seed>-greedy-greedy-A.json` and `-B.json`),
 `series.json` for its record and `report.md` for the report. Running the same
 command again plays nothing whose log is already on disk. `--max-cost <usd>` and
 `--max-tokens <n>` bound what a run may spend, `--concurrency <n>` how many matches

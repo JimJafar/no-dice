@@ -1,11 +1,11 @@
 /**
- * `scripts/mirror-series.mjs` plays the pairing `no-dice series` refuses: one bot
- * against itself.
+ * `scripts/mirror-series.mjs` plays the pairing `no-dice series` used to refuse:
+ * one bot against itself.
  *
- * `planSeries` throws for a pairing whose two seats fold to the same slug,
+ * `planSeries` once threw for a pairing whose two seats fold to the same slug,
  * because brief §6.5 names a match by its seat map and both seat orders of that
- * pairing would write one log over the other's. The script names the two logs
- * apart — `<seed>-<seat-map>-A.json` and `-B.json` — and writes the series record
+ * pairing would write one log over the other's. The script named the two logs
+ * apart — `<seed>-<seat-map>-A.json` and `-B.json` — and wrote the series record
  * in the shape `runSeries` writes, which is what lets `no-dice stats` and
  * `no-dice evidence` read the result like any other series. `docs/series-notes.md`
  * §7 and `docs/rules-review.md`'s Centre Node ping-pong section quote the series
