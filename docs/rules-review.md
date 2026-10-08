@@ -1,19 +1,43 @@
-# Rules review: the open questions against the first real series
+# Rules review: the open questions against the two real series
 
 `salient/docs/salient-rules-v0.md` leaves eight questions open. This file takes each one in
-turn, puts the numbers from the first real series beside the numbers the rules quote for scripted
-bots, and ends with either a decision or the evidence that would settle it.
+turn, puts the numbers from the two real series of the same pairing beside the numbers the rules
+quote for scripted bots, and ends with either a decision or the evidence that would settle it.
 
 Sources, all of them in the repository:
 
-- [`reports/series/marvin-subagent-vs-greedy.md`](../reports/series/marvin-subagent-vs-greedy.md) —
-  the series report, copied verbatim from `series/marvin-subagent-vs-greedy/report.md`.
+- **Run 1** —
+  [`reports/series/marvin-subagent-vs-greedy.md`](../reports/series/marvin-subagent-vs-greedy.md):
+  the series report, copied verbatim from `series/marvin-subagent-vs-greedy/report.md`. Its
+  `evidence.md` was not copied and its logs went with the task workspace that played them, so run
+  1 contributes a win rate, a margin, a seat split, a depth split and compaction turns, and none
+  of the five counters.
+- **Run 2, the rerun** —
+  [`reports/series/marvin-subagent-vs-greedy-rerun.md`](../reports/series/marvin-subagent-vs-greedy-rerun.md)
+  and
+  [`reports/series/marvin-subagent-vs-greedy-rerun-evidence.md`](../reports/series/marvin-subagent-vs-greedy-rerun-evidence.md),
+  copied verbatim from the rerun's `report.md` and `evidence.md`. The rerun's whole series
+  directory, `series/marvin-subagent-vs-greedy/` with its ten match logs, is tracked as well, so
+  its counters can be regenerated; the two kept copies are what this file quotes.
+- [`reports/series/greedy-vs-random-evidence.md`](../reports/series/greedy-vs-random-evidence.md)
+  — the same five counters over a five-pair `bot:greedy` against `bot:random` series, the one
+  pairing on this box whose counters are bot figures all the way down.
 - [`docs/series-notes.md`](series-notes.md) — what was actually run: the command, the ceiling, the
   concurrency, the wall time, the missing matches.
 - [`docs/pi-harness-notes.md` §7](pi-harness-notes.md) and
   [`reports/pi-cost.md`](../reports/pi-cost.md) — the one-match cost measurement, seed 135.
 - [`salient/docs/salient-rules-v0.md`](../salient/docs/salient-rules-v0.md) — the questions, and
   the bot figures quoted against them.
+
+**Which run each figure comes from.** Every figure below is labelled **run 1** or **run 2**, and
+the two are never pooled. They are separate samples, because run 1 was played by the harness
+before `749d236` turned a call to one of the seven tools by its bare name from a `tool_surface`
+void into a refused call: run 1's two missing matches are missing for a reason the rerun's harness
+does not have, and its win-rate interval is computed over 8 counted matches against the rerun's
+10. They are the same five maps — the rerun left `--seed-base` at its default `0` and drew the
+same five seeds, 572152369, 708123, 479473028, 313966722 and 1003578858 — so run 2 is those ten
+maps played again under the later harness, not a continuation of run 1's record. Where a run-1
+figure is quoted it is quoted as run 1's, and run 1's kept report stays where it is.
 
 **How to read the verdicts.** A rules decision is Jim's, so nothing here is ticked in
 `salient/docs/salient-rules-v0.md`: no box has been moved to "Decided", because no decision has
@@ -25,10 +49,13 @@ next epic.
 
 ---
 
-## The series every section reads from
+## The two series every section reads from
 
-`marvin/subagent` (Pi 1.0.2, RPC mode, `thinking medium`, `contextWindow` 131,072, `maxTokens`
-8,192) against `bot:greedy`, five seat-swapped pairs, `--max-tokens 60000000`, `--concurrency 1`.
+Both runs are the same pairing at the same specs: `marvin/subagent` (Pi 1.0.2, RPC mode,
+`thinking medium`, `contextWindow` 131,072, `maxTokens` 8,192) against `bot:greedy`, five
+seat-swapped pairs, `--max-pairs 5`, `--max-tokens 60000000`, `--concurrency 1`.
+
+**Run 1** — played before `749d236`.
 
 | | |
 | --- | --- |
@@ -42,7 +69,7 @@ next epic.
 | wall time | 5 h 27 m 44 s for five pairs — 63.5, 74.8, 56.4, 62.7, 70.3 min a pair |
 | tokens | 17,379,888 over the 8 counted matches — 2,172,486 a match, 29% of the ceiling |
 
-The model seat's depth split, which most sections below read (200 turns = 8 matches × 25):
+Run 1's model-seat depth split (200 turns = 8 matches × 25):
 
 | marvin/subagent | series | turns 1-8 | turns 9-17 | turns 18-25 |
 | --- | ---: | ---: | ---: | ---: |
@@ -61,39 +88,83 @@ The model seat's depth split, which most sections below read (200 turns = 8 matc
 | context max | 85,963 | 35,488 | 60,984 | 85,963 |
 | compaction turns | 7 | 0 | 5 | 2 |
 
-Greedy's own row is the control: 408 tool calls at 2.04 a turn, **0** scouts, **0** simulations,
-**0** tool errors, **0** rejected submissions, **0** passes, **0** compaction turns — it runs no
-provider, so it has no context to lose.
+**Run 2, the rerun** — the same five maps played again, after `749d236`, and the run that put the
+five counters in the repository.
 
-## The five counters, none of them reachable from here
+| | |
+| --- | --- |
+| pairs recorded / matches | 5 / 10 |
+| counted / missing | **10** / **0** — the two matches run 1 voided over a bare tool name produced logs this time |
+| marvin/subagent | 2 wins, 8 losses, 0 draws — **20.0% win rate, 95% Wilson interval 5.7% – 51.0%** |
+| seat split | seat A 1–4 (20.0%, 3.6% – 62.4%), seat B 1–4 (20.0%, 3.6% – 62.4%) |
+| margin | mean **18.5**, bootstrap **10.5 – 26.8** (2000 resamples, 95%), against run 1's 33.9 |
+| knockouts | **none** — all 10 ended `time` at turn 25 |
+| stop reason | `max_pairs`, its full length; the interval test needs `MIN_TEST_PAIRS = 10` pairs and the rerun had 5, so it recorded no stopping interval |
+| tokens | 59,967,929 over the 10 counted matches — 5,996,793 a match, 96.9% of it read from Marvin's cache |
+
+Run 2's model-seat depth split (250 turns = 10 matches × 25):
+
+| marvin/subagent | series | turns 1-8 | turns 9-17 | turns 18-25 |
+| --- | ---: | ---: | ---: | ---: |
+| turns passed | 2 | 2 | 0 | 0 |
+| — no_submission | 2 | 2 | 0 | 0 |
+| — timeout (300 s cap) | 0 | 0 | 0 | 0 |
+| — provider_error | 0 | 0 | 0 | 0 |
+| rejected submissions | 25 | 6 | 10 | 9 |
+| tool errors | 43 | 31 | 8 | 4 |
+| wasted orders | 2 | 0 | 1 | 1 |
+| tool calls / turn | 3.57 | 4.28 | 3.41 | 3.04 |
+| scouts / turn | 0.30 | 0.64 | 0.23 | 0.04 |
+| simulations / turn | 0.77 | 0.88 | 0.76 | 0.69 |
+| tokens / turn | 239,872 | 114,628 | 288,100 | 310,859 |
+| context mean tokens | 57,440 | 26,701 | 67,490 | 76,873 |
+| context max | 114,038 | 62,881 | 113,786 | 114,038 |
+| compaction turns | 6 | 1 | 1 | 4 |
+
+The difference every section below reads: run 1's model seat lost **53 of its 200 turns** to the
+harness — 34 at the 300 s cap, 18 provider errors, 1 no submission — and 22 of those 53 fell in
+turns 18-25, so its late-turn figures measure a seat the endpoint had stopped answering. Run 2's
+seat lost **2 of its 250 turns**, both `no_submission` and both in turns 1-8, with **0 timeouts
+and 0 provider errors**, and its slowest turn took **141.6 s** against the 300 s cap — counted from
+the per-turn `wall_ms` in the rerun's tracked logs, where no turn of either seat came near the cap.
+Run 2's late-turn figures measure play.
+
+Greedy's own row is the control in both runs: 408 tool calls at 2.04 a turn in run 1, 510 at 2.04
+in run 2, and **0** scouts, **0** simulations, **0** tool errors, **0** rejected submissions,
+**0** passes and **0** compaction turns in both — it runs no provider, so it has no context to
+lose.
+
+## The five counters, this time in the repository
 
 The rules' questions are stated as counts — hex flips a turn, lead changes a match, Node hand
-changes, neutral captures, re-scouts. `packages/stats/src/rules-evidence.ts` computes all five
-from a match log alone, and `no-dice evidence --series <dir>` writes them to
-`series/<name>/evidence.md`. **Nothing of it survives.** `series/` is
-gitignored because a real log is 0.9–1.1 MB of tool results
-([series-notes §7](series-notes.md)); the report was copied into `reports/series/` and the
-evidence file was not; and the directory the report header names —
-`/home/jim/.software-factory/workspaces/no-dice/series-real-run/series/marvin-subagent-vs-greedy` —
-was written inside the `series-real-run` task's own workspace and deleted when that task merged,
-as [series-notes §6](series-notes.md) records. Checked on this box: `no-dice evidence --series
-series/marvin-subagent-vs-greedy` answers `series.json is not there, so there is no series to
-report`; a filesystem-wide search finds no `series.json`, no `evidence.md` under any `series/`
-directory, and no match log named for any of the five seeds; and no commit reachable from a ref,
-nor any commit unreachable from a ref holds a series evidence file. Marvin answers
-`/v1/models` from here, so the endpoint is not what is missing.
+changes, neutral captures, re-scouts, and a ping-pong flag over the Node hand changes.
+`packages/stats/src/rules-evidence.ts` computes them from a match log alone, and `no-dice
+evidence --series <dir>` writes them to `series/<name>/evidence.md`. **Run 1's are still gone:**
+its `evidence.md` was never copied out of the gitignored `series/` directory, and the directory
+its report header names was deleted with the `series-real-run` task's workspace
+([series-notes §6 and §7](series-notes.md)). **Run 2's are in the repository**, in
+[`reports/series/marvin-subagent-vs-greedy-rerun-evidence.md`](../reports/series/marvin-subagent-vs-greedy-rerun-evidence.md),
+and — which is the part run 1 did not have — they can be recomputed: the rerun's `series.json` and
+its ten match logs are tracked under `series/marvin-subagent-vs-greedy/`, and
+[`scripts/kept-series-evidence.test.mjs`](../scripts/kept-series-evidence.test.mjs) regenerates
+the kept copy from those logs and fails if the two disagree.
 
-**The logs are gone, and unless a backup exists outside this box the five counters have to be
-re-earned by playing again.** The one thing this review can act on without a model is the reason
-they went missing: the counters exist as code, the run computed them, and nothing copied the
-answer somewhere that survives.
+This is what the rerun's counters are, beside the figures the rules quote for scripted bots:
 
-So the four sections that turn on those counts — Home bonus, Final-turn lunge, Centre Node
-ping-pong, No last-seen memory — carry the real-series numbers the report *does* hold, and are
-`Left open` on the counter itself rather than on the sample size. That is a different kind of
-open than "ten matches is not enough", and it needs no new code: `rules-evidence.ts` already
-computes all five, and `no-dice evidence` already writes them. What they need is logs that survive
-the run that made them — which is what the closing section is about.
+| counter | bots without the home bonus | bots with it | run 2, 10 matches | greedy vs random, 10 matches |
+| --- | ---: | ---: | ---: | ---: |
+| hexes flipped a turn late on (turns 18-25) | 6.5 | 1 – 2.4 | **2.39** | 1.67 |
+| lead changes a match | 3.2 | 1.4 | **0.60** | 0.00 |
+| hex flips a match | — | — | **105.10** (4.20 a turn) | 87.50 |
+| captures of hexes that were neutral, a match | "single troops trading empty hexes" | — | **76.20** (7.54 / 1.69 / 0.09 a turn) | 75.50 |
+| Node hand changes a match | "the centre Node changed hands on alternate turns" | — | **7.60** (0.46 / 0.32 / 0.13 a turn) | 6.40 |
+| a Node ping-ponging | "in some bot matches" | — | **1 of 10** — seed 313966722, hex E5, turns 5, 19, 20 | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22 |
+| re-scouts, one seat a match | — | — | **1.70** for the model seat, 0.00 for Greedy | 0.00 for both seats |
+
+The last two columns are different pairings, printed side by side for scale and never summed: the
+greedy-vs-random column is two scripted bots, which is the kind of match the rules' own
+figures were measured on, and the run-2 column is the model against Greedy. The rules' two columns
+are the prototype engine's bot matches, from before either file existed.
 
 ---
 
@@ -103,98 +174,155 @@ The rules' bot figures: without the home bonus, bot matches flipped **about 6.5 
 on** and the lead changed **3.2 times a match**, mostly from single troops trading empty hexes;
 with it, **1 to 2.4 hexes** flip and the lead changes **1.4 times**.
 
-| | bots without | bots with | marvin/subagent vs Greedy |
+| | bots without | bots with | run 2, 10 matches |
 | --- | ---: | ---: | ---: |
-| hexes flipped a turn, turns 18-25 | 6.5 | 1 – 2.4 | **no surviving record** |
-| lead changes a match | 3.2 | 1.4 | **no surviving record** |
-| captures of neutral hexes | "single troops trading empty hexes" | — | **no surviving record** |
+| hexes flipped a turn, turns 18-25 | 6.5 | 1 – 2.4 | **2.39** (per match 1.25 – 3.63) |
+| lead changes a match | 3.2 | 1.4 | **0.60** (3 of 10 matches changed the lead) |
+| captures of neutral hexes | "single troops trading empty hexes" | — | **76.20** a match, 7.54 → 1.69 → 0.09 a turn |
 
-What the series does say about the shape of these matches: Greedy won all 8 by a mean margin of
-**33.9** on a 93-point board, with a bootstrap interval of **27.3 – 41.5** — a narrow band of
-one-sided results, which is the pattern of a match whose lead is settled early, but that is an
-inference from the margin and not a measurement of the lead. **No match ended in a knockout**,
-against the bot baseline's 14%–21% of knockouts (only ever against Random) and none between Greedy
-bots. And the late game is where the model stopped contesting anything: **22 of its 64 turns in
-18-25 were passes**, **1 scout in 64 turns** against 40 in the first 64, and tool calls per turn
-fell 3.05 → 1.61. A seat that passes a third of its late turns does not trade hexes in them, so
-the flips-per-turn figure for this pairing would be expected to read low for a reason that
-has nothing to do with +1: it would measure the model falling out of the game, not the bonus.
+The rerun settles the first row and half of the second. At **2.39 hexes flipped a turn over turns
+18-25** it sits at the top of the with-bonus band of 1 – 2.4 and well under the 6.5 the rules quote
+for bots without the bonus, so the late game of these ten matches is not the trading of empty
+hexes the rules describe. The band shape says the same: hex flips per turn fall **7.54 → 2.86 →
+2.39**, and captures of neutral hexes — what the without-bonus pattern was mostly made of — fall
+**7.54 → 1.69 → 0.09**, which is 7 neutral captures across the last 80 turns, because by turn 18
+the board is claimed. Run 1's same figures could not have said this: 22 of its 64 late turns
+were passes and it made 1 scout in that band, so its late game measured a seat the endpoint had
+stopped answering.
 
-**Left open:** the home bonus is not testable from this pairing. What would settle it is
-`no-dice evidence` over a series of at least 10 pairs — `MIN_TEST_PAIRS = 10` is also the point
-where the win-rate interval test starts — giving flips per turn over 18-25 and lead changes per
-match, quoted beside 6.5 / 1–2.4 and 3.2 / 1.4, and a pairing where the model is competitive
-enough to be flipping hexes on turn 22. Any change to +1 invalidates every match in this series:
-all 8 counted matches and the 2 voided ones would be replayed at the same seeds, since a seed
-reproduces its map exactly.
+The lead-change row reads **0.60 a match**, below even the with-bonus 1.4, and that is the row
+this pairing cannot read. Greedy won 8 of the 10, five of them by 18 points or more; the two
+matches the model won, it won by 2 and by 6; the mean margin is 18.5 with a bootstrap interval of
+10.5 – 26.8. A pairing with one seat ahead in four fifths of its matches has no lead to change —
+the greedy-vs-random counters, computed by the same code
+over ten bot matches, read **0.00** lead changes a match with 0 of 10 matches changing it, which is
+a property of that pairing and not of +1. So 0.60 is as consistent with the bonus suppressing lead
+changes as with a settled lead, and the rerun's own play does not separate the two: the model seat
+submitted on every turn of 9-17 and 18-25 (0 passes in those bands), so this is not run 1's
+confounder again.
+
+**Left open:** the rerun says these matches are quiet late on, which is what the bonus is for; it
+does not say +1 is the right size, because a pairing where one seat won 8 of 10 matches cannot
+measure lead changes. The figures that close it are flips per turn over turns 18-25 and lead
+changes per match from a 10-pair series of a pairing that changes the lead in at least half its
+matches: flips per turn climbing toward 6.5 with lead changes toward 3.2 would say +1
+is too weak, and a late game under 1.0 flip a turn with the lead settled by turn 8 would say it is
+too strong. 2.39 and 0.60 do neither. Changing +1 changes combat, so it invalidates both runs: all
+10 rerun matches would be played again at their seeds — their logs are tracked under
+`series/marvin-subagent-vs-greedy/`, so the comparison is a fresh series against that baseline —
+and run 1's 8 counted matches, which survive only as figures in the kept report, would stop being
+comparable with anything.
 
 ### Final-turn lunge
 
 The rules' worry: a fixed last turn rewards all-in attacks that have no follow-up cost, and
-scoring the average of the last few turns would remove that. The test is whether turn 25's swing
-and its neutral captures stand out from turn 24's.
+scoring the average of the last few turns would remove that. The test is whether turn 25's
+swing and its neutral captures stand out from turn 24's. The rerun has both counters.
 
-The two counters this needs — the largest single-turn swing with the turn it happened on, and
-captures of neutral hexes per turn band — have no surviving record. What the report holds is the
-behaviour around the last turn, and it points the other way: all 8 matches ran to turn 25 with no
-knockout, and the 18-25 band is the model's worst, with **22 of 64 turns passed** (10 timeouts,
-12 provider errors), **1 scout**, **8 simulations** against 24 in the middle band, and
-**12 of its 18 provider errors** in that band. The model did not lunge at the horizon; it stopped
-acting before it. Greedy played under the same fixed horizon, took 2.00 tool calls a turn in both
-late bands, and won every match by 33.9 without needing an all-in turn at the end of one.
+| what a lunge would look like | run 2, 10 matches |
+| --- | ---: |
+| largest single-turn swing, mean | **7.50** points |
+| largest single-turn swing, highest match | **10** — seed 313966722, seat B, on **turn 11** |
+| the turn each match's largest swing fell on | 4, 4, 9, 11, 13, 14, 16, 16, 19, 25 — a mean of turn 13.1, and one match in ten had it on turn 25 |
+| captures of neutral hexes per turn, by band | **7.54** (1-8) → **1.69** (9-17) → **0.09** (18-25) |
+| turn the lead last changed, over the 3 matches that changed it | 22.0 |
 
-**Left open:** whether turn 25 swings harder than turn 24 needs the largest single-turn swing and
-the neutral-capture counts per band from `no-dice evidence`, over a series long enough to have a
-turn-25 distribution at all (10 pairs is 20 matches, 20 turn-25s), and against a seat that still
-submits on turn 25 — 22 of this series' 64 late turns were passes, so its turn 25 is mostly a
-record of nothing happening. Scoring the average of the last few turns would change the result of
-every match in the series, so all 10 would be replayed at their seeds; the 8 counted ones would
-also need their margins recomputed, since the margin feeds the series statistics.
+The counters read the opposite of the worry. The biggest single turn in any of the ten matches is
+10 points and it fell on turn 11; the mean largest swing is 7.50 points and it falls on turn 13.1
+on average; only one match, seed 479473028 in seat B, had its largest swing on turn 25, and that
+was 9 points, not the series' largest. The horizon band is the quietest on the board: 191 hex flips
+in 80 turns (2.39 a turn) and **7** captures of neutral hexes in 80 turns, 0.09 a turn, against 603
+in turns 1-8. The last turn is not where the points move.
+
+And this time the counter is not the harness talking. The model seat passed **2 of its 250
+turns**, both `no_submission` and both in turns 1-8, and submitted on every one of its 90 turns in
+9-17 and 18-25 — run 1's same bands had 16 and 22 passes, which is why run 1 could only say the
+model "stopped acting before" the horizon. It kept working late: 3.04 tool calls and 0.69
+simulations a turn in 18-25 against 4.28 and 0.88 in 1-8. A seat that is still acting on turn 25
+and does not swing hardest there is a seat that found no lunge worth making. Greedy played the same
+fixed horizon at 2.00 tool calls a turn in both late bands and won 8 of 10 without one.
+
+**Decision:** recommended, not taken — keep the fixed 25-turn horizon and refuse the alternative of
+scoring the average of the last few turns, on these numbers; the box in
+`salient/docs/salient-rules-v0.md` stays unticked until Jim says so. The counter that would reopen
+it is named: turn 25 heading the largest-swing column in more than about a third of a 10-pair
+series' matches, or neutral captures in turns 18-25 above 1.0 a turn against 0.09 now. Averaging
+the last few turns changes the result of every match that runs to turn 25, so all 10 rerun matches
+would be played again at their seeds and their margins recomputed — the margin is the input to the
+series statistics — and run 1's kept mean margin of 33.9 would stop being comparable with
+anything.
 
 ### Centre Node ping-pong
 
 The rules' worry: in some bot matches the centre Node (F6) changed hands on alternate turns,
 because the bots attack with the exact minimum. The counter is a ping-pong flag — a Node changing
-owner on three or more turns with at least two of them consecutive — and no output of it survives
-this series.
+owner on three or more turns with at least two of them consecutive — and the rerun ran it over all
+ten matches.
 
-The conditions for it were present. Greedy's whole behaviour is taking Nodes, it won 8 of 8
-by 33.9, and it did it with **0 scouts in 200 turns**: it attacked Nodes on always-known terrain
-with no recon at all, which is exactly the minimum-force attack the rules describe. The model
-seat scouted 57 times, but **40 of those 57 scouts were in turns 1-8 and 1 was in 18-25**, so it
-too had stopped re-looking at F6 by the time the late game was being decided. No match ended
-in a knockout, so neither side ever converted an approach into the 93-to-0 prize.
+| | run 2, 10 matches |
+| --- | ---: |
+| matches with a Node ping-ponging | **1 of 10** — seed 313966722, hex **E5**, turns 5, 19, 20 (19 and 20 consecutive) |
+| Node hand changes a match | **7.60** (76 over the series) |
+| Node hand changes per turn, by band | **0.46** (1-8) → **0.32** (9-17) → **0.13** (18-25) |
+| the same counter over bot matches | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22; 6.40 hand changes a match |
 
-**Left open:** the ping-pong flag over at least 10 pairs, plus the Node hand changes per turn band
-that go with it, from `no-dice evidence` — the counter exists and needs no new code. If it
-fires, the fix is not a rules change but a look at whether attacking with the exact
-minimum is meant to be rewarded; that goes to the next epic as an engine question, with no task
-filed for it yet (the closing section marks it as owed one). Nothing here would force a replay
-unless the combat or garrison rule changes, in which case all 10 matches are replayed at their
-seeds.
+It fires. One match in ten had a Node change owner on three turns with two of them consecutive, and
+the bot-vs-bot counters kept beside these fire at the same 1-in-10 rate, so the pattern is not a
+model quirk. Two things the flag does not say: the hex was **E5**, not the centre Node F6 the rules
+name, and the consecutive pair was turns 19 and 20, not alternate turns — the counter catches a
+Node changing hands twice running, which is the churn the rules worry about, but this is not the F6
+seesaw the prototype showed. Otherwise Nodes change hands steadily and thin out with depth:
+7.60 changes a match, 0.46 → 0.32 → 0.13 a turn. Greedy is the one doing it — it took Nodes with 0
+scouts in 250 turns, on terrain that is always known, which is the minimum-force attack the rules
+describe — and no match ended in a knockout, so neither seat converted the churn into the 93-to-0
+prize.
+
+**Decision:** the watch the rules ask for is done, and what it found goes to the engine rather than
+to the rules. The question "whether attacking a Node with the exact minimum is meant to be
+rewarded" is filed as the proposed task *"The engine's minimum-force attack on a Node is measured,
+and the ping-pong it allows is decided"*, out of this evidence file; the Centre Node ping-pong box
+in `salient/docs/salient-rules-v0.md` stays open until Jim decides it. Nothing in the rerun forces
+a replay — the flag is a measurement, not a rule. If the answer turns out to be a change to combat
+or to the Node garrison, then every match of both runs is replayed at its seeds: the rerun's 10
+logs are tracked under `series/marvin-subagent-vs-greedy/` and become the old baseline against a
+new series, and run 1's 8 counted matches, which exist only as figures, stop being comparable.
 
 ### No last-seen memory
 
 The rules' question: the engine does not report what a player saw on earlier turns, so should
 `get_state` show last-seen values? The test the brief sets is re-scouts per seat per match — a
-seat that re-scouts the same hexes over and over is paying tool calls for memory the engine could
-hand it. Re-scout counts have no surviving record either.
+seat that re-scouts the same hexes over and over is paying action points for memory the engine
+could hand it. The rerun has the row.
 
-What the report shows instead is the opposite failure, and it is a strong signal. The model seat
-scouted **57 times in 200 turns — 0.28 a turn**, against the harness's 12-call cap — and the rate
-collapses with depth: **0.63 a turn in 1-8, 0.22 in 9-17, 0.02 in 18-25**, one scout across the
-whole last third of the series. Its total tool calls per turn fall the same way, 3.05 → 2.40 →
-1.61, while its context grows from a mean of 16,800 tokens to 59,398. So the seat did not spend
-its budget re-buying memory; it stopped asking about the board at all as its conversation got
-heavier. Greedy scouted 0 times and won 8 of 8, which says the information advantage in this
-pairing was not with the seat that had the tools.
+| player | matches | scouts | re-scouts | distinct hexes | re-scouts a match |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| bot:greedy | 10 | 0 | 0 | 0 | 0.00 |
+| marvin/subagent | 10 | 75 | 17 | 58 | **1.70** |
 
-**Left open:** re-scouts per seat per match (scouts of a hex label that seat already scouted) and
-the distinct-hex count, from `no-dice evidence` over at least 10 pairs, and a second model whose
-scout rate does not fall to 0.02 a turn — one model that gives up on recon cannot answer a
-question about whether recon is being paid for twice. Adding last-seen values to `get_state`
-changes what every model seat sees from turn 2 on, so all 8 counted matches and the 2 voided ones
-would be replayed at their seeds; Greedy's matches would not change, since it never scouted.
+That is a small tax. **17 of the model seat's 75 scouts were of a hex that seat had already
+scouted** — 22.7% of them, 1.70 a match out of the 150 action points a match carries — and it
+scouted **58 distinct hexes** over the ten matches, about 5.8 new hexes a match, so most of its
+recon was looking at ground it had not looked at. Greedy scouted 0 times and won 8 of the 10, which
+is the same fact run 1 showed: the information advantage in this pairing was not with the seat that
+had the tools.
+
+What the row cannot say is what a seat that keeps looking would pay. The seat's scout rate still
+collapses with depth — **0.64 → 0.23 → 0.04 a turn**, 3 scouts in the last 80 turns — and this time
+it is not the endpoint: it submitted on all 80 of those turns and ran 0.69 simulations a turn in
+the same band, against 0.88 in turns 1-8. Run 1 read the same collapse (0.63 → 0.22 → 0.02) with 22
+of its 64 late turns passed, so run 2 is the first time the shape of that curve is a choice the seat
+made. A seat that stops asking cannot show what re-asking costs.
+
+**Left open:** the figure that closes it is the re-scout share of a seat that keeps scouting late —
+re-scouts per match against scouts per match, from a seat whose scouts per turn in turns
+18-25 is at least its turns 9-17 rate (0.23 in the rerun, against 0.04 now). At 17 re-scouts in 75
+scouts and 1.70 a match the rerun reads about one scout in four being re-bought, which is not the
+pattern that would justify changing `get_state`; above half a seat's scouts being repeats, with
+distinct hexes per match below the 5.8 it manages now, would be. That needs a second model seat,
+not more matches of this one, whose late-game recon is too small to price. Adding
+last-seen values to `get_state` changes what the model seat sees from turn 2 on, so all 10 rerun
+matches would be played again at their seeds; Greedy's half of every pair would not change, since
+it never scouted.
 
 ### Compaction
 
@@ -203,43 +331,56 @@ changes what it remembers; the alternative is to let it fail when it runs out of
 match of a real series compacts at all is answerable now, and the answer is yes — often, and
 early.
 
-The series recorded **7 compaction turns**, all on the model seat (Greedy: 0, it runs no
+**Run 1** recorded **7 compaction turns**, all on the model seat (Greedy: 0, it runs no
 provider). They are spread over **all five seeds** — 572152369 turn 9, 708123 turn 13, 479473028
 turn 15, 313966722 turns 15 and 20, 1003578858 turns 17 and 21 — so **at least 5 of the 8 counted
 matches compacted at least once**. The report names seeds, not which match of a pair each turn
 came from, so the exact number of matches is not recoverable from it. By band: **0 in turns 1-8, 5
 in 9-17, 2 in 18-25**, the first on turn 9.
 
+**Run 2 repeats it, and earlier:** **6 compaction turns**, again all on the model seat
+(Greedy 0), over **4 of the 5 seeds** and **5 of the 10 matches** — 572152369 seat A turn 18,
+708123 seat A turn 21, 479473028 seat A turn 17, 479473028 seat B turns 2 and 24, 313966722 seat B
+turn 19 — by band **1 in turns 1-8, 1 in 9-17, 4 in 18-25**, the first on **turn 2**. The rerun's
+report names the match each turn came from, which run 1's could not.
+
 That expectation does not carry over to the series: seed 135 reached **94,659 of its
 131,072 window (72.2%), growing 3,541 tokens a turn, and never compacted**, because Pi's threshold
-is `contextWindow − 16,384 = 114,688`. The series' largest end-of-turn `context_tokens` is
+is `contextWindow − 16,384 = 114,688`. Run 1's largest end-of-turn `context_tokens` is
 **85,963**, below that threshold, yet it compacted seven times — because `context_tokens` is the
 conversation sampled at the end of a turn while Pi's threshold check runs mid-turn over the
 pending tool results ([series-notes §4](series-notes.md)). A series budget that assumes §7's
 "never compacts" has it backwards: the mid-turn check is what fires compaction, and it fired
-on every seed of this one.
+on every seed of run 1. Run 2's largest end-of-turn `context_tokens` is **114,038**, 650 tokens
+under that same threshold, and it compacted six times — the same mid-turn check, on a seat that
+ran far closer to its window than run 1's ever did.
 
 The half of the question the series cannot answer is whether compaction turns carry worse play.
-The depth split shows the errors rising late — provider_error passes **2 → 4 → 12**, turns passed
-**15 → 16 → 22** — while tool errors *fall* **9 → 5 → 2** and rejected submissions stay flat
+Run 1's depth split shows the errors rising late — provider_error passes **2 → 4 → 12**, turns
+passed **15 → 16 → 22** — while tool errors *fall* **9 → 5 → 2** and rejected submissions stay flat
 **7 → 4 → 6**. But the report splits by turn band, not by compaction turn, and the five
 compactions in 9-17 sit in a band with only 4 provider errors, so nothing here attributes an
 error to a compaction. That join needs the per-turn `compacted` flag against the per-turn error
-counts, which is one pass over the logs — logs that no longer exist.
+counts, which is one pass over the logs — run 1's no longer exist, and run 2's are tracked under
+`series/marvin-subagent-vs-greedy/`, so the join is now possible and still not made.
 
 **Decision:** recommended, not taken — compaction stays on and the rules' alternative, let it
 fail when it runs out of room, is refused on these numbers; Jim confirms it in brief §11. It is
-not a hypothetical failure: the seat already lost **18 turns to provider errors** and **34 more to
+not a hypothetical failure: run 1's seat lost **18 turns to provider errors** and **34 more to
 the 300 s cap**, so 53 of its 200 turns were already lost to the harness, and removing the one
 mechanism that keeps a 25-turn conversation inside its window would add to that count rather
-than protect anything. No engine or
+than protect anything. Run 2 is the cleaner test of the same claim and points the same way: that
+seat lost only **2 of its 250 turns** to the harness, and still compacted **6 times across 5 of
+its 10 matches**, the first on turn 2 — compaction is what keeps a 25-turn conversation inside a
+131,072-token window whether the endpoint is slow or fast. No engine or
 config change, nothing to replay. The place this is answered is the brief §11 open item **"Whether
 compaction stays on, after seeing how often it happens"** — how often it happens is now measured
-(7 turns, every seed, the first on turn 9), so the item can be answered. Until Jim answers it
+twice (run 1: 7 turns, every seed, first on turn 9; run 2: 6 turns, 4 seeds, first on turn 2), so
+the item can be answered. Until Jim answers it
 there, the box in `salient/docs/salient-rules-v0.md` stays unticked and this line is a
 recommendation with numbers under it, not a decision. What is still owed alongside it is the
-attribution — compaction turns against error counts on those turns — which the next series should
-record.
+attribution — compaction turns against error counts on those turns — which the rerun's tracked
+logs now make possible.
 
 ### Cost growth
 
@@ -255,7 +396,7 @@ slowest turns of the match**: turn 1 at 6.6% (164.6 s), turn 2 at 72.2% (99.5 s)
 (66.4 s), turn 4 at 30.5% (135.1 s), turn 17 at 66.9% (70.5 s); the other twenty sit at 98.6–99.6%
 cached and 14.4–52.0 s. Context grew 9,675 → 94,659, 3,541 tokens a turn.
 
-The series confirms the growth and corrects the budget. Tokens per turn on the model seat go
+Run 1 confirms the growth and corrects the budget. Tokens per turn on the model seat go
 **48,090 → 100,376 → 110,548** across the depth bands, a 2.3× rise, with context means
 16,800 → 43,076 → 59,398. But the match total is **2,172,486 tokens a match** (17,379,888 over 8),
 less than half §7's single match, and the cache share — the thing that makes re-sending the
@@ -266,31 +407,45 @@ evicted each other's KV cache on one llama.cpp server at `--concurrency 1`
 match played alone. At the series' own 65.5 minutes a pair, a 150-match series is about 82
 hours of Marvin, not §7's 48.
 
+Run 2 measures the growth again, higher and with the cache working. Tokens per turn go **114,628 →
+288,100 → 310,859** across the bands, a 2.7× rise, with context means 26,701 → 67,490 → 76,873 and
+a match total of **5,996,793 tokens** (59,967,929 over the 10) — 2.8× run 1's 2,172,486 a match.
+The cache share is **96.9%** (58,125,343 cache-read of 59,967,929), against run 1's 14.2%–80.4% a
+match and §7's 95.1%, so the eviction penalty run 1 measured is not in the rerun. Most of the
+higher total is more work per turn, not a worse cache: 3.57 tool calls a turn against run 1's 2.35,
+and 193 simulations against 52.
+
 **Decision:** closed as measured, no rules change and nothing to replay. What it changes is the
 budget, not the game: the brief §11 ceiling Jim set for this series, `--max-tokens 60000000`, was
-not the binding constraint — the series spent 17,379,888 of it (29%) — and wall time is, so the
-next series should be sized in hours against the measured 65.5 minutes a pair rather than in
-tokens against §7's per-match figure.
+not the binding constraint for run 1 — it spent 17,379,888 of it (29%) — and wall time
+was, so run 1 sized the next series in hours against its measured 65.5 minutes a pair. Run 2
+corrects that: it spent **59,967,929** of the same 60,000,000 ceiling, 99.9% of it, so a 10-pair
+series at its 5,996,793 a match needs a ceiling near 120,000,000 or it stops on tokens rather than
+on pairs. Its own wall time is not in its report; counted from the tracked logs, the ten
+matches' per-turn `wall_ms` sum to about 2 h 31 m and their `created` stamps span 2 h 25 m — about
+30 minutes a pair, less than half run 1's 65.5, which is what a clean run on an uncontented Marvin
+looks like.
 
 ### Own-orientation boards
 
 The rules' question: showing each player the board with its own Base on the same side would remove
 seat bias at the source, but the renderer would then have to translate hex labels in intent text.
 
-This is out of scope for v0 — brief §3 lists it among the things v0 does not build — and the
-series gives no reason to pull it in. The mechanism v0 does use, playing every pair twice, worked
-at this length: **seat A 0–4 and seat B 0–4, with identical 95% Wilson intervals of 0.0% –
+This is out of scope for v0 — brief §3 lists it among the things v0 does not build — and neither
+run gives a reason to pull it in. The mechanism v0 does use, playing every pair twice, worked at
+this length. **Run 1: seat A 0–4 and seat B 0–4, with identical 95% Wilson intervals of 0.0% –
 49.0%**, and the report's own note that "A gap between them is the board, not the model, and
-it is why every pair is played twice" describes a gap of exactly zero. That is a weak confirmation,
-not a strong one — four matches a seat cannot detect a modest seat effect — but it is the honest
-reading of the only seat-effect figures that exist.
+it is why every pair is played twice" describes a gap of exactly zero. **Run 2 repeats it: seat A
+1–4 and seat B 1–4, identical intervals of 3.6% – 62.4%.** Two runs, two nil gaps — but five
+matches a seat each is a weak confirmation, not a strong one, it cannot detect a modest seat
+effect, and the two runs are not pooled across `749d236`.
 
 What it would cost, if it were ever done: a per-seat transform of the board in `get_state` and the
 prompt, hex-label translation in the renderer's intent and prediction text (both capped at 280
 characters, and the model quotes hex labels in them), and a re-derivation of the
 symmetry test, which currently hands each bot the board in its own orientation and draws on
 300 maps. And every model match ever played would have to be replayed, because seat B saw the
-board the other way round: all 8 counted matches and the 2 voided ones.
+board the other way round: run 1's 8 counted matches and its 2 voided ones, and run 2's 10.
 
 **Decision:** stays out of scope for v0, exactly as brief §3 has it. No engine change, no replay,
 nothing to propose to the next epic. Reopen it when a pairing is close enough that a seat effect
@@ -302,9 +457,9 @@ which costs nothing, before changing what every seat sees, which costs the whole
 The rules' question: if the Greedy bot beats a strong model often, simultaneous turns are too much
 of a guessing game and the rules need more depth.
 
-The headline fires the trigger: Greedy won **8 of 8**, the model's win rate is **0.0% with a 95%
-Wilson interval of 0.0% – 32.4%**, the mean margin is **33.9 points (27.3 – 41.5)** on a 93-point
-board, and the seat split is nil, so it is not the board doing it.
+**Run 1**'s headline fires the trigger on its face: Greedy won **8 of 8**, the model's win rate is
+**0.0% with a 95% Wilson interval of 0.0% – 32.4%**, the mean margin is **33.9 points (27.3 –
+41.5)** on a 93-point board, and the seat split is nil, so it is not the board doing it.
 
 The confounder is in the same report, and it is large. Of the model's 200 turns, **53 ended as
 passes** — 34 at the 300 s turn cap, 18 provider errors, 1 no submission — and **17 submissions
@@ -314,76 +469,99 @@ not act on a quarter of its turns is not losing to a guessing game; it is losing
 endpoint and a 300-second clock, and the two voided matches are a further two of ten lost to a
 tool-name slip rather than to any decision on the board. The interval itself says the sample is
 thin: 0.0% – 32.4% is the width an 8-match series gives, and the adaptive stop never ran because
-`MIN_TEST_PAIRS` is 10 pairs and this series had 5.
+`MIN_TEST_PAIRS` is 10 pairs and run 1 had 5.
 
-**Decision:** no change to the simultaneous-turn rules on this evidence, and nothing to replay.
-The guessing check is not answered — it is blocked — and the thing to fix first is the harness,
-not the rules: turn latency and the tool-name slip are what put 53 turns and 2 matches out of
-play.
-
-**One of those two is already fixed, three hours after this series finished.** Commit `749d236`
+**One of those two was already fixed, three hours after run 1 finished.** Commit `749d236`
 changed `packages/harness/src/pi-player.ts` so that a call to one of the seven by its bare name —
 `submit_orders` for `mcp__salient__submit_orders`, which is what voided seeds 479473028 and
 313966722 — is logged as a refused call and the turn carries on, instead of voiding the match for
 `tool_surface`. The harness now voids on no tool name at all: Pi's lock-down refuses any tool the
 seat was not given, and the call is logged as refused. A re-run should not lose matches this way,
-so of the two confounders only turn latency is still owed.
+and the rerun did not: of run 1's two confounders, only turn latency was still owed, and run 2
+shows that one paid too.
 
-That fix has a cost for the recommendation below it: **a re-run is played under a different
-harness rule from this series.** The 10 matches above were played by a harness that voided a
-bare-name call; the 20 matches a 10-pair re-run plays will be played under one that does not, so
-they are not matches played under identical conditions — the same comparability problem
-[series-notes §5](series-notes.md) cites for changing nothing mid-series. It bites the report's
-own rows: both missing matches are `tool_surface` voids the new harness would not have made for
-that reason, so the two reports' missing-match rows are not the same measurement, and a new
-series' win-rate interval will be computed over 20 matches none of which is one of these 8. Read
-the seat split and the missing-match rows of this report as belonging to this series alone.
+That fix has a cost for the reading below it: **a re-run is played under a different
+harness rule from run 1.** Run 1's 10 matches were played by a harness that voided a
+bare-name call; the rerun's were played by one that does not, so they are not matches played under
+identical conditions — the same comparability problem
+[series-notes §5](series-notes.md) cites for changing nothing mid-series. It bites the reports'
+own rows: run 1's two missing matches are `tool_surface` voids the new harness would not have made
+for that reason, so the two reports' missing-match rows are not the same measurement, and the
+rerun's interval is computed over its own 10 counted matches, none of which is one of run 1's 8.
+Read the seat split and the missing-match rows of each report as belonging to that run alone.
 
-Re-run the check on a series of at least 10 pairs in which passes are a small share of turns and
-both matches of every pair produce a log; if Greedy still wins above 50% with the interval
-excluding 50%, the depth change goes to the next epic as an engine question, and every match in
-the series would be replayed at its seeds.
+**The rerun is the second sample, and it clears the confounder.** Greedy won **8 of 10**; the
+model's win rate is **20.0% with a 95% Wilson interval of 5.7% – 51.0%**, the mean margin is
+**18.5 (10.5 – 26.8)**, the seat split is nil again (1–4 in each seat), and there are no
+knockouts. Of the model seat's 250 turns, **2 ended as passes** — both `no_submission`, both in
+turns 1-8 — with **0 timeouts, 0 provider errors and 0 voided matches**, which is why the rerun
+counted 10 of 10. What is left on that seat is 25 rejected submissions and 43 tool errors, 31 of
+them in turns 1-8, and 2 wasted orders: it costs turns, not matches. The seat also played better — its
+two wins came by margins of 2 and 6, and the mean margin against it fell from 33.9 to 18.5 — so the
+pairing is closer than run 1's, but not close.
+
+**Decision:** no change to the simultaneous-turn rules on this evidence, and nothing to replay.
+The trigger is now read on a sample the harness has not wrecked, and it does not fire: the check is
+Greedy above 50% **with the interval excluding 50%**, and the rerun's interval on the model seat
+runs to **51.0%** — the mirror interval on Greedy's 8 wins in 10 is 49.0% – 94.3%, which includes
+50%. Eight wins in ten is as much as a 5-pair series can say, and the interval test never ran
+because `MIN_TEST_PAIRS` is 10 pairs and the rerun had 5. The figure that files the depth question
+is a 10-pair series of this pairing in which the model seat's upper Wilson bound falls below 50%
+— the rerun misses it by 1.0 point on 10 matches — and if that happens, the depth change goes to
+the next epic as an engine question and every match in the series is replayed at its seeds.
 
 ---
 
-## What would close the four open sections
+## What is still outstanding after the rerun
 
-Nothing of the first series is left to resume — [series-notes §6](series-notes.md) records the
-deletion — so this is a re-run, plus one change to what the repository keeps:
+The rerun put the five counters in the repository, so what is open is no longer "the measurement
+does not exist". Three things are.
 
-1. `no-dice series --game salient --a marvin/subagent --b bot:greedy --name
-   marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 60000000 --concurrency 1` — **a new
-   series, not a continuation of the first.** With no `series.json` on disk, `planSeries` falls
-   back to `DEFAULT_SEED_BASE` and draws a fresh list, so the command plays all ten pairs
-   into a new `series/marvin-subagent-vs-greedy/`, and the `series.json` and `report.md` it writes
-   describe that series alone. The 8 matches already played are not in it: they exist only as the
-   numbers in the kept report. The maps are the same ones — the draw is a stream from one base, so
-   a fresh draw from base `0` starts with the five seeds §1 of the series notes lists, which is
-   what a fixed `seed_base` is for — but the record is new ([series-notes §6](series-notes.md)).
+1. **A longer series.** The rerun is 5 pairs / 10 matches and stopped on `max_pairs`, so the
+   interval test never ran: `MIN_TEST_PAIRS` is 10 pairs (`packages/runner/src/series-stop.ts`).
+   Its `series.json` and its ten logs are tracked under `series/marvin-subagent-vs-greedy/`, so the
+   same command at `--max-pairs 10` **resumes that series** — `planSeries` reads the five played
+   pairs back from their logs and skips them, and draws five more from the same `seed_base` — and
+   the interval test then runs over 20 matches:
 
-   **Read the two reports as two series, not one sample.** Nothing is stitched together: the new
-   run replays all ten pairs. But those 20 matches are played after `749d236` turned a
-   bare-name call from a `tool_surface` void into a refused call, and the 10 in the standing
-   report were played before it, so the figures do not carry across that line — the old report's
-   missing-match row counts voids the new harness would not make, and its 0.0% – 32.4%
-   interval belongs to the old series' 8 counted matches alone. That is the judgement
-   [series-notes §5](series-notes.md) already made about not changing the prompt mid-series, and
-   it is Jim's to make about the name: reuse
-   `marvin-subagent-vs-greedy` and keep two reports under one name, or pick a fresh name so the
-   directory says which harness played it. Either way the 17,379,888 tokens and 5 h 27 m already
-   spent stand as history, not as part of the new sample.
-2. `no-dice evidence --series series/marvin-subagent-vs-greedy` afterwards, and the resulting
-   `evidence.md` kept in `reports/series/` beside the report the way `report.md` is kept. Without
-   step 2 the counters are computed into a directory that is deleted with the workspace, which is
-   how this review came to have four sections with no counters in them.
+   ```bash
+   no-dice series --game salient --a marvin/subagent --b bot:greedy \
+     --name marvin-subagent-vs-greedy --max-pairs 10 --max-tokens 120000000 --concurrency 1
+   no-dice evidence --series series/marvin-subagent-vs-greedy
+   ```
 
-At 10 pairs — 20 matches, about 11 h of Marvin at the 65.5 minutes a pair the Cost growth section
-measured — the interval test runs, the win-rate interval narrows, and each of the counters above
-has 20 matches behind it instead of none.
+   with both generated files copied into `reports/series/` again, which is what
+   `scripts/kept-series-evidence.test.mjs` now checks against the tracked logs. `--max-tokens` has
+   to move: the rerun spent **59,967,929** of the 60,000,000 ceiling both runs ran under, 99.9% of
+   it, so 20 matches at its 5,996,793 a match stops on tokens instead of pairs. The five pairs it
+   still has to play are about 5.5 more hours of Marvin at run 1's measured 65.5 minutes a pair;
+   counted from the rerun's own logs it ran nearer 30 minutes a pair, so budget the afternoon
+   rather than the day.
 
-Two engine questions are deferred in prose above and have **no task filed behind them**: whether
-attacking a Node with the exact minimum is meant to be rewarded (Centre Node ping-pong), and whether
-the simultaneous-turn rules need more depth (Guessing check). Neither can carry acceptance criteria
-until the counters exist, so filing them now would file a task with nothing to test. They should be
-filed out of the next series' `evidence.md`, and this paragraph is the marker that they are still
-owed a task.
+2. **A second and more competitive pairing.** Every rerun counter came from one pairing, and in it
+   Greedy won 8 of the 10 matches, only 3 of the 10 matches changed the lead, and the bot-vs-bot
+   counters kept beside them read 0.00 lead changes a match. That is enough to read quietness and
+   not enough to read a rule. The Home bonus section's lead-change row and the Guessing check's
+   depth trigger both need a pairing that changes the lead in about half its matches — a second
+   model seat, or Greedy against a scripted bot that plays for the Node — and the No last-seen
+   memory section needs a seat whose scout rate does not fall to 0.04 a turn in turns 18-25.
+
+3. **Whether the rerun's own passes and provider errors still swamp the comparison: they do not.**
+   Run 1's late-turn figures could not be read for play, because 53 of its 200 model turns were
+   passes — 34 at the 300 s cap, 18 provider errors, 1 no submission — and 2 matches were voided.
+   The rerun's seat lost **2 of its 250 turns**, both `no_submission` and both in turns 1-8, with
+   **0 timeouts and 0 provider errors**, and 10 of 10 matches counted. What still sits on that seat
+   is 25 rejected submissions and 43 tool errors, 31 of them in turns 1-8, and 2 wasted orders: it
+   costs turns, not matches, and it is heaviest in the opening. So the rerun's counters are read as
+   play throughout this file, with one exception — the 31 early tool errors are why the turns 1-8
+   bands are quoted for shape and not relied on for size.
+
+Two engine questions were deferred in prose above with no task filed behind them, and the rerun
+settles one of them. **The ping-pong flag fired** — 1 of 10 counted matches, seed 313966722, hex
+E5, turns 5, 19, 20 — so the question whether attacking a Node with the exact minimum is meant to
+be rewarded is now filed, as the proposed task *"The engine's minimum-force attack on a Node is
+measured, and the ping-pong it allows is decided"*, and the Centre Node ping-pong section points at
+it. **The depth question is still not filed, and this paragraph is the marker that it is owed one:**
+its trigger is Greedy above 50% with the interval excluding 50%, the rerun's interval on the model
+seat runs to 51.0%, so it did not fire. A 10-pair series that puts that upper bound under 50%
+files it.
