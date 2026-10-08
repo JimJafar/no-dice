@@ -8,6 +8,8 @@ matches/
 # series are measured against. The seat homes beside the transcripts are not.
 !/series/deepseek-flash-vs-greedy/
 !/series/deepseek-flash-vs-greedy/matches/
+!/series/marvin-subagent-vs-greedy/
+!/series/marvin-subagent-vs-greedy/matches/
 /series/*/sessions/*/pi-home-*/
 # A measurement run's log and its seat homes; the report beside them is kept.
 reports/*.json
