@@ -96,6 +96,21 @@ export function pickLogSource(search: string, files: readonly LogFile[]): LogSou
   return { kind: "none" };
 }
 
+/**
+ * Whether the page was opened with a log of its own to read.
+ *
+ * This is what decides what the loading screen offers. A viewer the console
+ * opened with `?log=` has been handed the match it is meant to show, and a file
+ * picker and a "choose a match log" hint asked of that person are an invitation
+ * to do something they never meant to do — including when the log then fails to
+ * read, which is the moment they most need the line about *that* log instead.
+ * A viewer opened without it is the one way a log from somewhere else gets in, so
+ * it keeps the picker.
+ */
+export function namesLogUrl(search: string): boolean {
+  return pickLogSource(search, []).kind === "url";
+}
+
 /** The text a source holds, read the only way that source can be read. */
 export async function readLogSource(source: LogSource): Promise<string> {
   switch (source.kind) {

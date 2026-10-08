@@ -66,6 +66,18 @@ export const LOG_PREFIX = "/logs";
 /** The prefix the built replay viewer is served under. */
 export const VIEWER_PREFIX = "/viewer";
 
+/**
+ * The view the match listing is drawn in, spelled as the console's own URL spells
+ * a view — the hash its page routes on. A listing's own link goes back there; the
+ * page restates it for whichever of its views is drawing the row.
+ *
+ * The console's page keeps the list of views in its own `views.ts`, which this
+ * package cannot import — the page reads these listings as JSON, not as modules —
+ * so the one view a listing is drawn in is written out here, and the page's tests
+ * check the two spellings meet in the `back=` a link carries.
+ */
+const MATCHES_VIEW = "#matches";
+
 const isMissing = (error: unknown): boolean =>
   typeof error === "object" && error !== null && (error as { code?: string }).code === "ENOENT";
 
@@ -294,7 +306,8 @@ export interface MatchRow {
   path: string;
   /** The URL this console serves it at, under `/logs/`. */
   url: string;
-  /** The viewer opened on that log — the `?log=` path `load.ts` already fetches. */
+  /** The viewer opened on that log — the `?log=` path `load.ts` already fetches,
+   * with the view this listing is drawn in beside it, for the viewer's way back. */
   viewerUrl: string;
   /** The series it belongs to, or `null` for a match played on its own. */
   series: string | null;
@@ -310,13 +323,32 @@ export interface MatchListing {
 export const logUrlOf = (pathUnderRoot: string): string =>
   `${LOG_PREFIX}/${pathUnderRoot.split("/").map(encodeURIComponent).join("/")}`;
 
-/** The viewer's own URL for a log this console serves. */
-export const viewerUrlOf = (logUrl: string): string =>
-  `${VIEWER_PREFIX}/?log=${logUrl}`;
+/** A view as a `back=` value: the `#` is the one character that has to be escaped. */
+const backValueOf = (view: string): string => view.replaceAll("#", "%23");
+
+/**
+ * The viewer's own URL for a log this console serves, opened from the view whose
+ * link it is.
+ *
+ * `back` is that view, spelled as the console spells its own views (`#matches`)
+ * and escaped on the way, so the viewer can offer a way back to the row the replay
+ * was clicked in rather than to the top of a page the operator had already read.
+ * The escape is only ever of the `#`: a bare one in a query is read as the start of
+ * a fragment, and the rest of the value stays plain enough to read in an address
+ * bar. `?log=` keeps exactly the form the viewer's `load.ts` fetches.
+ */
+export const viewerUrlOf = (logUrl: string, view: string): string =>
+  `${VIEWER_PREFIX}/?log=${logUrl}&back=${backValueOf(view)}`;
 
 const matchRowOf = (path: string, underRoot: string, series: string | null): MatchRow => {
   const url = logUrlOf(underRoot);
-  return { name: path.slice(path.lastIndexOf("/") + 1), path, url, viewerUrl: viewerUrlOf(url), series };
+  return {
+    name: path.slice(path.lastIndexOf("/") + 1),
+    path,
+    url,
+    viewerUrl: viewerUrlOf(url, MATCHES_VIEW),
+    series,
+  };
 };
 
 /**

@@ -50,7 +50,9 @@
  */
 import { getJson } from "./api.ts";
 import { clear } from "./render-frame.ts";
+import { viewHash } from "./views.ts";
 import type { FetchJson } from "./api.ts";
+import type { ViewName } from "./views.ts";
 
 /** One series, with the figures the CLI's own report gives it. */
 export interface SeriesRow {
@@ -600,19 +602,47 @@ const seriesItem = (row: SeriesRow, onResume: (dir: string) => void): HTMLLIElem
   return li;
 };
 
+/** The parameter the viewer reads for the view a replay link was clicked in. */
+const BACK_PARAM = "back=";
+
+/**
+ * The viewer's URL for a log, opened from the view that is drawing the link.
+ *
+ * `/api/matches` answers with one `viewerUrl` per log, and the page draws that
+ * same log from two of its views — the list here, and a leaderboard row's matches
+ * over in `render-leaderboard.ts`. The log's own address is left exactly as the
+ * console wrote it, because `?log=` is what the viewer's `load.ts` fetches and it
+ * is the same URL whichever row the link sat in; only the `back=` the viewer uses
+ * for its way home is restated for the view doing the drawing.
+ *
+ * The escape is the console's own, and small on purpose: a view is spelled with
+ * its `#`, the `#` is the one character a query cannot carry plain (a bare one
+ * reads as the start of a fragment), and everything else stays legible in an
+ * address bar.
+ */
+export const viewerUrlFor = (viewerUrl: string, view: ViewName): string => {
+  const at = viewerUrl.indexOf(`&${BACK_PARAM}`);
+  const base = at === -1 ? viewerUrl : viewerUrl.slice(0, at);
+  return `${base}&${BACK_PARAM}${viewHash(view).replaceAll("#", "%23")}`;
+};
+
 /**
  * One finished match: what it was, linked at the viewer's own URL for it.
  *
  * The link's words are the row's, not the log's: the URL it
  * points at is the console's and is set once and untouched afterwards. When a
  * header arrives the words over it change and the address does not.
+ *
+ * The one part of that address this page does restate is the view it names as the
+ * way back: this section is the Matches view, and a replay opened from a row here
+ * goes back to a row here.
  */
 const matchItem = (row: MatchRow, headers?: MatchHeaderReader): HTMLLIElement => {
   const li = document.createElement("li");
   li.className = "match-row";
   const link = document.createElement("a");
   link.className = "match-viewer";
-  link.href = row.viewerUrl;
+  link.href = viewerUrlFor(row.viewerUrl, "matches");
   link.textContent = matchLabel(row);
   fillMatchLabel(link, row, headers);
   li.append(

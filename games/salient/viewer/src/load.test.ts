@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { parseLog, pickLogSource, readLogSource } from "./load.ts";
+import { namesLogUrl, parseLog, pickLogSource, readLogSource } from "./load.ts";
 import type { LogFile, LogSource } from "./load.ts";
 
 /** The smallest log `matchLogSchema` accepts: two hexes, no turns played. */
@@ -90,6 +90,19 @@ describe("pickLogSource", () => {
     // file the viewer was just given.
     const picked = new File([LOG_TEXT], "match.json", { type: "application/json" });
     expect(fileOf(pickLogSource("?log=/fixtures/golden-01-time-win.json", [picked]))).toBe(picked);
+  });
+});
+
+describe("namesLogUrl", () => {
+  it("says the page was handed a log only when ?log= names one", () => {
+    expect(namesLogUrl("?log=/logs/alpha/matches/135.json")).toBe(true);
+    expect(namesLogUrl("log=match.json")).toBe(true);
+    // Nothing to offer a file picker for, and nothing to fetch: the page was
+    // opened on its own, or opened with a sidecar and no match.
+    expect(namesLogUrl("")).toBe(false);
+    expect(namesLogUrl("?log=")).toBe(false);
+    expect(namesLogUrl("?series=/logs/alpha/showcase.json")).toBe(false);
+    expect(namesLogUrl("?log=/logs/a.json&back=%23matches")).toBe(true);
   });
 });
 

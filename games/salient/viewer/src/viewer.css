@@ -24,6 +24,12 @@ body{margin:0;background:#12161c;color:#eef1f5;font-family:'IBM Plex Sans',syste
 .status.bad{color:#e06f35}
 .pick{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#232a33;border-radius:6px;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em}
 .hint{font-size:15px;line-height:1.3;color:#aab3bf}
+/* The way back to the console that opened this viewer, mounted only when the query
+   names the view the replay link was clicked in — a viewer opened on its own shows
+   no link. In the loading screen it is one more line of that screen's own type;
+   in the header row it costs no height, since the row's 104 px floor is taller. */
+.back{font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;color:#aab3bf;text-decoration:underline}
+.back:hover{color:#eef1f5}
 code{font-family:ui-monospace,monospace;font-size:14px;color:#c9d1dc}
 
 /* The page's own controls, in one row under the board: the view toggle and the

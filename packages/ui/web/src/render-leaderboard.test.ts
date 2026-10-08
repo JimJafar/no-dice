@@ -95,7 +95,7 @@ const MATCH: MatchRow = {
   name: "1234-greedy-subagent.json",
   path: "/repo/series/alpha/matches/1234-greedy-subagent.json",
   url: "/logs/alpha/matches/1234-greedy-subagent.json",
-  viewerUrl: "/viewer/?log=/logs/alpha/matches/1234-greedy-subagent.json",
+  viewerUrl: "/viewer/?log=/logs/alpha/matches/1234-greedy-subagent.json&back=%23matches",
   series: "alpha",
   header: {
     seats: ["bot:greedy", "marvin/subagent"] as [string, string],
@@ -109,7 +109,7 @@ const BETA_MATCH: MatchRow = {
   name: "77-greedy-random.json",
   path: "/repo/series/beta/matches/77-greedy-random.json",
   url: "/logs/beta/matches/77-greedy-random.json",
-  viewerUrl: "/viewer/?log=/logs/beta/matches/77-greedy-random.json",
+  viewerUrl: "/viewer/?log=/logs/beta/matches/77-greedy-random.json&back=%23matches",
   series: "beta",
   header: {
     seats: ["bot:greedy", "bot:random"] as [string, string],
@@ -122,7 +122,7 @@ const ALONE: MatchRow = {
   name: "9-solo.json",
   path: "/repo/matches/9-solo.json",
   url: "/logs/9-solo.json",
-  viewerUrl: "/viewer/?log=/logs/9-solo.json",
+  viewerUrl: "/viewer/?log=/logs/9-solo.json&back=%23matches",
   series: null,
   header: {
     seats: ["bot:greedy", "bot:random"] as [string, string],
@@ -130,6 +130,14 @@ const ALONE: MatchRow = {
     playedOn: "2026-10-09T12:00:00.000Z",
   },
 };
+
+/**
+ * The link this view draws for a log: the same log the listing named, and this
+ * table as the view the viewer goes back to — not the Matches view the listing's
+ * own `viewerUrl` names.
+ */
+const MATCH_LINK = "/viewer/?log=/logs/alpha/matches/1234-greedy-subagent.json&back=%23leaderboard";
+const BETA_LINK = "/viewer/?log=/logs/beta/matches/77-greedy-random.json&back=%23leaderboard";
 
 /** Both tables, as the page holds them. */
 const BOARD: Leaderboard = {
@@ -228,7 +236,7 @@ describe("renderLeaderboard", () => {
     await new Promise((later) => void setTimeout(later, 0));
 
     expect(link.textContent).toBe("bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026");
-    expect(link.getAttribute("href")).toBe(MATCH.viewerUrl);
+    expect(link.getAttribute("href")).toBe(MATCH_LINK);
   });
 
   it("links each series to its own matches in the replay viewer, and no one else's", () => {
@@ -244,9 +252,11 @@ describe("renderLeaderboard", () => {
     const rows = [...el.querySelectorAll<HTMLTableRowElement>("table.leaderboard-series tbody tr")];
     // The `viewerUrl` is what opens a log in the viewer, and which series a log
     // belongs to comes from the `/api/matches` rows the page already holds. The
-    // words over the link say what the match was, not what its log is called.
-    expect(linksIn(rows[0]!)).toEqual([`${MATCH.viewerUrl} bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026`]);
-    expect(linksIn(rows[1]!)).toEqual([`${BETA_MATCH.viewerUrl} bot:greedy vs bot:random — seed 77, played 8 Oct 2026`]);
+    // words over the link say what the match was, not what its log is called, and
+    // the link goes back to this table rather than to the Matches view the listing
+    // names for itself.
+    expect(linksIn(rows[0]!)).toEqual([`${MATCH_LINK} bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026`]);
+    expect(linksIn(rows[1]!)).toEqual([`${BETA_LINK} bot:greedy vs bot:random — seed 77, played 8 Oct 2026`]);
 
     // A match played on its own belongs to no series row, and a series with no
     // log listed says so rather than showing a blank cell.

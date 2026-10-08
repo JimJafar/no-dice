@@ -31,6 +31,7 @@ import {
   parseSeriesListing,
   readMatchHeader,
   renderResults,
+  viewerUrlFor,
 } from "./results.ts";
 import type { Results } from "./results.ts";
 
@@ -63,7 +64,7 @@ const MATCH = {
   name: "1234-greedy-random.json",
   path: "/repo/series/alpha/matches/1234-greedy-random.json",
   url: "/logs/alpha/matches/1234-greedy-random.json",
-  viewerUrl: "/viewer/?log=/logs/alpha/matches/1234-greedy-random.json",
+  viewerUrl: "/viewer/?log=/logs/alpha/matches/1234-greedy-random.json&back=%23matches",
   series: "alpha",
 };
 
@@ -186,6 +187,21 @@ describe("parseMatchListing", () => {
       "matches[0].viewerUrl is not a string",
     );
     expect(() => parseMatchListing({ matchesRoot: "/repo/matches" })).toThrow("matches is not a list");
+  });
+});
+
+describe("viewerUrlFor", () => {
+  it("restates only the way back, and leaves the log the viewer opens on alone", () => {
+    // `?log=` is what the viewer's load.ts fetches, and it is the same URL
+    // whichever row the link was clicked in.
+    expect(viewerUrlFor("/viewer/?log=/logs/a.json&back=%23matches", "leaderboard")).toBe(
+      "/viewer/?log=/logs/a.json&back=%23leaderboard",
+    );
+    // A URL that names no view yet still gets one, and the `#` is the only
+    // character that needs escaping.
+    expect(viewerUrlFor("/viewer/?log=/logs/a.json", "matches")).toBe(
+      "/viewer/?log=/logs/a.json&back=%23matches",
+    );
   });
 });
 
@@ -482,6 +498,20 @@ describe("renderResults", () => {
       "bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — from alpha",
       "bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — a match played on its own",
     ]);
+  });
+
+  it("names the Matches view as the way back, whatever the listing's link carried", () => {
+    const el = section();
+    // A row whose URL was built for another view still goes back to Matches from
+    // here, and still opens the same log.
+    renderResults(
+      el,
+      { ...RESULTS, matches: [{ ...LABELED, viewerUrl: "/viewer/?log=/logs/9-solo.json&back=%23leaderboard" }] },
+      () => undefined,
+    );
+
+    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
+    expect(link.getAttribute("href")).toBe("/viewer/?log=/logs/9-solo.json&back=%23matches");
   });
 
   it("fills a row's words in when its log's header arrives, and leaves its link alone", async () => {

@@ -44,7 +44,7 @@
  * repeated as it was written.
  */
 import { clear } from "./render-frame.ts";
-import { fillMatchLabel, matchLabel } from "./results.ts";
+import { fillMatchLabel, matchLabel, viewerUrlFor } from "./results.ts";
 import type { Interval, Leaderboard, ModelRow, ResultCell, SeriesRow } from "./leaderboard.ts";
 import type { MatchHeaderReader, MatchRow } from "./results.ts";
 
@@ -203,8 +203,9 @@ const seatCell = (seat: "A" | "B", result: ResultCell): string =>
  * be a series that never played.
  *
  * The link says what the match was — the two seats, the seed, the day — and not
- * what its log is called. The URL it points at is the console's and is untouched:
- * the rule is about the words a reader sees, not the address a browser follows.
+ * what its log is called. The log's own address is the console's and is untouched;
+ * the one part restated here is the view the viewer goes back to, which for a link
+ * clicked in this table is this table.
  *
  * The fuller words arrive after the table is on the page, from the same one
  * read per log the Matches view asks for.
@@ -217,7 +218,7 @@ const matchLinks = (row: SeriesRow, matches: readonly MatchRow[], headers?: Matc
   ul.className = "series-matches";
   for (const each of ofSeries) {
     const li = document.createElement("li");
-    const anchor = link("match-viewer", each.viewerUrl, matchLabel(each));
+    const anchor = link("match-viewer", viewerUrlFor(each.viewerUrl, "leaderboard"), matchLabel(each));
     fillMatchLabel(anchor, each, headers);
     li.append(anchor);
     ul.append(li);

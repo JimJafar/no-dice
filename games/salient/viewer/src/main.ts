@@ -10,10 +10,21 @@
  * the lead chart through `render-chart.ts`, and holds the view mode the toggle
  * asks for: the spectator frame by default, a seat's fog on request. The frame
  * index — step back, step forward, scrub, autoplay — is `turns.ts`, and this file
- * is the only place that owns a clock: it steps that index from a timer, and the
- * index never looks at one.
+ * is the only place that owns a clock: it steps that index from a timer, and
+ * the index never looks at one.
+ *
+ * Two of those ways of handing the page a log are not always on offer. A viewer
+ * the console opened with `?log=` was handed the match it is meant to show, so
+ * the file picker and the "choose a match log" hint are put away — the line under
+ * the title says which log it is reading, and when that log cannot be read the
+ * line says what is wrong with *it* rather than inviting a file pick. The same
+ * query names the console view the link was clicked in, and `back.ts` turns that
+ * into the "Back to the console" link the loading screen and the header each hold
+ * — only when there is a view to go back to, which a viewer opened on its own
+ * never has.
  */
 import {
+  namesLogUrl,
   parseLog,
   parseShowcase,
   pickLogSource,
@@ -41,6 +52,7 @@ import { frameHandlers, mountTurnControls } from "./render-turns.ts";
 import type { TurnControls } from "./render-turns.ts";
 import { DEFAULT_MODE, mountViewToggle } from "./view-mode.ts";
 import type { BoardMode } from "./view-mode.ts";
+import { backLinkOf } from "./back.ts";
 import type { MatchLog } from "@no-dice/log";
 
 /** The frame's own elements, which `index.html` owns. */
@@ -54,6 +66,9 @@ const frame = element<HTMLDivElement>("#frame");
 const loadBox = element<HTMLDivElement>("#load");
 const status = element<HTMLParagraphElement>("#status");
 const fileInput = element<HTMLInputElement>("#log-file");
+/** The picker and the sentence under it, which a console-opened viewer is not shown. */
+const filePicker = element<HTMLLabelElement>("#log-pick");
+const dropHint = element<HTMLDivElement>("#log-hint");
 const header = element<HTMLDivElement>("#header");
 const headlineRow = element<HTMLDivElement>("#headline");
 const stage = element<HTMLDivElement>("#stage");
@@ -101,6 +116,19 @@ let timer: number | null = null;
 function say(message: string, bad = false): void {
   status.textContent = message;
   status.classList.toggle("bad", bad);
+}
+
+/**
+ * Put the way back to the console in `container`, when the query names a view to
+ * go back to. A viewer opened on its own names none and gets nothing new.
+ *
+ * The header is replaced whole on every frame (`render-header.ts`), so this
+ * mounts a fresh link each time rather than keeping one node alive across a
+ * redraw; the loading screen is drawn once.
+ */
+function mountBackLink(container: HTMLElement): void {
+  const link = backLinkOf(window.location.search);
+  if (link !== null) container.append(link);
 }
 
 /** The message of anything that threw, since the page shows it as it stands. */
@@ -154,6 +182,8 @@ function redraw(): void {
   toggleBar.hidden = false;
   controlsRow.hidden = false;
   renderHeader(header, headerView(log, view.frame), series === null ? null : seriesLineOf(series, log));
+  // The header row was replaced whole above, so the way back goes in after it.
+  mountBackLink(header);
   renderHeadline(headlineRow, headline(log, view.frame));
   renderBoard(board, boardView(log, view.board), fog, view);
   const panels = panelsView(log, view.frame);
@@ -233,6 +263,24 @@ const toggle = mountViewToggle(toggleBar, (next) => {
   mode = next;
   redraw();
 });
+
+/**
+ * What the loading screen offers, decided once from the query the page was
+ * opened with.
+ *
+ * A viewer the console opened with `?log=` has been handed the match it is here
+ * for, and asking it to choose a file — with a picker and a sentence telling the
+ * reader to pick one — is asking them to do something they never meant to do.
+ * That is decided before the first read, so the picker is already away by the
+ * time a log that will not parse puts its line on the screen: what that person
+ * sees is what is wrong with the log they were given, and the way back beside it.
+ * A viewer opened without `?log=` keeps both, since picking a file is the only
+ * way a log from somewhere else gets in.
+ */
+const handedOverLog = namesLogUrl(window.location.search);
+filePicker.hidden = handedOverLog;
+dropHint.hidden = handedOverLog;
+mountBackLink(loadBox);
 
 /**
  * Load what the page was just handed: the match to draw, and the sidecar that

@@ -46,6 +46,13 @@ export const VIEW_LABELS: Record<ViewName, string> = {
   providers: "Providers & models",
 };
 
+/**
+ * A view as the console's own URL spells it — the hash `mountViews` routes on,
+ * and the value a replay link carries so the viewer can send the reader back to
+ * the view they clicked it from.
+ */
+export const viewHash = (view: ViewName): string => `#${view}`;
+
 /** The wrapper `index.html` holds one view's sections in. */
 export const wrapperId = (view: ViewName): string => `view-${view}`;
 

@@ -28,7 +28,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { renderSeriesReport } from "@no-dice/stats/series-report";
 
-import { logPathOf, logUrlOf, resumeRecordOf } from "./results.ts";
+import { logPathOf, logUrlOf, resumeRecordOf, viewerUrlOf } from "./results.ts";
 import type { MatchListing, SeriesListing } from "./results.ts";
 import { HOST, startServer } from "./server.ts";
 import type { UiOptions } from "./server.ts";
@@ -326,6 +326,25 @@ describe("GET /api/series", () => {
   }, 120_000);
 });
 
+describe("the viewer's URL for a log", () => {
+  it("keeps the ?log= the viewer's load.ts fetches, and names the view beside it", () => {
+    // `?log=` is the path `load.ts` reads, unchanged; `back` is the console view
+    // the link sits in, which is what the viewer's way back goes to.
+    expect(viewerUrlOf("/logs/135-greedy-random.json", "#matches")).toBe(
+      "/viewer/?log=/logs/135-greedy-random.json&back=%23matches",
+    );
+  });
+
+  it("escapes a `#` and nothing else", () => {
+    // A bare `#` in a query is read as the start of a fragment, so the view would
+    // arrive empty. Everything else stays plain enough to read in an address bar.
+    expect(viewerUrlOf("/logs/alpha/matches/135-greedy-random.json", "#leaderboard")).toBe(
+      "/viewer/?log=/logs/alpha/matches/135-greedy-random.json&back=%23leaderboard",
+    );
+    expect(viewerUrlOf("/logs/a.json", "matches")).toBe("/viewer/?log=/logs/a.json&back=matches");
+  });
+});
+
 describe("GET /api/matches", () => {
   it("lists every finished log under both roots, each with the URL it is served at", async () => {
     const at = consoleAt();
@@ -346,13 +365,15 @@ describe("GET /api/matches", () => {
     expect(alone[0]!.name).toBe("135-greedy-random.json");
     expect(alone[0]!.path).toBe(join(at.matchesRoot, "135-greedy-random.json"));
     expect(alone[0]!.url).toBe("/logs/135-greedy-random.json");
-    // The viewer's own URL for that log: `?log=` is the path its `load.ts` fetches.
-    expect(alone[0]!.viewerUrl).toBe("/viewer/?log=/logs/135-greedy-random.json");
+    // The viewer's own URL for that log: `?log=` is the path its `load.ts` fetches,
+    // and `back` is the view this listing is drawn in, so the viewer can offer a
+    // way back to the row the replay was clicked in.
+    expect(alone[0]!.viewerUrl).toBe("/viewer/?log=/logs/135-greedy-random.json&back=%23matches");
 
     for (const match of bySeries) {
       expect(match.url).toMatch(/^\/logs\/gamma\/matches\/\d+-(greedy-random|random-greedy)\.json$/);
       expect(match.path).toBe(join(at.seriesRoot, "gamma", "matches", match.name));
-      expect(match.viewerUrl).toBe(`/viewer/?log=${match.url}`);
+      expect(match.viewerUrl).toBe(`/viewer/?log=${match.url}&back=%23matches`);
     }
 
     // One order, whatever the filesystem's was.
