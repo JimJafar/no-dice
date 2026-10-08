@@ -114,10 +114,14 @@ Live streaming, video export, more than two players, leagues/ratings across many
 own-orientation boards, a calibrated win-probability bar, and any general-purpose game framework.
 
 "A web UI for launching matches" was on that list until the `management-ui` epic, and brief §3 and
-`docs/viewer-notes.md` are amended by it: the loopback console under `packages/ui` is in scope,
-for one user on one machine. What sits outside it stays out — auth, sessions, HTTPS, hosting, more
-than one user — and so does live per-turn streaming of a match in progress, since the console's
-progress is per pair and per match.
+`docs/viewer-notes.md` are amended by it: the console under `packages/ui` is in scope, for one
+user. Since the `the-console-is-the-benchmark-s-front-end` epic it is that user's front end for
+the whole benchmark — read results, pick a replay, start a run — so it is published by
+`tailscale serve` (`scripts/console-daemon.sh`) as well as bound to loopback, and read from a
+laptop or a phone as well as from the machine it runs on. What sits outside it stays out: auth
+beyond the tailnet and the write routes' Origin check, sessions, certificates of our own,
+hosting, more than one user. So does live per-turn streaming of a match in progress, since the
+console's progress is per pair and per match.
 
 ## Open dependencies on Jim (brief §11)
 
