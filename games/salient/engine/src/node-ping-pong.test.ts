@@ -22,8 +22,12 @@
  * What the chain is not is free, and the last suite counts it. A
  * seat that wins the Node four times running pays 4 troops each time and keeps
  * the Node's 1 a turn, so the churn trades troops for the 3 points a Node is
- * worth at scoring time. That is the shape of the decision recorded in the rules
- * file: the recapture is allowed, and it is priced.
+ * worth at scoring time. That is the decision Jim made on 8 October 2026, and
+ * what these tests state: the recapture is intended, the garrison and the combat
+ * table stand as they are, and no series is replayed. The measurement behind it
+ * is the Greedy-vs-Greedy series kept at `reports/series/greedy-vs-greedy-evidence.md`
+ * — 0 of 20 matches ping-ponged — beside the model rerun's 1 of 10, both counted
+ * by `isPingPong` in `packages/stats/src/rules-evidence.ts`.
  */
 import { describe, expect, it } from "vitest";
 

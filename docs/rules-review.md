@@ -155,15 +155,23 @@ the kept copy from those logs and fails if the two disagree.
 
 This is what the rerun's counters are, beside the figures the rules quote for scripted bots:
 
-| counter | bots without the home bonus | bots with it | run 2, 10 matches | greedy vs random, 10 matches |
-| --- | ---: | ---: | ---: | ---: |
-| hexes flipped a turn late on (turns 18-25) | 6.5 | 1 – 2.4 | **2.39** | 1.67 |
-| lead changes a match | 3.2 | 1.4 | **0.60** | 0.00 |
-| hex flips a match | — | — | **105.10** (4.20 a turn) | 87.50 |
-| captures of hexes that were neutral, a match | "single troops trading empty hexes" | — | **76.20** (7.54 / 1.69 / 0.09 a turn) | 75.50 |
-| Node hand changes a match | "the centre Node changed hands on alternate turns" | — | **7.60** (0.46 / 0.32 / 0.13 a turn) | 6.40 |
-| a Node ping-ponging | "in some bot matches" | — | **1 of 10** — seed 313966722, hex E5, turns 5, 19, 20 | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22 |
-| re-scouts, one seat a match | — | — | **1.70** for the model seat, 0.00 for Greedy | 0.00 for both seats |
+| counter | bots without the home bonus | bots with it | run 2, 10 matches | greedy vs random, 10 matches | greedy vs greedy, 20 matches |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| hexes flipped a turn late on (turns 18-25) | 6.5 | 1 – 2.4 | **2.39** | 1.67 | 1.13 |
+| lead changes a match | 3.2 | 1.4 | **0.60** | 0.00 | 0.00 |
+| hex flips a match | — | — | **105.10** (4.20 a turn) | 87.50 | 89.60 (3.58 a turn) |
+| captures of hexes that were neutral, a match | "single troops trading empty hexes" | — | **76.20** (7.54 / 1.69 / 0.09 a turn) | 75.50 | 74.60 (8.40 / 0.69 / 0.15 a turn) |
+| Node hand changes a match | "the centre Node changed hands on alternate turns" | — | **7.60** (0.46 / 0.32 / 0.13 a turn) | 6.40 | **4.80** (0.33 / 0.13 / 0.13 a turn) |
+| a Node ping-ponging | "in some bot matches" | — | **1 of 10** — seed 313966722, hex E5, turns 5, 19, 20 | 1 of 10 — seed 1003578858, hex H6, turns 14, 21, 22 | **0 of 20** |
+| re-scouts, one seat a match | — | — | **1.70** for the model seat, 0.00 for Greedy | 0.00 for both seats | 0.00 for both seats |
+
+The last column is a Greedy-vs-Greedy series, kept at
+[`reports/series/greedy-vs-greedy-evidence.md`](../reports/series/greedy-vs-greedy-evidence.md) and
+played for the Centre Node ping-pong question below. It is a true mirror — every match is a draw and
+the two seat orders of a pair score the same — so its 20 matches are 10 positions played twice. Its
+expansion rows are like the other bot series' (89.60 hex flips a match, 1.13 a turn late on,
+inside the rules' 1 to 2.4); what sets it apart is the Node half, where it has the fewest hand
+changes of the three series and no ping-pong at all.
 
 The last two columns are different pairings, printed side by side for scale and never
 summed: the greedy-vs-random column is two scripted bots, which is the kind of match the rules' own
@@ -313,16 +321,17 @@ troops a hand change, against a Node that produces 1 a turn and is worth 3 point
 stalemate that burns troops rather than a profit. One troop short of the minimum and the attack is a
 tie, which destroys both stacks and leaves the Node to its owner, empty.
 
-**Decision:** the watch the rules ask for is done, and the engine question it filed is measured. The
-minimum-force attack and the consecutive recapture it allows are pinned by
+**Decision:** the watch the rules ask for is done, and the engine question it filed is measured and
+closed. The minimum-force attack and the consecutive recapture it allows are pinned by
 `games/salient/engine/src/node-ping-pong.test.ts`, and the bot rate beside the rerun's 1 of 10 is
-the Greedy-vs-Greedy series' **0 of 20**. Whether the rules are to be left as they stand is a
-change to combat or to the Node garrison, so it is Jim's to make, and the Centre Node
-ping-pong box in `salient/docs/salient-rules-v0.md` carries his answer. Nothing in the rerun forces
-a replay — the flag is a measurement, not a rule. If the answer turns out to be a change to combat
-or to the Node garrison, then every match of both runs is replayed at its seeds: the rerun's 10
-logs are tracked under `series/marvin-subagent-vs-greedy/` and become the old baseline against a
-new series, and run 1's 8 counted matches, which exist only as figures, stop being comparable.
+the Greedy-vs-Greedy series' **0 of 20**. On 8 October 2026 Jim decided the recapture is intended:
+the Node garrison, the home bonus and the combat table stand as they are, no rule changes, and —
+because nothing about the resolution moved — **no series is replayed**. The Centre Node ping-pong
+box in `salient/docs/salient-rules-v0.md` is ticked with that decision and these rates beside it.
+Had the answer been a change to combat or to the Node garrison, every match of both runs would have
+been replayed at its seeds: the rerun's 10 logs tracked under `series/marvin-subagent-vs-greedy/`
+would have become the old baseline against a new series, and run 1's 8 counted matches, which exist
+only as figures, would have stopped being comparable.
 
 ### No last-seen memory
 
