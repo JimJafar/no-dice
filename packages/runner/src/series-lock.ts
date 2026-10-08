@@ -72,6 +72,7 @@
  * behind, so the next run does not have to steal a stale one before it can play.
  */
 import { link, readFile, unlink, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -168,6 +169,32 @@ const look = async (path: string): Promise<Found> => {
   if (text === null) return { kind: "absent" };
   const lock = parseLock(text);
   return lock === null ? { kind: "unreadable" } : { kind: "lock", lock };
+};
+
+/** The same read, without awaiting: for a caller that cannot await. */
+const lookSync = (path: string): Found => {
+  let text: string | null;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if (isMissing(error)) return { kind: "absent" };
+    throw error;
+  }
+  const lock = parseLock(text);
+  return lock === null ? { kind: "unreadable" } : { kind: "lock", lock };
+};
+
+/**
+ * What one reading of the lock file says about who is playing.
+ *
+ * A lock that names nothing reads as free rather than as stale: there is no pid to
+ * report, and a row claiming a stale run it cannot see would be the console
+ * inventing a run that never happened.
+ */
+const stateOf = (found: Found): LockState => {
+  if (found.kind !== "lock") return { kind: "free" };
+  if (!processAlive(found.lock.pid)) return { kind: "stale", lock: found.lock };
+  return { kind: "held", lock: found.lock };
 };
 
 /** The lock a run wrote, as the bytes it wrote it in. */
@@ -311,13 +338,20 @@ export const releaseSeriesLock = async (dir: string, pid: number = process.pid):
  * What a directory's lock says, without touching it — which is what lets the console
  * list a series another process is playing, and refuse to resume it.
  *
- * A lock that names nothing reads as free rather than as stale: there is no pid to
- * report, and a row claiming a stale run it cannot see would be the console inventing
- * a run that never happened.
+ * A lock that cannot be opened at all — closed against this user, or a directory
+ * where a file should be — throws rather than reading as free: the caller is asking
+ * about a directory it cannot see, and that is worth saying out loud.
  */
-export const readSeriesLock = async (dir: string): Promise<LockState> => {
-  const found = await look(seriesLockPath(dir));
-  if (found.kind !== "lock") return { kind: "free" };
-  if (!processAlive(found.lock.pid)) return { kind: "stale", lock: found.lock };
-  return { kind: "held", lock: found.lock };
-};
+export const readSeriesLock = async (dir: string): Promise<LockState> =>
+  stateOf(await look(seriesLockPath(dir)));
+
+/**
+ * `readSeriesLock` read without awaiting, for a caller that cannot: the console's
+ * run slot answers a POST synchronously, and refuses a resume before it starts one.
+ *
+ * It is the same read and the same decision — the same absent file, the same bytes
+ * that name nothing, the same bounds on a pid, the same probe of whether the process
+ * is alive. Two places deciding what a lock means is how a console's refusal and the
+ * runner's stop agreeing.
+ */
+export const readSeriesLockSync = (dir: string): LockState => stateOf(lookSync(seriesLockPath(dir)));

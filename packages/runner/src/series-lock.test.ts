@@ -8,7 +8,10 @@
  *   it was; a lock naming a process that is gone — or naming nothing at all — is taken
  *   over; and a run lets go of its own lock and never of another run's. The liveness
  *   probe is `process.kill(pid, 0)`, so these tests use this process's own pid for
- *   "alive" and a pid checked first to name nothing for "gone".
+ *   "alive" and a pid checked first to name nothing for "gone". The same read
+ *   exists in a synchronous form, for a caller that cannot await, and both forms
+ *   are checked to decide alike — including throwing when the lock path cannot be
+ *   opened at all.
  * - **The run.** `runSeries` holds the lock across every match it plays, leaves no lock
  *   behind when it ends, throws, or is refused on a bad flag, and is refused by a second
  *   run into the same directory without playing a match or rewriting the record. Every
@@ -40,6 +43,7 @@ import {
   acquireSeriesLock,
   processAlive,
   readSeriesLock,
+  readSeriesLockSync,
   releaseSeriesLock,
   seriesLockPath,
 } from "./series-lock.ts";
@@ -185,6 +189,41 @@ describe("the lock file", () => {
     // Reading tells nobody anything about the directory: the lock is still there,
     // still stale, and still the next run's to take.
     expect(await lockText(seriesDir)).toBe(`${JSON.stringify(stale)}\n`);
+  });
+
+  it("reads the same way without awaiting, for a caller that cannot", async () => {
+    // The console's run slot answers a POST synchronously and refuses a resume
+    // before it starts one, so it asks the same question in the other form. What
+    // matters is that the two forms decide alike: a console that read a lock one
+    // way and a runner that read it the other is two answers about one directory.
+    const heldDir = await seriesAt("sync-held");
+    const taken = await acquireSeriesLock(heldDir);
+    expect(readSeriesLockSync(heldDir)).toEqual({ kind: "held", lock: taken });
+    expect(readSeriesLockSync(heldDir)).toEqual(await readSeriesLock(heldDir));
+    await releaseSeriesLock(heldDir);
+
+    const staleDir = await seriesAt("sync-stale");
+    const stale = await aStaleLock(staleDir);
+    expect(readSeriesLockSync(staleDir)).toEqual({ kind: "stale", lock: stale });
+
+    const freeDir = await seriesAt("sync-free");
+    expect(readSeriesLockSync(freeDir)).toEqual({ kind: "free" });
+    // And a file that is not a lock names nothing to either reading.
+    await writeFile(seriesLockPath(freeDir), "not a lock\n", "utf8");
+    expect(readSeriesLockSync(freeDir)).toEqual(await readSeriesLock(freeDir));
+  });
+
+  it("throws, in both readings, when the lock path cannot be opened", async () => {
+    // A directory where the lock file should be, so the read answers EISDIR
+    // whoever asks — the same failure a lock another user wrote and closed
+    // (`EACCES`) makes in a shared series root, without depending on which user
+    // runs this. Neither reading calls that "nobody is playing": the caller is
+    // asking about a directory it cannot see, and the honest answer is the failure.
+    const seriesDir = await seriesAt("closed-lock");
+    await mkdir(seriesLockPath(seriesDir), { recursive: true });
+
+    await expect(readSeriesLock(seriesDir)).rejects.toThrow(/EISDIR/);
+    expect(() => readSeriesLockSync(seriesDir)).toThrow(/EISDIR/);
   });
 
   it("is taken over when it names nothing readable", async () => {

@@ -39,6 +39,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSeriesReportMarkdown, seriesReport } from "@no-dice/stats/series-report";
 import type { ModelRow, SeriesReport } from "@no-dice/stats/series-report";
 import { wilsonInterval, zOf } from "@no-dice/stats/wilson";
+import { processAlive } from "@no-dice/runner/series-lock";
 
 import { leaderboardRows } from "./leaderboard.ts";
 import * as results from "./results.ts";
@@ -103,6 +104,18 @@ function tempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   temps.push(dir);
   return dir;
+}
+
+/**
+ * A pid that names no process on this machine: what a lock left by a killed run
+ * names. Probed rather than assumed, because a large number is a perfectly
+ * nameable pid — `kernel.pid_max` is 4194304 on this Linux.
+ */
+function aGonePid(): number {
+  for (const candidate of [999_999, 4_194_303]) {
+    if (!processAlive(candidate)) return candidate;
+  }
+  throw new Error("every candidate pid names a live process on this machine");
 }
 
 /** Listen on a free port, and hand that port back. */
@@ -458,6 +471,32 @@ describe("GET /api/leaderboard", () => {
     }
   }, 120_000);
 
+  it("lists a series whose lock will not open in `unreadable`, and pools the rest", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    await runTo(port, { ...SERIES, name: "zeta" });
+
+    // A `series.lock` that will not open: a directory where the runner's one line
+    // of JSON should be, which answers EISDIR whoever asks — the same failure a
+    // lock another user wrote and closed (`EACCES`) makes in a shared series root.
+    // The route that reads every series on disk does not go down with one such
+    // directory: it lists that one with the line the read failed on.
+    const closed = join(at.seriesRoot, "closed");
+    mkdirSync(join(closed, "series.lock"), { recursive: true });
+    writeFileSync(join(closed, "series.json"), '{"max_pairs": 2}\n', "utf8");
+
+    const lb = await leaderboardAt(port);
+    expect(lb.series.map((row) => row.name)).toEqual(["zeta"]);
+    expect(lb.unreadable).toHaveLength(1);
+    expect(lb.unreadable[0]!.name).toBe("closed");
+    expect(lb.unreadable[0]!.error).toContain(join(closed, "series.lock"));
+    // And the pooled table is still the one series that could be read.
+    expect(lb.models.length).toBeGreaterThan(0);
+    for (const model of lb.models) {
+      expect(model.series).toEqual([join(at.seriesRoot, "zeta")]);
+    }
+  }, 120_000);
+
   it("walks the series root once for the whole answer, not once per table", async () => {
     const at = consoleAt();
     const port = await at.port;
@@ -522,10 +561,13 @@ describe("the rows behind the route", () => {
     );
     // And a lock left by a run whose process has gone. The rows this file answers
     // with are the walk's, so they carry what it read of that lock; a second walk
-    // to find out who had the directory is what this file exists to avoid.
+    // to find out who had the directory is what this file exists to avoid. The pid
+    // is probed to name no process — `kernel.pid_max` is 4194304 on this Linux, so
+    // a large number is a perfectly nameable one.
+    const gonePid = aGonePid();
     writeFileSync(
       join(at.seriesRoot, "one", "series.lock"),
-      '{"pid":999999,"started_at":"2026-01-01T00:00:00.000Z"}',
+      `{"pid":${String(gonePid)},"started_at":"2026-01-01T00:00:00.000Z"}`,
       "utf8",
     );
 
@@ -537,7 +579,7 @@ describe("the rows behind the route", () => {
     expect(lb.unreadable).toEqual(listing.unreadable);
     expect(lb.series[0]!.reportUrl).toBe("/logs/one/report.md");
     expect(lb.series[0]!.playing).toBeNull();
-    expect(lb.series[0]!.stale).toEqual({ pid: 999999, startedAt: "2026-01-01T00:00:00.000Z" });
+    expect(lb.series[0]!.stale).toEqual({ pid: gonePid, startedAt: "2026-01-01T00:00:00.000Z" });
     // Nothing is playing it, so there is no run in flight to carry counters for,
     // and a gone run is no reason not to offer the series as a resume.
     expect(lb.series[0]!.progress).toBeNull();

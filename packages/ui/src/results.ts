@@ -50,6 +50,17 @@
  * all, and a listing that read only this console's run slot would call it finished
  * and offer to play its matches a second time.
  *
+ * **A lock this console cannot open is a series it cannot report.** Reading a lock
+ * answers "no lock file", "a lock naming nothing" and "a lock whose process has
+ * gone"; anything else — a lock another user wrote and closed (`EACCES`), a
+ * `series.lock` that is a directory (`EISDIR`) — throws, and that throw is caught
+ * one directory at a time: the series is listed in `unreadable` with the line the
+ * read failed on, and every other series under the root is listed as normal. A row
+ * that said nobody was playing behind a closed file would be a guess in the one
+ * direction that costs anything — it offers a resume over matches somebody may be
+ * playing. `GET /api/playing` leaves such a directory out, since it answers only
+ * who it can see playing, and the line it failed on is on the other route.
+ *
  * **`GET /api/playing` is the cheap half of that reading.** `playingRows` reads
  * `series.lock` and `series.json` and no match log, which is what lets a page that
  * wants a pair count moving ask it on a poll; `/api/series` reads every log of
@@ -74,8 +85,8 @@ import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
-import { processAlive, readSeriesLock, seriesLockPath, seriesLockSchema } from "@no-dice/runner/series-lock";
-import type { SeriesLock } from "@no-dice/runner/series-lock";
+import { readSeriesLock, readSeriesLockSync, seriesLockPath } from "@no-dice/runner/series-lock";
+import type { LockState, SeriesLock } from "@no-dice/runner/series-lock";
 import { seatLabel, seriesReport } from "@no-dice/stats/series-report";
 import type { SeriesReport } from "@no-dice/stats/series-report";
 
@@ -283,6 +294,32 @@ export interface SeriesWalk {
 /** A lock as the row names who holds it. */
 const holderOf = (lock: SeriesLock): LockHolder => ({ pid: lock.pid, startedAt: lock.started_at });
 
+/** What reading one directory's lock found: what it says, or the line it failed on. */
+type LockRead = { lock: LockState; failed: null } | { lock: null; failed: string };
+
+/**
+ * What `dir`'s lock says, or the line reading it failed on.
+ *
+ * `readSeriesLock` reports no lock file, a lock that names nothing and a lock whose
+ * process has gone, and it throws for anything else — a lock another user wrote and
+ * left closed (`EACCES`), a `series.lock` that is a directory (`EISDIR`). Those are
+ * the failures this helper keeps, because a directory this console cannot open is
+ * one series it cannot report, and letting the throw out would answer the operator
+ * with nothing at all: every other series under the root would go down with it.
+ */
+const lockReadOf = async (dir: string): Promise<LockRead> => {
+  try {
+    return { lock: await readSeriesLock(dir), failed: null };
+  } catch (error) {
+    // The line, with the file named when the failure does not name it: EACCES
+    // says which path it could not open, EISDIR says nothing of the kind, and an
+    // operator reading `unreadable` has to be able to tell which file to fix.
+    const line = lineOf(error);
+    const path = seriesLockPath(dir);
+    return { lock: null, failed: line.includes(path) ? line : `${path}: ${line}` };
+  }
+};
+
 /** One series report, as a row. */
 const rowOf = ({ name, dir, resumable, playing, stale, progress, report }: ReadableSeries): SeriesRow => ({
   name,
@@ -340,7 +377,17 @@ export const seriesEntries = async (roots: UiRoots, inFlight: string | null): Pr
     // The lock is the fact this console could not otherwise know. Its run slot
     // only ever holds a run this process started, and a series played by
     // `no-dice series` in a terminal is in no run slot anywhere.
-    const lock = await readSeriesLock(dir);
+    const read = await lockReadOf(dir);
+    if (read.lock === null) {
+      // A lock this console cannot open is a series it cannot report: somebody may
+      // be playing that directory behind the closed file, and a row saying nobody
+      // was playing it would be a guess in the direction that starts a second run
+      // over the matches the first is playing. The line the read failed on is what
+      // the operator can act on, and this one directory is the whole of the damage.
+      entries.push({ name, dir, resumable: false, report: null, error: read.failed });
+      continue;
+    }
+    const lock = read.lock;
     const playing = lock.kind === "held" ? holderOf(lock.lock) : null;
     const stale = lock.kind === "stale" ? holderOf(lock.lock) : null;
     // The run slot stays in the decision: it covers the moment after a console
@@ -420,7 +467,12 @@ export interface PlayingListing {
  * run's counters do not need its finished logs to be readable.
  *
  * A series with no lock is not here at all: this route answers who is playing,
- * and a finished series is playing nobody.
+ * and a finished series is playing nobody. A series whose lock it cannot open is
+ * not here either — that one is on `/api/series`, in `unreadable`, with the line
+ * the read failed on — because this route says only who it can see playing, and
+ * one closed file is not a reason to answer the poll with nothing. The counters
+ * need no such guard: `readRunCounters` answers `null` for a record it cannot
+ * read, and never throws.
  */
 export const playingRows = async (roots: UiRoots): Promise<PlayingListing> => {
   const seriesRoot = resolve(roots.seriesRoot);
@@ -428,7 +480,14 @@ export const playingRows = async (roots: UiRoots): Promise<PlayingListing> => {
 
   for (const name of await subdirectories(seriesRoot)) {
     const dir = join(seriesRoot, name);
-    const lock = await readSeriesLock(dir);
+    const read = await lockReadOf(dir);
+    // A directory whose lock this console cannot open is not in this answer: the
+    // route says who it can see playing, and it cannot see this one. It is not
+    // dropped without a trace — `GET /api/series` lists the same directory in
+    // `unreadable` with this line — and one closed file is not a reason to answer
+    // the poll with nothing.
+    if (read.lock === null) continue;
+    const lock = read.lock;
     if (lock.kind === "free") continue;
     playing.push({
       name,
@@ -580,32 +639,24 @@ const resumeShape = z.object({
 
 /**
  * The lock `dir` holds, when it names a process that is alive; `null` for no
- * lock, one that names nothing readable, and one whose process has gone.
+ * lock, one that names nothing readable, one whose process has gone, and one this
+ * console cannot open.
  *
  * The read is synchronous because the run slot's start is: it answers a POST
- * without awaiting anything. The rules it applies — the pid bounds, what a lock
- * that will not parse means, and what counts as alive — are the runner's own
- * schema and `processAlive`, so the console cannot disagree with the run the
- * runner refuses.
+ * without awaiting anything. It is the runner's own `readSeriesLockSync`, so the
+ * pid bounds, what a lock that will not parse means and what counts as alive are
+ * decided in one place, and the console cannot disagree with the run the runner
+ * refuses. A lock it cannot open names no process to refuse: the runner is the
+ * authority on the directory, and it refuses that run itself when it tries to take
+ * the lock and cannot read it.
  */
 const liveLockOf = (dir: string): SeriesLock | null => {
-  let text: string;
   try {
-    text = readFileSync(seriesLockPath(dir), "utf8");
+    const lock = readSeriesLockSync(dir);
+    return lock.kind === "held" ? lock.lock : null;
   } catch {
     return null;
   }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-
-  const lock = seriesLockSchema.safeParse(parsed);
-  if (!lock.success) return null;
-  return processAlive(lock.data.pid) ? lock.data : null;
 };
 
 /**
