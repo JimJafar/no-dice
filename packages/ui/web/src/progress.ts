@@ -38,7 +38,10 @@
  * off disk through `@no-dice/runner`, and a browser bundle may not. It is the same
  * arrangement the viewer uses for the showcase sidecar. `parseRun` is what keeps
  * the two from drifting quietly — a snapshot missing a counter is one readable
- * line, not a `undefined` drawn into the counters.
+ * line, not a `undefined` drawn into the counters. `parseRunCounters` is exported
+ * for the same reason it is kept in one piece: the series listing carries the
+ * identical shape under `progress`, for a series another process is playing, and
+ * one record read by two parsers is two accounts of one run.
  */
 import { getJson } from "./api.ts";
 import { clear } from "./render-frame.ts";
@@ -126,26 +129,38 @@ const countOf = (value: unknown, what: string): number => {
   return n;
 };
 
-/** The counters, or `null` for a run that has no record. */
-const countersOf = (value: unknown): RunCounters | null => {
+/**
+ * A `RunCounters` object, or `null` for a run that has no record.
+ *
+ * Exported because it is read off two answers, not one: `/api/run` carries the
+ * counters of the run this console started, and `/api/series` carries the same
+ * shape — under `progress` — for a series some other process on the machine is
+ * playing. Both come out of the same `series.json` on the server, so both are
+ * parsed here once; a second parser in `./results.ts` is how the two halves of
+ * the page come to disagree about what a record says.
+ *
+ * `what` names the answer the counters came from, so the line a bad answer
+ * produces says which row of which listing to go and look at.
+ */
+export const parseRunCounters = (value: unknown, what: string = "counters"): RunCounters | null => {
   if (value === null) return null;
-  const counters = recordOf(value, "counters");
+  const counters = recordOf(value, what);
   const stopReason = counters["stopReason"];
   if (typeof stopReason !== "string" && stopReason !== null) {
-    throw new Error("counters.stopReason is neither a reason nor null");
+    throw new Error(`${what}.stopReason is neither a reason nor null`);
   }
   const stoppedEarly = counters["stoppedEarly"];
   if (typeof stoppedEarly !== "boolean" && stoppedEarly !== null) {
-    throw new Error("counters.stoppedEarly is neither a yes or no nor null");
+    throw new Error(`${what}.stoppedEarly is neither a yes or no nor null`);
   }
   return {
-    maxPairs: countOf(counters["maxPairs"], "counters.maxPairs"),
-    pairsPlayed: countOf(counters["pairsPlayed"], "counters.pairsPlayed"),
-    pairsRemaining: countOf(counters["pairsRemaining"], "counters.pairsRemaining"),
-    matchesPlayed: countOf(counters["matchesPlayed"], "counters.matchesPlayed"),
-    matchesFailed: countOf(counters["matchesFailed"], "counters.matchesFailed"),
-    costUsd: countOf(counters["costUsd"], "counters.costUsd"),
-    tokens: countOf(counters["tokens"], "counters.tokens"),
+    maxPairs: countOf(counters["maxPairs"], `${what}.maxPairs`),
+    pairsPlayed: countOf(counters["pairsPlayed"], `${what}.pairsPlayed`),
+    pairsRemaining: countOf(counters["pairsRemaining"], `${what}.pairsRemaining`),
+    matchesPlayed: countOf(counters["matchesPlayed"], `${what}.matchesPlayed`),
+    matchesFailed: countOf(counters["matchesFailed"], `${what}.matchesFailed`),
+    costUsd: countOf(counters["costUsd"], `${what}.costUsd`),
+    tokens: countOf(counters["tokens"], `${what}.tokens`),
     stopReason,
     stoppedEarly,
   };
@@ -172,7 +187,7 @@ export const parseRun = (value: unknown): RunSnapshot => {
     startedAt: timeOrNull(run["startedAt"], "startedAt"),
     endedAt: timeOrNull(run["endedAt"], "endedAt"),
     exitCode: numberOrNull(run["exitCode"], "exitCode"),
-    counters: countersOf(run["counters"]),
+    counters: parseRunCounters(run["counters"]),
   };
 };
 

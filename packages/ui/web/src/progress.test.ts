@@ -16,11 +16,16 @@
  * The poller is driven with a stubbed `fetch` and a `wait` that returns at once:
  * what is under test is which answers the page acts on and when it stops asking,
  * not how long a second is.
+ *
+ * The counters are read by an exported parser, because the Matches view reads the
+ * same shape off `/api/series` for a series somebody else is playing. The test
+ * for that parser on its own is here, since it is the one place the shape is
+ * written down.
  */
 import { describe, expect, it } from "vitest";
 
 import { expectPlainWords, wordsOf } from "./plain-words.ts";
-import { createRunPoller, parseRun, renderProgress } from "./progress.ts";
+import { createRunPoller, parseRun, parseRunCounters, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
 
 /** A series run, mid-flight, with the counters its record carries. */
@@ -121,6 +126,22 @@ describe("parseRun", () => {
     expect(() => parseRun({ ...RUNNING, counters: missing })).toThrow(
       "counters.pairsRemaining is missing",
     );
+  });
+});
+
+describe("parseRunCounters", () => {
+  it("reads the same figures for whoever asks, under the name the caller gives", () => {
+    // The Matches view holds this shape as a playing series' `progress`, and
+    // reads it with this parser rather than a second one beside it: one set
+    // of figures, one set of rules about what a missing or malformed one means.
+    expect(parseRunCounters(RUNNING.counters)).toEqual(RUNNING.counters);
+    // A run whose record has not written its counters answers `null`, and both
+    // callers have to say so rather than draw zeroes.
+    expect(parseRunCounters(null)).toBeNull();
+    expect(() => parseRunCounters({ ...RUNNING.counters, costUsd: "free" }, "series[0].progress")).toThrow(
+      "series[0].progress.costUsd is neither a number nor null",
+    );
+    expect(() => parseRunCounters("1.2M", "playing[0].progress")).toThrow("playing[0].progress is not an object");
   });
 });
 

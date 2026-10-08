@@ -23,6 +23,14 @@
  * check an operator asked for, and only the module that drew them knows when a
  * redraw is safe.
  *
+ * A fifth read keeps a series somebody else is playing honest: `/api/playing` on
+ * the run poller's cadence, and only while its answer names a playing
+ * series. The four reads above cannot see that series — a terminal's run is not
+ * this console's run, so it is in neither the run poll nor a run's end — and a row
+ * saying `0 of 12 pairs` while a terminal was on its fortieth is a page its
+ * operator stops believing. That poll asks the one route that reads no match log,
+ * and writes one span of one row; the listings it would replace stay put.
+ *
  * The start form is built out of the state read, because its seat pickers are the
  * bots and providers `/api/state` names. It is built once: the frame replaces
  * everything under every heading, so the form and the run the poller is watching
@@ -47,7 +55,7 @@ import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import { startRun } from "./start.ts";
-import { createMatchHeaderSource, fetchResults, renderResults } from "./results.ts";
+import { createMatchHeaderSource, createPlayingPoller, fetchResults, renderResults } from "./results.ts";
 import type { MatchRow, SeriesRow } from "./results.ts";
 import { parseState } from "./state.ts";
 import { mountViews } from "./views.ts";
@@ -127,6 +135,13 @@ const refreshListings = async (): Promise<void> => {
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
   }
+
+  // A listing that shows a series being played has counters that move, and this is
+  // the only moment the page learns they do: the listing read above is the one
+  // that says somebody holds the directory. The poll asks the cheap route once and
+  // keeps asking only while that answer names a playing series, so a listing with
+  // nobody playing costs one read and no loop.
+  if (listedSeries.some((row) => row.playing !== null)) void playingPoller.run();
 };
 
 /**
@@ -170,6 +185,21 @@ const poller = createRunPoller({
       void refreshListings();
     }
   },
+  say,
+});
+
+/**
+ * The series another process is playing, read on the run poller's cadence while
+ * any of them is. It writes one row's counters rather than redrawing the section,
+ * and it asks for the listings back once whenever what it hears and what the page
+ * shows disagree about who is playing — which is how a row loses its Resume
+ * button, or gets it back, with nobody reloading.
+ */
+const playingPoller = createPlayingPoller({
+  fetchJson,
+  section: sections.results,
+  listed: (): readonly SeriesRow[] => listedSeries,
+  relist: refreshListings,
   say,
 });
 

@@ -70,6 +70,12 @@ ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px
 /* A row of one of the listings: the viewer's box. */
 .series-row,.match-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;padding:14px 16px;background:#232a33;border-radius:6px}
 .series-head,.match-row,.provider-head{font-size:15px;line-height:1.4}
+/* A series another process on this machine is playing: the live edge the run in
+   flight gets two rules down, so a row with no Resume button reads as one that is
+   busy rather than one the page forgot to finish. Its counters are the record's
+   own, rewritten in place while the run goes — `writeSeriesCounters`. */
+.series-row-playing{border-left:3px solid var(--team-a,#2c6fd1)}
+.series-playing,.series-stale{color:#c9d1dc}
 /* A series or a match this console could not read: the seat B edge, so the row that
    is missing from the listing beside it is visible as missing. */
 .series-unreadable-row,.leaderboard-unreadable-row{padding:12px 16px;border-left:3px solid var(--team-b,#e06f35);background:#1a2028;border-radius:0 6px 6px 0;font-size:15px;line-height:1.45;color:#c9d1dc}

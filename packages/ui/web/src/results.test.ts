@@ -14,6 +14,12 @@
  * `results.test.ts` checks its answer against the stats report; this file checks
  * that the page draws whatever that answer says.
  *
+ * A series another process is playing is drawn as playing: the row says so,
+ * carries the record's counters, draws no stop line and offers no Resume, and the
+ * poll that moves those counters asks `/api/playing` and nothing else. The tests
+ * for that are under `renderResults`, `writeSeriesCounters` and
+ * `createPlayingPoller`.
+ *
  * The section speaks in words: no flag name, no absolute path and no log file
  * name in anything it draws. That is checked at the bottom of this file, over
  * the whole text of a section drawn from a listing that has a series, a broken
@@ -25,15 +31,18 @@ import { describe, expect, it } from "vitest";
 import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import {
   createMatchHeaderSource,
+  createPlayingPoller,
   dateOf,
   fetchResults,
   parseMatchListing,
+  parsePlayingListing,
   parseSeriesListing,
   readMatchHeader,
   renderResults,
   viewerUrlFor,
+  writeSeriesCounters,
 } from "./results.ts";
-import type { Results } from "./results.ts";
+import type { Results, SeriesRow } from "./results.ts";
 
 /** One series, as `/api/series` answers it: two counted matches, a full-length stop. */
 const SERIES = {
@@ -56,8 +65,66 @@ const SERIES = {
   confidence: 0.95,
   ceilingUsd: null,
   ceilingTokens: null,
+  playing: null,
+  stale: null,
+  progress: null,
   resumable: true,
 };
+
+/** The counters a run in flight has written, as its own record says them. */
+const PROGRESS = {
+  maxPairs: 4,
+  pairsPlayed: 2,
+  pairsRemaining: 2,
+  matchesPlayed: 4,
+  matchesFailed: 0,
+  costUsd: 1.5,
+  tokens: 1_200_000,
+  stopReason: null,
+  stoppedEarly: false,
+};
+
+/** The same series with a live lock: another process on this machine is playing it. */
+const PLAYING = {
+  ...SERIES,
+  pairs: 2,
+  counted: 0,
+  missing: 4,
+  winRate: null,
+  interval: null,
+  playing: { pid: 4242, startedAt: "2026-10-07T12:00:00.000Z" },
+  stale: null,
+  progress: PROGRESS,
+  resumable: false,
+};
+
+/** The same series with a lock whose process has gone: a run left it half-played. */
+const ABANDONED = {
+  ...SERIES,
+  playing: null,
+  stale: { pid: 4242, startedAt: "2026-10-07T12:00:00.000Z" },
+  progress: null,
+  resumable: true,
+};
+
+/** One row of `/api/playing`, for the series above, as the route answers it. */
+const playingRow = (progress: unknown = PROGRESS, stale: boolean = false): Record<string, unknown> => ({
+  name: "alpha",
+  dir: SERIES.dir,
+  pid: 4242,
+  startedAt: "2026-10-07T12:00:00.000Z",
+  stale,
+  progress,
+});
+
+/** What `/api/playing` answers for the rows given. */
+const playingValue = (rows: readonly unknown[]): unknown => ({
+  seriesRoot: "/repo/series",
+  playing: rows,
+});
+
+/** The same answer, as the response the page reads. */
+const playingAnswer = (rows: readonly unknown[]): Response => Response.json(playingValue(rows));
 
 /** One finished match, as `/api/matches` answers it. */
 const MATCH = {
@@ -132,6 +199,13 @@ const drawn = (results: Results): { el: HTMLElement; text: string } => {
   return { el, text: el.textContent ?? "" };
 };
 
+/** One series row, in an otherwise empty `/api/series` answer. */
+const seriesWith = (row: unknown): unknown => ({
+  seriesRoot: "/repo/series",
+  series: [row],
+  unreadable: [],
+});
+
 describe("parseSeriesListing", () => {
   it("keeps every figure the console answered with", () => {
     const listing = parseSeriesListing({
@@ -163,6 +237,74 @@ describe("parseSeriesListing", () => {
       unreadable: [],
     });
     expect([listing.series[0]!.winRate, listing.series[0]!.interval]).toEqual([null, null]);
+  });
+
+  it("keeps who is playing a series, and the counters their run has written", () => {
+    const [row] = parseSeriesListing({
+      seriesRoot: "/repo/series",
+      series: [PLAYING, ABANDONED, SERIES],
+      unreadable: [],
+    }).series;
+
+    expect(row!.playing).toEqual(PLAYING.playing);
+    expect(row!.stale).toBeNull();
+    expect(row!.progress).toEqual(PROGRESS);
+    // A lock whose process has gone names the holder as stale and carries no
+    // counters: nothing is playing that directory, so there is no run in flight.
+    const [, abandoned] = parseSeriesListing({
+      seriesRoot: "/repo/series",
+      series: [PLAYING, ABANDONED, SERIES],
+      unreadable: [],
+    }).series;
+    expect([abandoned!.playing, abandoned!.stale, abandoned!.progress]).toEqual([
+      null,
+      ABANDONED.stale,
+      null,
+    ]);
+  });
+
+  it("names the row when a lock or a set of counters comes back malformed", () => {
+    expect(() => parseSeriesListing(seriesWith({ ...PLAYING, playing: { startedAt: "yesterday" } }))).toThrow(
+      "series[0].playing.pid is not a count",
+    );
+    expect(() => parseSeriesListing(seriesWith({ ...PLAYING, stale: "nobody" }))).toThrow(
+      "series[0].stale is not an object",
+    );
+    // The counters are the shape `/api/run` answers with, and the same parser
+    // reads them here, so the line it names is that shape's own.
+    expect(() => parseSeriesListing(seriesWith({ ...PLAYING, progress: { ...PROGRESS, tokens: "1.2M" } }))).toThrow(
+      "series[0].progress.tokens is neither a number nor null",
+    );
+  });
+});
+
+describe("parsePlayingListing", () => {
+  it("keeps who is playing and how far they have got", () => {
+    const listing = parsePlayingListing(playingValue([playingRow(), playingRow(null, true)]));
+
+    expect(listing.seriesRoot).toBe("/repo/series");
+    expect(listing.playing).toEqual([
+      { name: "alpha", dir: SERIES.dir, stale: false, progress: PROGRESS },
+      { name: "alpha", dir: SERIES.dir, stale: true, progress: null },
+    ]);
+  });
+
+  it("leaves the pid out of what the page holds, since it never draws it", () => {
+    const [row] = parsePlayingListing(playingValue([playingRow()])).playing;
+    expect(row).not.toHaveProperty("pid");
+    expect(row).not.toHaveProperty("startedAt");
+  });
+
+  it("names the row when the answer is missing one", () => {
+    expect(() => parsePlayingListing({ seriesRoot: "/repo/series", playing: "nobody" })).toThrow(
+      "playing is not a list",
+    );
+    expect(() => parsePlayingListing(playingValue([{ name: "alpha" }]))).toThrow(
+      "playing[0].dir is not a string",
+    );
+    expect(() => parsePlayingListing(playingValue([{ ...playingRow(), stale: "yes" }]))).toThrow(
+      "playing[0].stale is not a yes or no",
+    );
   });
 });
 
@@ -484,6 +626,75 @@ describe("renderResults", () => {
     expect(resumed).toEqual([]);
   });
 
+  it("says a series another process is playing is being played, and offers no resume for it", () => {
+    const el = section();
+    const resumed: string[] = [];
+    renderResults(el, { ...RESULTS, series: [PLAYING] }, (dir) => resumed.push(dir));
+
+    const [row] = itemsOf(el, "series");
+    expect(row).toContain("this series is being played by another process on this machine");
+    expect(row).toContain("pairs 2 of 4 played");
+    expect(row).toContain("matches 4 played, 0 failed");
+    expect(row).toContain("1,200,000 tokens so far");
+    expect(row).toContain("$1.50 so far");
+    // Not a disabled button: a button the row has to explain is still an offer to
+    // play matches somebody is playing. The row does not offer one.
+    expect(el.querySelectorAll("button.resume")).toHaveLength(0);
+    expect(resumed).toEqual([]);
+    // The row is marked as live, so the missing button reads as a busy series
+    // rather than as a row the page forgot to finish.
+    expect(el.querySelectorAll(".series-row-playing")).toHaveLength(1);
+    // The pid is a fact about the machine that nobody in a browser can act on, so
+    // the row says that another process is playing and stops there.
+    expect(row).not.toContain("4242");
+  });
+
+  it("draws no stop line for a series that has not stopped", () => {
+    // The record carries no `stop` while a run is in flight, and the report's
+    // fallback — `max_pairs`, its full length — names a decision the stopping
+    // rules have not made yet. Drawing it would be inventing an ending.
+    const { text } = drawn({ ...RESULTS, series: [PLAYING] });
+
+    expect(text).not.toContain("stopped on");
+    expect(text).not.toContain("its full length");
+  });
+
+  it("says a playing series whose record has no counters yet has none, rather than zeroes", () => {
+    const { text } = drawn({ ...RESULTS, series: [{ ...PLAYING, progress: null }] });
+
+    expect(text).toContain("Its record has not written its counters yet.");
+    expect(text).not.toContain("pairs 0 of");
+  });
+
+  it("says the run that left a series half-played has gone, and offers it for resume", () => {
+    const el = section();
+    const resumed: string[] = [];
+    renderResults(el, { ...RESULTS, series: [ABANDONED] }, (dir) => resumed.push(dir));
+
+    const [row] = itemsOf(el, "series");
+    expect(row).toContain("the run that left this series half-played has gone");
+    // Gone rather than playing, which is what a resume is for: the series is
+    // resumable exactly as an interrupted one has always been.
+    const [button] = [...el.querySelectorAll<HTMLButtonElement>("button.resume")];
+    expect(button!.disabled).toBe(false);
+    button!.click();
+    expect(resumed).toEqual(["/repo/series/alpha"]);
+  });
+
+  it("lists the same series as stopped, with its resume, once the process playing it has ended", () => {
+    const el = section();
+    renderResults(el, { ...RESULTS, series: [PLAYING] }, () => undefined);
+    // The next listing read, with the lock gone: the report's figures are the
+    // series' account of itself again, and the row goes back to the finished line.
+    renderResults(el, { ...RESULTS, series: [SERIES] }, () => undefined);
+
+    const [row] = itemsOf(el, "series");
+    expect(row).toContain("stopped on max_pairs — its full length");
+    expect(el.querySelectorAll(".series-counters")).toHaveLength(0);
+    expect(el.querySelectorAll(".series-row-playing")).toHaveLength(0);
+    expect(el.querySelector<HTMLButtonElement>("button.resume")?.disabled).toBe(false);
+  });
+
   it("links every finished match at the viewer's URL for it, and says what the match was", () => {
     const el = section();
     const other = { ...LABELED, name: "1-x-y.json", series: null };
@@ -649,6 +860,227 @@ describe("renderResults", () => {
   });
 });
 
+describe("writeSeriesCounters", () => {
+  /** A section with one playing row and one finished one beside it. */
+  const withPlaying = (): HTMLElement => {
+    const el = section();
+    renderResults(
+      el,
+      { ...RESULTS, series: [PLAYING, { ...SERIES, name: "beta", dir: "/repo/series/beta" }] },
+      () => undefined,
+    );
+    return el;
+  };
+
+  it("writes one row's counters, and leaves every other word on the page alone", () => {
+    const el = withPlaying();
+    const before = itemsOf(el, "series");
+
+    expect(writeSeriesCounters(el, SERIES.dir, { ...PROGRESS, pairsPlayed: 3, matchesPlayed: 6 })).toBe(true);
+
+    const after = itemsOf(el, "series");
+    expect(after[0]).toContain("pairs 3 of 4 played, matches 6 played, 0 failed");
+    // The finished row, the match rows and the headers already read all stay
+    // where they were: this is one text node, not a redraw of the section.
+    expect(after[1]).toBe(before[1]);
+  });
+
+  it("says it wrote nothing when the row it was asked for is not on the page", () => {
+    const el = withPlaying();
+
+    // A finished row has no counters to write, and a series the page never listed
+    // has no row at all. Either way the poll is told, and asks for the listing.
+    expect(writeSeriesCounters(el, "/repo/series/beta", PROGRESS)).toBe(false);
+    expect(writeSeriesCounters(el, "/repo/series/gone", PROGRESS)).toBe(false);
+    expect(itemsOf(el, "series")).toEqual(itemsOf(el, "series"));
+  });
+});
+
+describe("createPlayingPoller", () => {
+  /** The section, drawn from the listing the page currently holds. */
+  const watching = (listed: SeriesRow[]): HTMLElement => {
+    const el = section();
+    renderResults(el, { ...RESULTS, series: listed }, () => undefined);
+    return el;
+  };
+
+  it("moves a playing row's counters, and asks only the cheap route to do it", async () => {
+    const el = watching([PLAYING]);
+    const asked: string[] = [];
+    let reads = 0;
+    const poller = createPlayingPoller({
+      fetchJson: (path): Promise<Response> => {
+        asked.push(path);
+        reads += 1;
+        return Promise.resolve(playingAnswer([playingRow({ ...PROGRESS, pairsPlayed: reads + 1 })]));
+      },
+      section: el,
+      listed: (): readonly SeriesRow[] => [PLAYING],
+      relist: async (): Promise<void> => undefined,
+      say: () => undefined,
+      wait: async (): Promise<void> => {
+        if (reads >= 3) poller.stop();
+      },
+    });
+
+    await poller.run();
+
+    // `/api/playing` and nothing else, three times over. `/api/series` reads every
+    // match log of every series, which is the cost a once-a-second poll must not
+    // pay, and re-rendering the section would pay it a second way.
+    expect(asked).toEqual(["/api/playing", "/api/playing", "/api/playing"]);
+    expect(el.querySelector(".series-counters")?.textContent).toBe(
+      "pairs 4 of 4 played, matches 4 played, 0 failed, 1,200,000 tokens so far, $1.50 so far.",
+    );
+  });
+
+  it("keeps asking while the answer names a playing series, and stops at the one that names none", async () => {
+    const el = watching([PLAYING]);
+    const relisted: number[] = [];
+    let reads = 0;
+    const poller = createPlayingPoller({
+      fetchJson: (): Promise<Response> => {
+        reads += 1;
+        // Two ticks of a run in flight, then the lock is gone and the route names
+        // nobody at all.
+        return Promise.resolve(playingAnswer(reads <= 2 ? [playingRow({ ...PROGRESS, pairsPlayed: reads + 2 })] : []));
+      },
+      section: el,
+      listed: (): readonly SeriesRow[] => [PLAYING],
+      relist: async (): Promise<void> => {
+        void relisted.push(reads);
+      },
+      say: () => undefined,
+      wait: async (): Promise<void> => undefined,
+    });
+
+    await poller.run();
+
+    // Three reads and no fourth: an answer that names no playing series is a
+    // machine on which nothing is being played, and the page stops paying to ask.
+    expect(reads).toBe(3);
+    // The row on the page still said playing, so the listing was read back once —
+    // which is what puts its Resume button and its stop line there.
+    expect(relisted).toEqual([3]);
+    expect(el.querySelector(".series-counters")?.textContent).toContain("pairs 4 of 4 played");
+  });
+
+  it("asks for the listing back once when the poll names a series the page does not show as playing", async () => {
+    // The page listed alpha as finished; a terminal has since started playing it.
+    const listed: SeriesRow[] = [SERIES];
+    const el = watching(listed);
+    const relisted: number[] = [];
+    let reads = 0;
+    const poller = createPlayingPoller({
+      fetchJson: (): Promise<Response> => {
+        reads += 1;
+        return Promise.resolve(playingAnswer([playingRow({ ...PROGRESS, pairsPlayed: reads + 1 })]));
+      },
+      section: el,
+      listed: (): readonly SeriesRow[] => listed,
+      relist: async (): Promise<void> => {
+        void relisted.push(reads);
+        // What the listing read the page asked for does: the row goes up as
+        // playing, with no Resume on it.
+        listed.splice(0, listed.length, PLAYING);
+        renderResults(el, { ...RESULTS, series: listed }, () => undefined);
+      },
+      say: () => undefined,
+      wait: async (): Promise<void> => {
+        if (reads >= 2) poller.stop();
+      },
+    });
+
+    await poller.run();
+
+    // Once, not every tick: the fresh listing agrees with the poll from then on.
+    expect(relisted).toEqual([1]);
+    expect(el.querySelector("button.resume")).toBeNull();
+    expect(el.querySelector(".series-counters")?.textContent).toContain("pairs 3 of 4 played");
+  });
+
+  it("asks the listings once for one disagreement, not once a tick", async () => {
+    // The listing read the poll asked for fails, so the page still shows alpha as
+    // finished while the poll keeps naming it as playing.
+    const el = watching([SERIES]);
+    const relisted: number[] = [];
+    let reads = 0;
+    const poller = createPlayingPoller({
+      fetchJson: (): Promise<Response> => {
+        reads += 1;
+        return Promise.resolve(playingAnswer([playingRow()]));
+      },
+      section: el,
+      listed: (): readonly SeriesRow[] => [SERIES],
+      relist: async (): Promise<void> => {
+        void relisted.push(reads);
+      },
+      say: () => undefined,
+      wait: async (): Promise<void> => {
+        if (reads >= 3) poller.stop();
+      },
+    });
+
+    await poller.run();
+
+    // The read costs every match log of every series. Asking a console that will
+    // not answer for it three times a second, on top of the poll, is the cost this
+    // loop is here to avoid; the counters still move on every tick.
+    expect(relisted).toEqual([1]);
+    expect(reads).toBe(3);
+  });
+
+  it("says the line for a console that did not answer, and keeps asking while somebody may be playing", async () => {
+    const el = watching([PLAYING]);
+    const said: string[] = [];
+    let reads = 0;
+    const poller = createPlayingPoller({
+      fetchJson: (): Promise<Response> => {
+        reads += 1;
+        return Promise.resolve(
+          reads === 1 ? Response.json({ error: "the console is not there" }, { status: 503 }) : playingAnswer([]),
+        );
+      },
+      section: el,
+      listed: (): readonly SeriesRow[] => [PLAYING],
+      relist: async (): Promise<void> => undefined,
+      say: (message): void => void said.push(message),
+      wait: async (): Promise<void> => undefined,
+    });
+
+    await poller.run();
+
+    // The bad read did not end the loop — a run in somebody else's process outlives
+    // a console that is not answering. The second read, naming nobody playing, did.
+    expect(said).toEqual(["the console is not there"]);
+    expect(reads).toBe(2);
+  });
+
+  it("keeps one loop per page, however many listing reads ask for one", async () => {
+    const el = watching([PLAYING]);
+    let reads = 0;
+    const poller = createPlayingPoller({
+      fetchJson: (): Promise<Response> => {
+        reads += 1;
+        return Promise.resolve(playingAnswer([playingRow()]));
+      },
+      section: el,
+      listed: (): readonly SeriesRow[] => [PLAYING],
+      relist: async (): Promise<void> => undefined,
+      say: () => undefined,
+      wait: async (): Promise<void> => {
+        if (reads >= 2) poller.stop();
+      },
+    });
+
+    await Promise.all([poller.run(), poller.run()]);
+
+    // Two reads, not four: the second caller joined the loop that was
+    // already going rather than starting a second one beside it.
+    expect(reads).toBe(2);
+  });
+});
+
 describe("the words the results section speaks", () => {
   it("draws a section holding a series, a broken record and a match, in plain words", () => {
     // One of everything the section can draw, so a path or a file name sneaking
@@ -672,5 +1104,16 @@ describe("the words the results section speaks", () => {
     });
 
     expect(text).toContain("no series record under /repo/series/broken");
+  });
+
+  it("says what a series another process is playing, and one a dead run left, in plain words", () => {
+    // Both lock states, in one section: the row that says a run is in flight and
+    // the one that says it is not are the two most likely to reach for a pid, a
+    // lock file's name or the directory it sits in.
+    const { el, text } = drawn({ ...RESULTS, series: [PLAYING, ABANDONED] });
+
+    expectPlainWords("results", wordsOf(el));
+    expect(text).not.toContain("4242");
+    expect(text).not.toContain("series.lock");
   });
 });

@@ -41,6 +41,25 @@
  * socket work for a page of labels, and a front view that stayed blank until the
  * last of them landed.
  *
+ * **A series another process is playing is drawn as playing.** The row carries
+ * that fact as `playing` — the lock's holder — and `progress`, the record's own
+ * counters, which the console reads only while the lock is live. Such a row says
+ * the series is being played, says by another process on this machine, and shows
+ * those counters. It draws **no** stop line: the record has no `stop` field while
+ * a run is in flight, so the `stopped on max_pairs — its full length` the report
+ * falls back to is a stop that has not happened. And it offers **no** Resume: a
+ * second run over the matches the first is playing is the damage this whole
+ * feature exists to prevent. A lock whose process has gone is the other half:
+ * the row says the run has gone, and is resumable as an interrupted series is.
+ *
+ * **Those counters move without a reload, and only one row is written.** The
+ * listings are the expensive read — every match log of every series — so the
+ * page polls the console's cheap route, `/api/playing`, and writes the playing
+ * row's counters into the span they were drawn in. Re-rendering the section once
+ * a second would re-read every log header for nothing. When the poll and the
+ * listing disagree about who is playing, the listing is read once more, which is
+ * what puts a Resume button back — or takes it away — with nobody reloading.
+ *
  * The shapes below are declared here rather than imported from
  * `packages/ui/src/results.ts`, which reads the filesystem and pulls in
  * `@no-dice/stats`; a browser bundle may not. `parseSeriesListing` and
@@ -50,9 +69,23 @@
  */
 import { getJson } from "./api.ts";
 import { clear } from "./render-frame.ts";
+import { parseRunCounters, POLL_MS } from "./progress.ts";
 import { viewHash } from "./views.ts";
+import type { RunCounters } from "./progress.ts";
 import type { FetchJson } from "./api.ts";
 import type { ViewName } from "./views.ts";
+
+/**
+ * The run a series' lock names: the process that took it, and when it took it.
+ *
+ * The pid is parsed and then left alone. It is a fact about the machine that
+ * nobody in a browser can act on, so it is not drawn — the row says that another
+ * process is playing, which is the whole of what a reader can do with it.
+ */
+export interface LockHolder {
+  pid: number;
+  startedAt: string;
+}
 
 /** One series, with the figures the CLI's own report gives it. */
 export interface SeriesRow {
@@ -76,6 +109,22 @@ export interface SeriesRow {
   confidence: number;
   ceilingUsd: number | null;
   ceilingTokens: number | null;
+  /**
+   * The run playing this series, when its lock names a live process: another
+   * `no-dice series` on this machine, or this console's own run once its lock
+   * exists. `null` when nothing holds the directory.
+   */
+  playing: LockHolder | null;
+  /**
+   * The lock a run left behind, when the process it names has gone: the series is
+   * interrupted rather than playing, and the recovery is to resume it.
+   */
+  stale: LockHolder | null;
+  /**
+   * The record's own counters, and only while the series is playing — the same
+   * shape `/api/run` answers with, read by the same parser.
+   */
+  progress: RunCounters | null;
   resumable: boolean;
 }
 
@@ -166,6 +215,16 @@ const intervalOf = (value: unknown, what: string): { low: number; high: number }
   return { low: countOf(interval["low"], `${what}.low`), high: countOf(interval["high"], `${what}.high`) };
 };
 
+/** A lock's holder, or `null` for a row no lock names anybody at. */
+const holderOf = (value: unknown, what: string): LockHolder | null => {
+  if (value === null) return null;
+  const holder = recordOf(value, what);
+  return {
+    pid: countOf(holder["pid"], `${what}.pid`),
+    startedAt: stringOf(holder["startedAt"], `${what}.startedAt`),
+  };
+};
+
 /** One row of `/api/series`. */
 const seriesRowOf = (value: unknown, what: string): SeriesRow => {
   const row = recordOf(value, what);
@@ -189,6 +248,11 @@ const seriesRowOf = (value: unknown, what: string): SeriesRow => {
     confidence: countOf(row["confidence"], `${what}.confidence`),
     ceilingUsd: numberOrNull(row["ceilingUsd"], `${what}.ceilingUsd`),
     ceilingTokens: numberOrNull(row["ceilingTokens"], `${what}.ceilingTokens`),
+    playing: holderOf(row["playing"], `${what}.playing`),
+    stale: holderOf(row["stale"], `${what}.stale`),
+    // The same `RunCounters` `/api/run` answers with, out of the same record, so
+    // it is read by the same parser rather than a second one here.
+    progress: parseRunCounters(row["progress"], `${what}.progress`),
     resumable: boolOf(row["resumable"], `${what}.resumable`),
   };
 };
@@ -213,6 +277,42 @@ export const parseSeriesListing = (value: unknown): {
         name: stringOf(row["name"], `unreadable[${String(at)}].name`),
         dir: stringOf(row["dir"], `unreadable[${String(at)}].dir`),
         error: stringOf(row["error"], `unreadable[${String(at)}].error`),
+      };
+    }),
+  };
+};
+
+/** One series the cheap route says somebody is holding. */
+export interface PlayingRow {
+  name: string;
+  dir: string;
+  /** Whether the process that lock names has gone: the run died where it stood. */
+  stale: boolean;
+  /** The record's counters, or `null` for a record the console could not read. */
+  progress: RunCounters | null;
+}
+
+/**
+ * The answer from `GET /api/playing`: who is playing, and how far each has got.
+ *
+ * The route's rows also carry a pid and the minute the lock was taken. They are
+ * not parsed, because the page never draws them: a pid is a fact about the
+ * machine that nobody in a browser can act on, and a field the page cannot
+ * draw is a field it cannot leak into the page.
+ */
+export const parsePlayingListing = (value: unknown): { seriesRoot: string; playing: PlayingRow[] } => {
+  const listing = recordOf(value, "the answer from /api/playing");
+  const playing = listing["playing"];
+  if (!Array.isArray(playing)) throw new Error("playing is not a list");
+  return {
+    seriesRoot: stringOf(listing["seriesRoot"], "seriesRoot"),
+    playing: playing.map((each, at) => {
+      const row = recordOf(each, `playing[${String(at)}]`);
+      return {
+        name: stringOf(row["name"], `playing[${String(at)}].name`),
+        dir: stringOf(row["dir"], `playing[${String(at)}].dir`),
+        stale: boolOf(row["stale"], `playing[${String(at)}].stale`),
+        progress: parseRunCounters(row["progress"], `playing[${String(at)}].progress`),
       };
     }),
   };
@@ -555,6 +655,11 @@ const seriesHead = (row: SeriesRow): Node => {
  * The figures, in the report's own order and wording: counted and missing out of
  * the matches the record names, then the win rate with its interval, then how the
  * series stopped. Nothing here is worked out — every number is the report's.
+ *
+ * This is the line of a series that has stopped. A series that is playing never
+ * reaches it: its record has no `stop` field, and the report's fallback —
+ * `max_pairs`, its full length — describes a decision the stopping rules have not
+ * made yet.
  */
 const seriesFigures = (row: SeriesRow): string => {
   const parts = [
@@ -572,6 +677,56 @@ const seriesFigures = (row: SeriesRow): string => {
     );
   }
   return `${parts.join(", ")}.`;
+};
+
+/**
+ * How far a run in flight has got, in the progress section's own words for the
+ * same counters: pairs played of the pair limit, matches played and failed, and
+ * what it has cost so far. The two sections read one record, so they say the same
+ * thing about it.
+ */
+const countersWords = (progress: RunCounters): string =>
+  `pairs ${String(progress.pairsPlayed)} of ${String(progress.maxPairs)} played, ` +
+  `matches ${String(progress.matchesPlayed)} played, ${String(progress.matchesFailed)} failed, ` +
+  `${progress.tokens.toLocaleString("en-US")} tokens so far, ${usd(progress.costUsd)} so far`;
+
+/**
+ * A playing row's own line: who is playing it, and the counters its record is
+ * carrying at the moment the listing was read.
+ *
+ * The counters go in a span of their own, marked with the series' directory, so
+ * the poll can rewrite them without touching the rest of the row — and without
+ * redrawing the section, which would ask every match log header on the page to be
+ * read again. A row whose record has not written its counters yet says that, and
+ * does not draw zeroes for a run it cannot see.
+ */
+const playingLine = (row: SeriesRow): Node => {
+  const line = document.createElement("span");
+  line.className = "series-playing";
+  line.append(
+    document.createTextNode(": this series is being played by another process on this machine. "),
+  );
+  const counters = document.createElement("span");
+  counters.className = "series-counters";
+  counters.dataset["dir"] = row.dir;
+  counters.textContent =
+    row.progress === null
+      ? "Its record has not written its counters yet."
+      : `${countersWords(row.progress)}.`;
+  line.append(counters);
+  return line;
+};
+
+/**
+ * What a row says when the lock names a process that is gone: the series is not
+ * being played, and the run that left it half-played is not coming back. That is
+ * an interrupted series, which is what the Resume beside it is for.
+ */
+const staleLine = (): Node => {
+  const el = document.createElement("span");
+  el.className = "series-stale";
+  el.textContent = " — the run that left this series half-played has gone";
+  return el;
 };
 
 /**
@@ -594,12 +749,45 @@ const resumeButton = (row: SeriesRow, onResume: (dir: string) => void): HTMLButt
   return button;
 };
 
-/** One series: its figures, and the way to finish it. */
+/**
+ * One series: its figures, and the way to finish it — unless it is not finished.
+ *
+ * A series somebody else is playing has neither. It has no stop to report and no
+ * resume to offer: the matches it is playing are being played, and a second run
+ * over them is what the lock is there to stop. Everything else — a finished
+ * series, and one a dead run left behind — keeps the report's line and the button.
+ */
 const seriesItem = (row: SeriesRow, onResume: (dir: string) => void): HTMLLIElement => {
   const li = document.createElement("li");
   li.className = "series-row";
-  li.append(seriesHead(row), document.createTextNode(`: ${seriesFigures(row)} `), resumeButton(row, onResume));
+  li.append(seriesHead(row));
+  if (row.playing !== null) {
+    li.classList.add("series-row-playing");
+    li.append(playingLine(row));
+    return li;
+  }
+  if (row.stale !== null) li.append(staleLine());
+  li.append(document.createTextNode(`: ${seriesFigures(row)} `), resumeButton(row, onResume));
   return li;
+};
+
+/**
+ * Write one playing row's counters, and nothing else on the page.
+ *
+ * This is what lets a row's numbers move once a second while the section around it
+ * stands: the poll rewrites the counters the record carries, and the match rows,
+ * the leaderboard and every log header already read are left where they are.
+ * `false` when the row is not on the page — it has gone, or the listing that put
+ * it there has not been read yet — which is the poll's cue to ask for that
+ * listing rather than to keep writing into nothing.
+ */
+export const writeSeriesCounters = (el: HTMLElement, dir: string, progress: RunCounters): boolean => {
+  for (const each of el.querySelectorAll<HTMLElement>(".series-counters")) {
+    if (each.dataset["dir"] !== dir) continue;
+    each.textContent = `${countersWords(progress)}.`;
+    return true;
+  }
+  return false;
 };
 
 /** The parameter the viewer reads for the view a replay link was clicked in. */
@@ -729,4 +917,139 @@ export const renderResults = (
   } else {
     el.append(list("matches", results.matches.map((row) => matchItem(row, headers))));
   }
+};
+
+/** What the page does with one answer from the console's cheap route. */
+export interface PlayingPollerOptions {
+  /** The console's own `fetch`. */
+  fetchJson: FetchJson;
+  /** The results section the rows are drawn in. */
+  section: HTMLElement;
+  /** The series the page has on the page, as the last listing read gave them. */
+  listed: () => readonly SeriesRow[];
+  /**
+   * Read both listings again. The poll has named a series the listing does not
+   * show as playing — or has stopped naming one the listing does — and only a
+   * fresh listing can put the row's button and its stop line back.
+   */
+  relist: () => Promise<void>;
+  /** What to say when the console did not answer at all. */
+  say: (message: string, bad: boolean) => void;
+  /** How long to leave between reads. The run poller's, unless told otherwise. */
+  everyMs?: number;
+  /** The wait itself, so a test can drive the loop without a clock. */
+  wait?: (ms: number) => Promise<void>;
+}
+
+/** The page's read of who else on this machine is playing. */
+export interface PlayingPoller {
+  /**
+   * Read, and keep reading while the answer names a playing series. A second
+   * call while one is going does nothing: there is one loop per page.
+   */
+  run: () => Promise<void>;
+  /** Stop before the next read. The runs themselves go on whatever the page does. */
+  stop: () => void;
+}
+
+/** Whether two sorted directory lists name the same series. */
+const sameDirs = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((dir, at) => b[at] === dir);
+
+/**
+ * Who the poll says is playing, and who the page shows as playing, each as a
+ * sorted list of directories.
+ *
+ * Either direction of disagreement counts. A series the poll names and the
+ * listing does not show as playing is a row still saying `stopped` and still
+ * offering a Resume over matches somebody is playing; a series the listing shows
+ * as playing and the poll no longer names is a row that has lost its Resume to
+ * a run that has ended. Both are a row that has to be drawn again, and one read
+ * of the listing is what draws it again. The lists come out sorted so the pair
+ * of them can stand for the disagreement itself.
+ */
+const whoIsPlaying = (rows: readonly PlayingRow[], listed: readonly SeriesRow[]): [string[], string[]] => [
+  rows
+    .filter((row) => row.stale === false)
+    .map((row) => row.dir)
+    .sort(),
+  listed
+    .filter((row) => row.playing !== null)
+    .map((row) => row.dir)
+    .sort(),
+];
+
+/**
+ * The poll: `/api/playing` once a second, and only while it answers
+ * that somebody is playing.
+ *
+ * Why this loop exists at all: the listings are read when the page opens and when
+ * *this console's* run ends, and a series played by `no-dice series` at a terminal
+ * is in neither path — its pair count would sit at whatever it was when the page
+ * loaded. Why it asks that route and no other: `/api/series` reads every match
+ * log of every series, which is a second or two of disk and the reason nothing
+ * else on this page is polled, while `/api/playing` reads `series.lock` and
+ * `series.json` and nothing else.
+ *
+ * Why it stops: an answer that names no playing series is a machine on which
+ * nothing is being played, and a page that kept asking once a second then would be
+ * paying for a poll of nothing. The next listing read starts it again.
+ *
+ * A console that does not answer is not a machine on which nothing is playing —
+ * the run lives in somebody else's process — so a failed read says the line and
+ * the loop keeps asking, as the run poller's does.
+ *
+ * A disagreement is reported to the listings once, not once a tick. The read it
+ * asks for costs every match log of every series, and a console that fails it
+ * would otherwise be asked for it every second on top of the poll; while both
+ * sides stand where they were when the disagreement was last reported, asking
+ * again is asking for the same answer.
+ */
+export const createPlayingPoller = (options: PlayingPollerOptions): PlayingPoller => {
+  const everyMs = options.everyMs ?? POLL_MS;
+  const wait = options.wait ?? ((ms: number): Promise<void> => new Promise((later) => setTimeout(later, ms)));
+  let stopped = false;
+  let going = false;
+  let reported: string | null = null;
+
+  const run = async (): Promise<void> => {
+    if (going) return;
+    going = true;
+    try {
+      for (;;) {
+        let rows: PlayingRow[] | null = null;
+        try {
+          rows = parsePlayingListing(await getJson<unknown>("/api/playing", options.fetchJson)).playing;
+        } catch (error) {
+          options.say(error instanceof Error ? error.message : String(error), true);
+        }
+        if (stopped) return;
+
+        if (rows !== null) {
+          const live = rows.filter((row) => row.stale === false);
+          // The counters first, so the number the operator is looking at moves on
+          // the tick it arrived rather than after a listing read that costs a
+          // megabyte per series.
+          for (const row of live) {
+            if (row.progress !== null) writeSeriesCounters(options.section, row.dir, row.progress);
+          }
+          const [polled, shown] = whoIsPlaying(live, options.listed());
+          const disagreement = sameDirs(polled, shown) ? null : JSON.stringify([polled, shown]);
+          if (disagreement !== null && disagreement !== reported) {
+            reported = disagreement;
+            await options.relist();
+          }
+          if (stopped) return;
+          if (live.length === 0) return;
+        }
+
+        await wait(everyMs);
+        if (stopped) return;
+      }
+    } finally {
+      going = false;
+    }
+  };
+
+  return { run, stop: (): void => void (stopped = true) };
 };
