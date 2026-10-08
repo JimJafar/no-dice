@@ -28,9 +28,14 @@
  * heading, which is replaced whole on every render: an entry that has left the
  * registry file must not leave its row on the page. The caller puts back what it
  * owns — the progress section, for one.
+ *
+ * The five sit inside the four views `views.ts` shows one at a time, and the frame
+ * does not care which one is on screen: it takes every section back to its heading,
+ * hidden view included, which is what keeps a Runs view current while the operator
+ * is looking at the leaderboard.
  */
 
-/** The sections the console is made of, in the order the page draws them. */
+/** The sections the console is made of, whichever view each one sits in. */
 export const SECTION_IDS = ["start", "progress", "results", "providers", "leaderboard"] as const;
 
 /** The frame's five sections, by the id `index.html` gives them. */

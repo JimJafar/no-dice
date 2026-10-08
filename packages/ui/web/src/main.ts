@@ -30,7 +30,10 @@
  *
  * The three reads draw into the same sections, so the order matters: `renderFrame`
  * replaces everything under every heading, and the run it cannot see is put back
- * from the last snapshot the poller took.
+ * from the last snapshot the poller took. Which of those sections is on screen is
+ * `views.ts`'s rule, and only that one: the four views are hidden rather than
+ * removed, so every read below reaches its section whether or not the view that
+ * holds it is the one the operator is looking at.
  */
 import { getJson, postJson } from "./api.ts";
 import type { FetchJson } from "./api.ts";
@@ -47,12 +50,18 @@ import { startRun } from "./start.ts";
 import { fetchResults, renderResults } from "./results.ts";
 import type { MatchRow } from "./results.ts";
 import { parseState } from "./state.ts";
+import { mountViews } from "./views.ts";
 
 /** The one line the frame has, which `index.html` owns. */
 const status = document.querySelector<HTMLElement>("#status");
 if (status === null) throw new Error("#status is missing from index.html");
 
 const sections = frameSections(document);
+
+// The nav bar, and the view the URL names. Mounted before the first read, so the
+// page a link opens shows the view that link asked for rather than flashing
+// another one first.
+mountViews(document);
 
 /** The line the page shows about itself: what it read, or why it could not. */
 const say = (message: string, bad = false): void => {
