@@ -19,17 +19,27 @@
  * one test puts a series outside them on purpose: a listing that read the whole
  * filesystem would list runs this console never started, and the page would be a
  * list of someone else's work.
+ *
+ * A series another process is playing is listed from that process's
+ * `series.lock`: one test starts a real `no-dice series` in a process of its
+ * own and watches the row change, and the cheaper ones write a lock that names
+ * this test process — a live pid, which is all the listing asks of one.
+ * `GET /api/playing` is checked against a record `/api/series` refuses: the two
+ * routes answer different questions, and the cheap one answers without reading a
+ * single match log.
  */
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { renderSeriesReport } from "@no-dice/stats/series-report";
 
 import { logPathOf, logUrlOf, resumeRecordOf, viewerUrlOf } from "./results.ts";
-import type { MatchListing, SeriesListing } from "./results.ts";
+import type { MatchListing, PlayingListing, SeriesListing, SeriesRow } from "./results.ts";
 import { HOST, startServer } from "./server.ts";
 import type { UiOptions } from "./server.ts";
 
@@ -169,6 +179,78 @@ const seriesListingAt = async (port: number): Promise<SeriesListing> =>
 const matchListingAt = async (port: number): Promise<MatchListing> =>
   JSON.parse((await get(port, "/api/matches")).body) as MatchListing;
 
+/** `/api/playing`, parsed. */
+const playingListingAt = async (port: number): Promise<PlayingListing> =>
+  JSON.parse((await get(port, "/api/playing")).body) as PlayingListing;
+
+/** The started-at every fixture lock writes. */
+const LOCKED_AT = "2026-01-01T00:00:00.000Z";
+
+/**
+ * A `series.lock` naming a live process — this test process, which is one, and
+ * whether the pid is alive is the only question the listing asks of it. So a
+ * series can be held by "another process" without a second process to keep.
+ */
+const lockHeldHere = (dir: string): void =>
+  writeFileSync(
+    join(dir, "series.lock"),
+    `{"pid":${String(process.pid)},"started_at":"${LOCKED_AT}"}\n`,
+    "utf8",
+  );
+
+/** A `series.lock` naming a process that is gone: a run that died where it stood. */
+const lockLeftByTheDead = (dir: string): void =>
+  writeFileSync(join(dir, "series.lock"), `{"pid":999999,"started_at":"${LOCKED_AT}"}\n`, "utf8");
+
+/**
+ * A series record mid-run: one pair played, its two logs not on disk yet, and no
+ * `stop` field because nothing has stopped. `seriesReport` reads it — the pair
+ * it names is missing rather than counted — and `readRunCounters` reads the
+ * same file for the row's `progress`.
+ */
+const MID_RUN_RECORD = JSON.stringify({
+  max_pairs: 3,
+  seeds: [11, 12, 13],
+  pairing: { a: { kind: "bot", bot: "greedy" }, b: { kind: "bot", bot: "random" } },
+  pairs: [
+    {
+      seed: 11,
+      matches: [
+        {
+          seat: "A",
+          path: "matches/11-greedy-random.json",
+          status: "played",
+          result: { type: "knockout", winner: "A", margin: 4 },
+          cost_usd: 0.25,
+          tokens: { total: 1200 },
+        },
+        {
+          seat: "B",
+          path: "matches/11-random-greedy.json",
+          status: "played",
+          result: { type: "time", winner: null, margin: 0 },
+          cost_usd: 0.5,
+          tokens: { total: 800 },
+        },
+      ],
+    },
+  ],
+  state: {
+    pairs_played: 1,
+    matches_played: 2,
+    matches_failed: 0,
+    stop_reason: "max_pairs",
+    stopped_early: false,
+  },
+});
+
+/** The runner's CLI, in a process of its own: the terminal that plays a series. */
+const RUNNER_CLI = fileURLToPath(new URL("../../runner/src/cli.ts", import.meta.url));
+
+/** Until a spawned process has gone, with the code it went on. */
+const ended = (child: ChildProcess): Promise<number> =>
+  new Promise((closed) => child.once("close", (code) => void closed(code ?? -1)));
+
 /**
  * Poll `/api/series` until the named series is in it. A run writes its record
  * asynchronously, so a listing asked for the instant a run started may not have
@@ -243,6 +325,9 @@ describe("GET /api/series", () => {
     // say that rather than leave it blank.
     expect([row!.ceilingUsd, row!.ceilingTokens]).toEqual([null, null]);
     expect(row!.resumable).toBe(true);
+    // Nothing holds this series: no lock, so no `playing`, no `stale`, and no run
+    // in flight to carry counters of its own.
+    expect([row!.playing, row!.stale, row!.progress]).toEqual([null, null, null]);
     // The report the CLI wrote beside that record, at the URL the `/logs/` route
     // already reaches — which is what the leaderboard links a series by.
     expect(row!.reportUrl).toBe("/logs/alpha/report.md");
@@ -324,6 +409,225 @@ describe("GET /api/series", () => {
     const after = await seriesListingAt(port);
     expect(after.series[0]!.resumable).toBe(true);
   }, 120_000);
+});
+
+describe("a series another process is playing", () => {
+  it("lists a series another process holds as playing, with its record's counters", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    const dir = join(at.seriesRoot, "terminal");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "series.json"), MID_RUN_RECORD, "utf8");
+    lockHeldHere(dir);
+
+    const listing = await seriesListingAt(port);
+    expect(listing.unreadable).toEqual([]);
+    expect(listing.series).toHaveLength(1);
+    const [row] = listing.series;
+
+    expect(row!.playing).toEqual({ pid: process.pid, startedAt: LOCKED_AT });
+    expect(row!.stale).toBeNull();
+    // A second run into that directory would be a second run of the matches this
+    // one is playing, so the console does not offer one.
+    expect(row!.resumable).toBe(false);
+    // The record's own counters, as `series.json` says them at the moment the
+    // listing was asked for — not a reading of the run's lines.
+    expect(row!.progress).toEqual({
+      maxPairs: 3,
+      pairsPlayed: 1,
+      pairsRemaining: 2,
+      matchesPlayed: 2,
+      matchesFailed: 0,
+      costUsd: 0.75,
+      tokens: 2000,
+      stopReason: null,
+      stoppedEarly: false,
+    });
+    // The report's figures are still the report's, and this row is not a second
+    // account of them: the pair the record names has no log on disk yet, and the
+    // counters are the running run's, which a finished row never carries.
+    expect(row!.pairs).toBe(1);
+    expect(row!.counted).toBe(0);
+    expect(row!.missing).toBe(2);
+  });
+
+  it("lists a lock whose process has gone as stale, and still offers the series as resumable", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    const dir = join(at.seriesRoot, "abandoned");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "series.json"), MID_RUN_RECORD, "utf8");
+    lockLeftByTheDead(dir);
+
+    const [row] = (await seriesListingAt(port)).series;
+    expect(row!.playing).toBeNull();
+    expect(row!.stale).toEqual({ pid: 999999, startedAt: LOCKED_AT });
+    // The run that left that lock has gone: the series is interrupted, which is
+    // what a resume is for.
+    expect(row!.resumable).toBe(true);
+    // And nothing is playing it, so there is no run in flight to count.
+    expect(row!.progress).toBeNull();
+  });
+
+  it("lists a series a terminal process is playing, and resumes it once that process ends", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    const dir = join(at.seriesRoot, "term");
+    const child = spawn(
+      process.execPath,
+      [
+        RUNNER_CLI,
+        "series",
+        "--game",
+        "salient",
+        "--a",
+        "bot:greedy",
+        "--b",
+        "bot:greedy",
+        "--max-pairs",
+        "2",
+        "--dir",
+        dir,
+      ],
+      { cwd: at.cwd, stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    let row: SeriesRow | undefined;
+    try {
+      // Poll until the row says somebody is playing it. The run writes its
+      // record before it takes the lock, so the series is listed a moment before
+      // it is listed as playing.
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        row = (await seriesListingAt(port)).series.find((each) => each.name === "term");
+        if (row !== undefined && row.playing !== null) break;
+        if (Date.now() > deadline) throw new Error("the terminal's series was never listed as playing");
+        await new Promise((later) => setTimeout(later, 100));
+      }
+
+      expect(row!.playing!.pid).toBe(child.pid);
+      expect(new Date(row!.playing!.startedAt).getTime()).not.toBeNaN();
+      expect(row!.stale).toBeNull();
+      expect(row!.resumable).toBe(false);
+
+      // The counters are the record's, read at the same moment: whatever the run
+      // has written to `series.json` is what the row says.
+      const record = JSON.parse(readFileSync(join(dir, "series.json"), "utf8")) as {
+        state: { pairs_played: number; matches_played: number };
+      };
+      expect(row!.progress!.pairsPlayed).toBe(record.state.pairs_played);
+      expect(row!.progress!.matchesPlayed).toBe(record.state.matches_played);
+      expect(row!.progress!.maxPairs).toBe(2);
+
+      // And the resume that row would have offered is refused at the moment it is
+      // asked for, rather than started and answered with an error line.
+      const refused = await post(port, "/api/run/resume", { dir });
+      expect(refused.status).toBe(400);
+      expect(JSON.parse(refused.body).error).toContain(`pid ${String(child.pid)}`);
+      expect((await snapshotAt(port)).state).toBe("idle");
+
+      // Let it finish on its own: a run that ends lets go of its lock.
+      expect(await ended(child)).toBe(0);
+    } finally {
+      child.kill("SIGKILL");
+    }
+
+    expect(existsSync(join(dir, "series.lock"))).toBe(false);
+    const [after] = (await seriesListingAt(port)).series;
+    expect(after!.playing).toBeNull();
+    expect(after!.stale).toBeNull();
+    expect(after!.progress).toBeNull();
+    expect(after!.resumable).toBe(true);
+  }, 120_000);
+});
+
+describe("GET /api/playing", () => {
+  it("answers the counters of a series `/api/series` cannot report", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    const dir = join(at.seriesRoot, "no-pairing");
+    mkdirSync(dir, { recursive: true });
+    // A record the report refuses — it names no pairing and no seeds — and that
+    // still says how far the run got. Counters do not need a series' finished
+    // logs, or its pairing, to be readable: that is the difference between this
+    // route and `/api/series`.
+    writeFileSync(
+      join(dir, "series.json"),
+      JSON.stringify({
+        max_pairs: 4,
+        state: { pairs_played: 2, matches_played: 4, matches_failed: 0, stopped_early: false },
+      }),
+      "utf8",
+    );
+    lockHeldHere(dir);
+
+    const listing = await seriesListingAt(port);
+    expect(listing.series).toEqual([]);
+    expect(listing.unreadable).toHaveLength(1);
+
+    const playing = await playingListingAt(port);
+    expect(playing.seriesRoot).toBe(at.seriesRoot);
+    expect(playing.playing).toEqual([
+      {
+        name: "no-pairing",
+        dir,
+        pid: process.pid,
+        startedAt: LOCKED_AT,
+        stale: false,
+        progress: {
+          maxPairs: 4,
+          pairsPlayed: 2,
+          pairsRemaining: 2,
+          matchesPlayed: 4,
+          matchesFailed: 0,
+          costUsd: 0,
+          tokens: 0,
+          stopReason: null,
+          stoppedEarly: false,
+        },
+      },
+    ]);
+  });
+
+  it("names a lock whose process has gone as stale, and nothing for a series nobody plays", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    await seriesAt(port, { ...SERIES, name: "done" });
+
+    // A finished series holds no lock, so the cheap route says nothing about it:
+    // this route answers who is playing, and nobody is.
+    expect((await playingListingAt(port)).playing).toEqual([]);
+
+    const dir = join(at.seriesRoot, "done");
+    lockLeftByTheDead(dir);
+    const [row] = (await playingListingAt(port)).playing;
+    expect(row!.name).toBe("done");
+    expect(row!.dir).toBe(dir);
+    expect(row!.pid).toBe(999999);
+    expect(row!.startedAt).toBe(LOCKED_AT);
+    expect(row!.stale).toBe(true);
+    // The counters come out of the record, whatever state it was left in.
+    expect(row!.progress!.pairsPlayed).toBe(1);
+  });
+
+  it("answers an empty listing for a root nobody has run a series into", async () => {
+    const at = consoleAt();
+    expect(await playingListingAt(await at.port)).toEqual({ seriesRoot: at.seriesRoot, playing: [] });
+  });
+
+  it("is a read: GET and HEAD answer, POST does not", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+
+    const head = await send(port, "/api/playing", "HEAD");
+    expect(head.status).toBe(200);
+    expect(head.headers["content-type"]).toContain("application/json");
+    expect(head.body).toBe("");
+
+    const posted = await post(port, "/api/playing", {});
+    expect(posted.status).toBe(405);
+    expect(posted.headers.allow).toBe("GET, HEAD");
+  });
 });
 
 describe("the viewer's URL for a log", () => {
@@ -593,6 +897,30 @@ describe("POST /api/run/resume", () => {
     expect((await snapshotAt(port)).state).toBe("idle");
   });
 
+  it("refuses a series another process is playing, and takes over a lock whose process has gone", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    await seriesAt(port, { ...SERIES, name: "held" });
+    const dir = join(at.seriesRoot, "held");
+
+    lockHeldHere(dir);
+    const refused = await post(port, "/api/run/resume", { dir });
+    expect(refused.status).toBe(400);
+    expect(JSON.parse(refused.body).error).toContain("series.lock");
+    expect(JSON.parse(refused.body).error).toContain(`pid ${String(process.pid)}`);
+    // Nothing was started: the refusal is the whole answer, rather than a run
+    // whose only output is the runner's own error line a minute later. The slot
+    // still holds the run that finished above, rather than one now running.
+    expect((await snapshotAt(port)).state).toBe("done");
+
+    // A lock whose process has gone is an interrupted series, which is what a
+    // resume is for: the runner takes that lock over, and lets go of it again.
+    lockLeftByTheDead(dir);
+    const done = await runTo(port, "/api/run/resume", { dir });
+    expect(done.dir).toBe(dir);
+    expect(existsSync(join(dir, "series.lock"))).toBe(false);
+  }, 120_000);
+
   it("refuses a second run while a resumed one is in flight", async () => {
     const at = consoleAt();
     const port = await at.port;
@@ -634,5 +962,44 @@ describe("the record a resume reads", () => {
 
   it("says there is nothing to resume for a directory that holds no record", () => {
     expect(() => resumeRecordOf(tempDir("nd-ui-empty-"))).toThrow(/is not there/);
+  });
+
+  it("refuses a series whose lock names a live process, in one line naming that pid", () => {
+    const dir = tempDir("nd-ui-locked-");
+    writeFileSync(
+      join(dir, "series.json"),
+      JSON.stringify({
+        max_pairs: 3,
+        pairing: { a: { kind: "bot", bot: "greedy" }, b: { kind: "bot", bot: "random" } },
+      }),
+      "utf8",
+    );
+    lockHeldHere(dir);
+
+    // The same fact the runner refuses the run for, said before the console
+    // starts anything, and naming the process that holds the directory.
+    expect(() => resumeRecordOf(dir)).toThrow(
+      new Error(
+        `another series run holds ${join(dir, "series.lock")}: pid ${String(process.pid)} started at ` +
+          `${LOCKED_AT} and is still playing this series, so it is not resumed`,
+      ),
+    );
+  });
+
+  it("reads the record of a series whose lock names a process that is gone", () => {
+    const dir = tempDir("nd-ui-stale-");
+    writeFileSync(
+      join(dir, "series.json"),
+      JSON.stringify({
+        max_pairs: 2,
+        pairing: { a: { kind: "bot", bot: "greedy" }, b: { kind: "bot", bot: "random" } },
+      }),
+      "utf8",
+    );
+    lockLeftByTheDead(dir);
+
+    // A dead run's lock is not a reason to refuse: resuming that series is the
+    // recovery, and the runner takes the stale lock over when it starts.
+    expect(resumeRecordOf(dir).maxPairs).toBe(2);
   });
 });

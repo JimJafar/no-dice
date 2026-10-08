@@ -30,8 +30,11 @@
  * else about that run from the series' own record.
  *
  * What is already on disk is reachable through the same server. `/api/series`
- * and `/api/matches` list it (`./results.ts`), `/api/leaderboard` answers both
- * leaderboard views over those same records in one call (`./leaderboard.ts`),
+ * and `/api/matches` list it (`./results.ts`), `/api/playing` lists the series
+ * that hold a `series.lock` with the counters their own records carry — the cheap
+ * read a page can poll, where `/api/series` reads every match log —,
+ * `/api/leaderboard` answers both leaderboard views over those same records in
+ * one call (`./leaderboard.ts`),
  * `/logs/<path>` serves the JSON a listing names and the `report.md` a finished
  * series wrote beside its record, and `/viewer/` serves the built replay viewer,
  * which is what opens one of those logs at
@@ -74,7 +77,7 @@ import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
 import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
-import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, seriesRows } from "./results.ts";
+import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, playingRows, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
 import type { RunKind, RunSlot } from "./runs.ts";
 import {
@@ -606,6 +609,14 @@ const route = async (
 
   if (path === "/api/matches") {
     sendJson(response, 200, await matchRows(config));
+    return;
+  }
+
+  // Who is playing what. `series.lock` and `series.json` and no match log, which
+  // is what makes it a route a page can ask once a second — `./results.ts` says
+  // what `/api/series` costs, and why nothing polls that one.
+  if (path === "/api/playing") {
+    sendJson(response, 200, await playingRows(config));
     return;
   }
 

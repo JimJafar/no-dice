@@ -18,7 +18,10 @@
  * — so this calls `seriesEntries` once and hands the reports that walk already
  * read to `pooledModelRows`. The per-pairing rows and the pooled rows are two
  * views of one walk of the disk, which is why the page can read this when it is
- * opened rather than on its one-second poll.
+ * opened rather than on its one-second poll. That poll has its own route now —
+ * `GET /api/playing`, which reads `series.lock` and `series.json` and no match
+ * log — and the rows this route answers with carry the same lock facts that one
+ * walk read, rather than a second walk being paid to find them out.
  *
  * **What is in scope, and what says it is not.** Only directories under the
  * console's `--series-root`: a series started with `--dir` somewhere else is real

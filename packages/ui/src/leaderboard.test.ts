@@ -520,6 +520,14 @@ describe("the rows behind the route", () => {
       }),
       "utf8",
     );
+    // And a lock left by a run whose process has gone. The rows this file answers
+    // with are the walk's, so they carry what it read of that lock; a second walk
+    // to find out who had the directory is what this file exists to avoid.
+    writeFileSync(
+      join(at.seriesRoot, "one", "series.lock"),
+      '{"pid":999999,"started_at":"2026-01-01T00:00:00.000Z"}',
+      "utf8",
+    );
 
     const listing = results.seriesListingOf(await results.seriesEntries(at, null));
     const lb = await leaderboardRows(at, null);
@@ -528,6 +536,12 @@ describe("the rows behind the route", () => {
     expect(lb.series).toEqual(listing.series);
     expect(lb.unreadable).toEqual(listing.unreadable);
     expect(lb.series[0]!.reportUrl).toBe("/logs/one/report.md");
+    expect(lb.series[0]!.playing).toBeNull();
+    expect(lb.series[0]!.stale).toEqual({ pid: 999999, startedAt: "2026-01-01T00:00:00.000Z" });
+    // Nothing is playing it, so there is no run in flight to carry counters for,
+    // and a gone run is no reason not to offer the series as a resume.
+    expect(lb.series[0]!.progress).toBeNull();
+    expect(lb.series[0]!.resumable).toBe(true);
     // A series with no counted match has no model row: a rate of `null` over
     // nothing is not a leaderboard entry.
     expect(lb.models).toEqual([]);

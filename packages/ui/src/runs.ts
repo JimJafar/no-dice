@@ -60,7 +60,10 @@
  * pairing with something the page happens to have in a form field. The ceilings
  * are the one thing a resume takes from the operator rather than from the record:
  * the record's `stop` fields say what the last run was bounded by, the page shows
- * them, and a resumed run that gives no ceiling has no ceiling.
+ * them, and a resumed run that gives no ceiling has no ceiling. A series whose
+ * lock names a live process is refused before any of that is read:
+ * `resumeRecordOf` names the pid that holds the directory, in one line, rather
+ * than starting a run whose only output is the runner's own refusal.
  */
 import { basename, join, resolve } from "node:path";
 

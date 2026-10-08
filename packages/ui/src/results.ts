@@ -38,6 +38,26 @@
  * console cannot report is listed separately, with the line the report failed on,
  * rather than dropped.
  *
+ * **A series another process is playing is listed as playing.** For every
+ * series under the root the walk reads `<dir>/series.lock` through
+ * `@no-dice/runner/series-lock`: a row carries `playing` — that lock's pid and the
+ * minute it was taken — when it names a live process, `stale` when it names one
+ * that is gone, and `progress`, the record's own counters, while the run is in
+ * flight. The run slot's `inFlight` is still in the resumable decision: it covers
+ * the moment after a console run has been started and before its lock exists, and
+ * it is the console's own word about its own run. It is no longer the only fact.
+ * A series played by `no-dice series` in a terminal has no run in this process at
+ * all, and a listing that read only this console's run slot would call it finished
+ * and offer to play its matches a second time.
+ *
+ * **`GET /api/playing` is the cheap half of that reading.** `playingRows` reads
+ * `series.lock` and `series.json` and no match log, which is what lets a page that
+ * wants a pair count moving ask it on a poll; `/api/series` reads every log of
+ * every series, which is the cost the second paragraph above names. The two answer
+ * different questions on purpose: a series whose record this console cannot report
+ * is in `unreadable` on one route and answers with its counters on the other, and
+ * that difference is the reason there are two routes rather than one with a flag.
+ *
  * **The two roots share one URL space under `/logs/`.** A series' logs are at
  * `/logs/<series>/matches/<file>.json` and a single match's at
  * `/logs/<file>.json`, so a path is looked for under the series root first and
@@ -54,9 +74,13 @@ import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
+import { processAlive, readSeriesLock, seriesLockPath, seriesLockSchema } from "@no-dice/runner/series-lock";
+import type { SeriesLock } from "@no-dice/runner/series-lock";
 import { seatLabel, seriesReport } from "@no-dice/stats/series-report";
 import type { SeriesReport } from "@no-dice/stats/series-report";
 
+import { readRunCounters } from "./progress.ts";
+import type { RunCounters } from "./progress.ts";
 import { resolveStatic } from "./static.ts";
 import type { UiRoots } from "./state.ts";
 
@@ -119,6 +143,18 @@ const hasRecord = async (dir: string): Promise<boolean> => {
   }
 };
 
+/**
+ * The run a series directory's lock names: the process that took it, and when.
+ *
+ * `startedAt` is copied out of the lock as it was written. It decides nothing here
+ * — the pid decides live and gone — but an operator reading a lock a killed run
+ * left behind has to be able to tell which run left it.
+ */
+export interface LockHolder {
+  pid: number;
+  startedAt: string;
+}
+
 /** One series as the page lists it: the pairing, how far it got, and how it ended. */
 export interface SeriesRow {
   /** The directory's own name, which is what `--name` gave it. */
@@ -161,7 +197,31 @@ export interface SeriesRow {
    */
   ceilingUsd: number | null;
   ceilingTokens: number | null;
-  /** Whether the console offers to resume it: a series whose run is not in flight. */
+  /**
+   * The run playing this series, when its lock names a live process: another
+   * `no-dice series` on this machine, or this console's own run once its lock
+   * exists. `null` when nothing holds the directory.
+   */
+  playing: LockHolder | null;
+  /**
+   * The lock a run left behind, when the process it names has gone: the series is
+   * interrupted rather than playing, and the recovery is to resume it. `null`
+   * while the lock names somebody who is alive, and when there is no lock.
+   */
+  stale: LockHolder | null;
+  /**
+   * The record's own counters — pairs played, matches played and failed, tokens
+   * and cost so far — read with `readRunCounters` as the listing was asked
+   * for. Non-null **only** for a series that is playing: a finished row already
+   * carries the report's `pairs`, `counted` and `missing`, and a row holding a
+   * second account of how far a finished series got is how the two drift apart.
+   */
+  progress: RunCounters | null;
+  /**
+   * Whether the console offers to resume it: no run in flight here, and no lock
+   * naming a live process. A stale lock does not refuse one — the run that wrote
+   * it is gone, and resuming that series is what to do about it.
+   */
   resumable: boolean;
 }
 
@@ -187,8 +247,14 @@ export interface ReadableSeries {
   name: string;
   /** The series directory, as an absolute path. */
   dir: string;
-  /** Whether the console offers it as a resume: its run is not in flight. */
+  /** Whether the console offers it as a resume: no run in flight, no live lock. */
   resumable: boolean;
+  /** The run its lock names, when that process is alive. */
+  playing: LockHolder | null;
+  /** The lock whose process has gone, when there is one. */
+  stale: LockHolder | null;
+  /** The record's counters, and only while the series is playing. */
+  progress: RunCounters | null;
   /** The report `no-dice stats --series <dir>` prints for it. */
   report: SeriesReport;
   error: null;
@@ -214,8 +280,11 @@ export interface SeriesWalk {
   entries: SeriesEntry[];
 }
 
+/** A lock as the row names who holds it. */
+const holderOf = (lock: SeriesLock): LockHolder => ({ pid: lock.pid, startedAt: lock.started_at });
+
 /** One series report, as a row. */
-const rowOf = ({ name, dir, resumable, report }: ReadableSeries): SeriesRow => ({
+const rowOf = ({ name, dir, resumable, playing, stale, progress, report }: ReadableSeries): SeriesRow => ({
   name,
   dir,
   reportUrl: logUrlOf(`${name}/report.md`),
@@ -236,6 +305,9 @@ const rowOf = ({ name, dir, resumable, report }: ReadableSeries): SeriesRow => (
   confidence: report.result.confidence,
   ceilingUsd: report.stop.ceilingUsd ?? null,
   ceilingTokens: report.stop.ceilingTokens ?? null,
+  playing,
+  stale,
+  progress,
   resumable,
 });
 
@@ -252,7 +324,10 @@ const rowOf = ({ name, dir, resumable, report }: ReadableSeries): SeriesRow => (
  *
  * `inFlight` is the series directory the console has a run in, if any; that one
  * is not offered as a resume, because a second run into the same directory would
- * be a second run of the same matches.
+ * be a second run of the same matches. Neither is a series whose lock names a
+ * live process: that directory is being played by somebody else on this machine,
+ * and the row says so and names the pid rather than offering a second run over
+ * the matches the first is playing.
  */
 export const seriesEntries = async (roots: UiRoots, inFlight: string | null): Promise<SeriesWalk> => {
   const seriesRoot = resolve(roots.seriesRoot);
@@ -261,9 +336,33 @@ export const seriesEntries = async (roots: UiRoots, inFlight: string | null): Pr
   for (const name of await subdirectories(seriesRoot)) {
     const dir = join(seriesRoot, name);
     if (!(await hasRecord(dir))) continue;
-    const resumable = inFlight === null || resolve(inFlight) !== dir;
+
+    // The lock is the fact this console could not otherwise know. Its run slot
+    // only ever holds a run this process started, and a series played by
+    // `no-dice series` in a terminal is in no run slot anywhere.
+    const lock = await readSeriesLock(dir);
+    const playing = lock.kind === "held" ? holderOf(lock.lock) : null;
+    const stale = lock.kind === "stale" ? holderOf(lock.lock) : null;
+    // The run slot stays in the decision: it covers the moment after a console
+    // run has been started and before its lock exists, and it is the console's
+    // own word about its own run. A stale lock is no refusal — the run that wrote
+    // it has gone, and resuming that series is the recovery.
+    const resumable = (inFlight === null || resolve(inFlight) !== dir) && playing === null;
     try {
-      entries.push({ name, dir, resumable, report: await seriesReport(dir), error: null });
+      entries.push({
+        name,
+        dir,
+        resumable,
+        playing,
+        stale,
+        // Only a series that is being played gets the record's counters: a
+        // finished row already carries the report's figures, and this is the
+        // series' own account of a run still moving, not a second copy of one
+        // that has stopped.
+        progress: playing === null ? null : readRunCounters(dir),
+        report: await seriesReport(dir),
+        error: null,
+      });
     } catch (error) {
       // A record this console cannot read is still a series on disk, and the
       // operator has to be able to see that it is there and what is wrong with
@@ -284,6 +383,64 @@ export const seriesListingOf = (walk: SeriesWalk): SeriesListing => {
     else series.push(rowOf(entry));
   }
   return { seriesRoot: walk.seriesRoot, series, unreadable };
+};
+
+/** One series under the root that holds a `series.lock`, and what that lock says. */
+export interface PlayingRow {
+  /** The directory's own name, which is what `--name` gave it. */
+  name: string;
+  /** The series directory, as an absolute path. */
+  dir: string;
+  /** The process the lock names. */
+  pid: number;
+  /** When it took the lock, as the lock wrote it. */
+  startedAt: string;
+  /** Whether that process has gone: the run that wrote the lock died where it stood. */
+  stale: boolean;
+  /** The record's own counters, or `null` for a record this console cannot read. */
+  progress: RunCounters | null;
+}
+
+/** What `GET /api/playing` answers. */
+export interface PlayingListing {
+  seriesRoot: string;
+  /** One entry per series under the root that holds a `series.lock`, in name order. */
+  playing: PlayingRow[];
+}
+
+/**
+ * Every series under the root that holds a `series.lock`, with the counters its
+ * own record carries: `series.lock` and `series.json` and no match log.
+ *
+ * This is what a page can ask once a second. `seriesRows` reads every log of
+ * every series — 150 of them at a megabyte each for a full series — and so is a
+ * route for when the page is opened, not for a poll. The two are not the same
+ * listing and do not fail the same way: a series whose record this console cannot
+ * report is in `unreadable` there and answers with its counters here, because a
+ * run's counters do not need its finished logs to be readable.
+ *
+ * A series with no lock is not here at all: this route answers who is playing,
+ * and a finished series is playing nobody.
+ */
+export const playingRows = async (roots: UiRoots): Promise<PlayingListing> => {
+  const seriesRoot = resolve(roots.seriesRoot);
+  const playing: PlayingRow[] = [];
+
+  for (const name of await subdirectories(seriesRoot)) {
+    const dir = join(seriesRoot, name);
+    const lock = await readSeriesLock(dir);
+    if (lock.kind === "free") continue;
+    playing.push({
+      name,
+      dir,
+      pid: lock.lock.pid,
+      startedAt: lock.lock.started_at,
+      stale: lock.kind === "stale",
+      progress: readRunCounters(dir),
+    });
+  }
+
+  return { seriesRoot, playing };
 };
 
 /**
@@ -422,6 +579,36 @@ const resumeShape = z.object({
 });
 
 /**
+ * The lock `dir` holds, when it names a process that is alive; `null` for no
+ * lock, one that names nothing readable, and one whose process has gone.
+ *
+ * The read is synchronous because the run slot's start is: it answers a POST
+ * without awaiting anything. The rules it applies — the pid bounds, what a lock
+ * that will not parse means, and what counts as alive — are the runner's own
+ * schema and `processAlive`, so the console cannot disagree with the run the
+ * runner refuses.
+ */
+const liveLockOf = (dir: string): SeriesLock | null => {
+  let text: string;
+  try {
+    text = readFileSync(seriesLockPath(dir), "utf8");
+  } catch {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+
+  const lock = seriesLockSchema.safeParse(parsed);
+  if (!lock.success) return null;
+  return processAlive(lock.data.pid) ? lock.data : null;
+};
+
+/**
  * What the series in `dir` says about how it should be resumed.
  *
  * The read is synchronous, like the run slot's other reads: a start is answered
@@ -431,8 +618,21 @@ const resumeShape = z.object({
  * with — the last of those is a series interrupted before its first write, and
  * there is no pairing to resume it with, which is worth saying out loud rather
  * than drawing a fresh one.
+ *
+ * A lock naming a live process is refused first, before the record is read at
+ * all. The runner refuses that run too, but a console that started it would show
+ * its operator a run whose only output is an error line a minute later; the
+ * refusal here is the same fact, said at the moment the button was pressed.
  */
 export const resumeRecordOf = (dir: string): ResumeRecord => {
+  const held = liveLockOf(dir);
+  if (held !== null) {
+    throw new Error(
+      `another series run holds ${seriesLockPath(dir)}: pid ${String(held.pid)} started at ` +
+        `${held.started_at} and is still playing this series, so it is not resumed`,
+    );
+  }
+
   const path = join(dir, "series.json");
   let text: string;
   try {
