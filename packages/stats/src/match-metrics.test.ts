@@ -522,6 +522,7 @@ describe("a synthetic log with compaction and every pass reason", () => {
     expect(seatA.metrics.passes).toEqual({
       no_submission: 1,
       timeout: 1,
+      prompt_timeout: 0,
       token_budget: 1,
       provider_error: 1,
       harness_crash: 1,
@@ -601,6 +602,7 @@ describe("a synthetic log with compaction and every pass reason", () => {
     expect(bands["1-8"].metrics.passes).toEqual({
       no_submission: 1,
       timeout: 0,
+      prompt_timeout: 0,
       token_budget: 0,
       provider_error: 0,
       harness_crash: 0,
@@ -617,6 +619,7 @@ describe("a synthetic log with compaction and every pass reason", () => {
     expect(bands["9-17"].metrics.passes).toEqual({
       no_submission: 0,
       timeout: 1,
+      prompt_timeout: 0,
       token_budget: 1,
       provider_error: 1,
       harness_crash: 0,
@@ -633,6 +636,7 @@ describe("a synthetic log with compaction and every pass reason", () => {
     expect(bands["18-25"].metrics.passes).toEqual({
       no_submission: 0,
       timeout: 0,
+      prompt_timeout: 0,
       token_budget: 0,
       provider_error: 0,
       harness_crash: 1,

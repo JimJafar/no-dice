@@ -33,11 +33,13 @@
  * turn, one that settles without one passes with `no_submission`, a provider
  * that fails after Pi's own retries passes with `provider_error`, and output
  * tokens over the per-turn budget abort the seat and pass with `token_budget`.
- * A turn that runs out of its time is aborted by the runner, which is the one
- * that knows, and the runner says `timeout` on the way to the log. The
- * match-level failure — the Pi process dying — is not a turn, and is thrown as
- * `MatchVoided`. A call to a tool the seat was not given is not a failure at
- * all: Pi's lock-down refuses it, and the turn goes on.
+ * A `prompt` command the seat never answers — its client waits 30 s, drops the
+ * request and rejects, with the child alive — passes with `prompt_timeout`, and
+ * the match goes on. A turn that runs out of its time is aborted by the runner,
+ * which is the one that knows, and the runner says `timeout` on the way to the
+ * log. The match-level failure — the Pi process dying — is not a turn, and is
+ * thrown as `MatchVoided`. A call to a tool the seat was not given is not a
+ * failure at all: Pi's lock-down refuses it, and the turn goes on.
  */
 import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -385,7 +387,11 @@ export class PiPlayer implements Player {
    * turn.`, with nothing else, so both seats are asked identically.
    *
    * Nothing here retries a turn: brief §6.3 forbids it, and Pi's own provider
-   * retries are the only ones a turn gets.
+   * retries are the only ones a turn gets. A `prompt` command that comes back
+   * wrong while the seat's process is alive ends the turn as a pass with
+   * `prompt_timeout` rather than throwing, because the match has a turn to
+   * record and the seat is prompted again next turn; only a seat whose process is
+   * gone ends the match.
    */
   async playTurn(turn: number): Promise<TurnOutcome> {
     const client = this.client;
@@ -468,12 +474,25 @@ export class PiPlayer implements Player {
 
     try {
       const prompt = `Turn ${String(turn)} of ${String(this.turns)}. Play your turn.`;
-      const disposition = await this.command("the prompt", () => client.prompt(prompt));
-      // A prompt that Pi handled without starting a run — an extension command,
-      // say — never settles, so waiting on it would hang the turn.
-      if (disposition === "started") {
-        const ended = await Promise.race([settled.then(() => false), seatGone.then(() => true)]);
-        died = ended;
+      try {
+        const disposition = await this.command("the prompt", () => client.prompt(prompt));
+        // A prompt that Pi handled without starting a run — an extension command,
+        // say — never settles, so waiting on it would hang the turn.
+        if (disposition === "started") {
+          const ended = await Promise.race([settled.then(() => false), seatGone.then(() => true)]);
+          died = ended;
+        }
+      } catch (error) {
+        // A seat whose process is gone is the match-level failure it has always
+        // been, and `command` has already said so in the words brief §6.3 gives.
+        if (error instanceof MatchVoided) throw error;
+        // Anything else is a seat that is alive and did not take the question:
+        // `RpcClient` waits a fixed 30 s for a response, then drops the pending
+        // request and rejects, with the child running and still working. That is
+        // not a death, and it is not the runner's turn cap either, so the turn is
+        // passed under a reason of its own and the match goes on with the calls
+        // the seat had already made.
+        passed = "prompt_timeout";
       }
     } finally {
       unsubscribe();
@@ -482,9 +501,21 @@ export class PiPlayer implements Player {
 
     if (died) throw this.voided("harness_crash", "the seat's Pi process exited during the match");
 
-    const stats = await this.command("the session stats", () => client.getSessionStats());
+    // The turn's figures come from the same client that just failed to answer, so
+    // the same 30 s and the same non-death rejection can land here. A turn that
+    // is already a pass must not be lost to a usage figure: when the seat cannot
+    // say what the turn cost it, the turn is kept and its figures are missing.
+    let stats: SessionStats | null = null;
+    try {
+      stats = await this.command("the session stats", () => client.getSessionStats());
+    } catch (error) {
+      if (error instanceof MatchVoided) throw error;
+    }
     const previous = this.totals;
-    this.totals = stats;
+    // Only a seat that answered moves the totals the next turn is measured
+    // against; a seat that could not say leaves them where they were, and the
+    // turn after it carries what this one spent.
+    if (stats !== null) this.totals = stats;
 
     // Only a call the game answered is a submission: a refused one never reached it.
     const submissions = toolCalls.filter((call) => call.tool === SUBMIT_TOOL && submissionOf(call.result) !== null);
@@ -507,7 +538,10 @@ export class PiPlayer implements Player {
       // A turn the runner aborted is a turn that ran out of its time, but the
       // runner is the one that knows that; the seat only knows it has no orders.
       passed: submitted ? null : passed,
-      provider: providerTurn(previous, stats, compacted),
+      // `undefined` rather than a row of noughts: a seat that answered no
+      // command at the end of this turn cannot say what the turn cost it, and
+      // the runner writes noughts only for a seat that runs no provider.
+      provider: stats === null ? undefined : providerTurn(previous, stats, compacted),
     };
   }
 

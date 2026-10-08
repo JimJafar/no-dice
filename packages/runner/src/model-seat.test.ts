@@ -22,10 +22,13 @@
  * provider that kept refusing, a turn over its output budget — because the runner
  * carries the seat's reason to the log rather than guessing `no_submission`. One
  * plays the reason only the runner can see: its own deadline firing on a seat
- * that is busy and has submitted nothing. One plays a match voided by a seat
- * that reached a tool outside the seven, in a process of its own: the runner has
- * to let go of everything it started when a turn rejects, not only when it ends,
- * and only a process can show that.
+ * that is busy and has submitted nothing. One plays the reason only the seat's
+ * client can see: a `prompt` command that was never answered while the Pi
+ * process stayed alive, which passes the turn as `prompt_timeout` and still
+ * writes the match. One plays a match voided by a seat that reached a tool
+ * outside the seven, in a process of its own: the runner has to let go of
+ * everything it started when a turn rejects, not only when it ends, and only
+ * a process can show that.
  *
  * A Pi seat is seconds to start and seconds to prompt, so every test here carries
  * a timeout of its own.
@@ -406,6 +409,93 @@ describe("a Pi seat that runs past the runner's turn timeout", () => {
       expect(onDisk.result.type).toBe("time");
     } finally {
       // The stub's held reply is still in flight; stopping the stub cancels it.
+      await stub.stop();
+    }
+  }, SEAT_TIMEOUT_MS);
+});
+
+/**
+ * The turn deadline the match below is played under.
+ *
+ * It has to be longer than the 30 s the seat's own client waits for a response
+ * to `prompt`, or the runner's `timeout` is what the log records instead: the
+ * client's command timeout and the runner's clock start within milliseconds of
+ * each other, and 45 s is the margin that keeps the seat's reason the one that
+ * arrives first.
+ */
+const PROMPT_TURN_DEADLINE_MS = 45_000;
+
+describe("a Pi seat whose prompt is never answered", () => {
+  it("passes that turn as prompt_timeout, and plays and logs the match around it", async () => {
+    // The reasons above are reported from inside a turn the seat was playing.
+    // This is the one a seat reports because it never started playing: the
+    // client drops the pending `prompt` command after 30 s and rejects, with the
+    // child alive and still working, which is what the first attempt at seed
+    // 479473028 did behind a compaction summary of its own (§8 of
+    // docs/pi-harness-notes.md). What only the runner can show is that the match
+    // goes on: the turn is in the log, and the match is not voided.
+    //
+    // The wedge is produced the way it happened in the real match. The model
+    // entry's window is 40,000 tokens, so Pi's compaction line is 40,000 -
+    // 16,384 = 23,616; turn 1's answer reports 30,200 of them and carries the
+    // bulk a cut point needs, so Pi wants a summary as soon as the turn ends, and
+    // a turn does not settle while Pi is compacting. That summary request is held
+    // for 120 s, so the runner's deadline ends turn 1 and turn 2's `prompt`
+    // command is answered only once the summary lands — past the 30 s the seat's
+    // client waits.
+    const stub = await startStub([
+      {
+        text: "the map is a hex grid ".repeat(20_000),
+        usage: { input: 30_000, output: 200, cacheRead: 0, cacheWrite: 0 },
+      },
+      ...sleepsPastDeadline(120_000, "A summary nobody is left waiting for."),
+    ]);
+    const paths = pathsFor("prompt-timeout");
+    try {
+      const { log } = await runMatch({
+        out: paths.out,
+        seed: 135,
+        config: { ...DEFAULT_CONFIG, turns: 2 },
+        seats: {
+          A: {
+            ...stubSeat(stub),
+            // The small window is what puts the conversation over Pi's
+            // compaction line on the first turn.
+            modelsJson: stubModelsJson(stub.baseUrl, { contextWindow: 40_000, cost: COST }),
+          },
+          B: GREEDY,
+        },
+        turnTimeoutMs: PROMPT_TURN_DEADLINE_MS,
+        matchDir: paths.matchDir,
+      });
+
+      // Turn 1 was played: the seat answered it, and it was still compacting
+      // afterwards when the runner's clock ran out.
+      expect(log.turns[0].players.A.passed).toBe("timeout");
+
+      // Turn 2 is the one the seat never took. It is neither of the reasons that
+      // belong to a turn in progress: the runner's deadline never came, and the
+      // seat was never asked, so `no_submission` would read as a model that was
+      // prompted and chose to sit the turn out.
+      const seat = log.turns[1].players.A;
+      expect(seat.passed).toBe("prompt_timeout");
+      expect(seat.orders).toEqual([]);
+      expect(seat.tool_calls).toEqual([]);
+      // The turn is the seat's own 30 s rather than the runner's 45: the client
+      // gave up on the command, and the runner never had to abort the seat.
+      expect(seat.wall_ms).toBeGreaterThanOrEqual(30_000);
+      expect(seat.wall_ms).toBeLessThan(PROMPT_TURN_DEADLINE_MS);
+
+      // The match was played and written: the log is on disk, validates, and the
+      // Greedy seat played its half of the turn the wedged seat never played.
+      const onDisk = matchLogSchema.parse(JSON.parse(readFileSync(paths.out, "utf8")) as unknown);
+      expect(onDisk.turns).toHaveLength(2);
+      expect(onDisk.turns[1].players.A.passed).toBe("prompt_timeout");
+      expect(onDisk.turns[1].players.B.passed).toBeNull();
+      expect(onDisk.turns[1].players.B.orders.length).toBeGreaterThan(0);
+      expect(onDisk.result.type).toBe("time");
+    } finally {
+      // The stub's held summary is still in flight; stopping the stub cancels it.
       await stub.stop();
     }
   }, SEAT_TIMEOUT_MS);

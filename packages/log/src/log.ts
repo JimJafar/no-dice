@@ -90,10 +90,16 @@ export type RejectedSubmission = z.infer<typeof rejectedSubmissionSchema>;
  * Why a player played no orders this turn. `harness_crash` and `tool_surface`
  * void or abort the match rather than just passing a turn, and are logged the
  * same way when a partial log is kept.
+ *
+ * `prompt_timeout` is not `timeout`, and the two are kept apart on purpose:
+ * `timeout` is brief §6.3's turn cap, the runner stopping a seat that was
+ * playing, and `prompt_timeout` is the harness giving up on the `prompt` command
+ * itself — a seat that never took the question, and whose process is alive.
  */
 export const passReasonSchema = z.enum([
   "no_submission",
   "timeout",
+  "prompt_timeout",
   "token_budget",
   "provider_error",
   "harness_crash",

@@ -13,8 +13,10 @@
  *
  * A seat that stops answering its next command is a third thing, and the last
  * test here reproduces it: the seat is alive and still working, and all the
- * harness has is a bare rejection. Section 8 of docs/pi-harness-notes.md says
- * why, and what a reason for it would have to say.
+ * harness has is a bare rejection from its own client. That turn is passed, with
+ * `prompt_timeout` — a reason of its own, so a reader cannot mistake it for the
+ * runner's `timeout`. Section 8 of docs/pi-harness-notes.md says why the seat
+ * gets into that state, and what the passed turn leaves for the one after it.
  *
  * What a seat reports and what the log says are not quite the same, and the
  * split is deliberate: a turn that ran out of its time is aborted by the runner,
@@ -37,7 +39,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { PiPlayer } from "./pi-player.ts";
 import type { PiPlayerOptions } from "./pi-player.ts";
-import { MatchVoided } from "./player.ts";
 import type { PlayerContext, TurnOutcome } from "./player.ts";
 import {
   StubModel,
@@ -455,10 +456,10 @@ describe("a seat's turn outcomes", () => {
   );
 
   it(
-    "fails the turn whose prompt Pi never answers, on a seat that is alive and still working",
+    "passes the turn whose prompt Pi never answers, on a seat that is alive and still working",
     async () => {
       // What the first attempt at seed 479473028 did, played against a stub, and
-      // what the harness does with it today. Section 8 of docs/pi-harness-notes.md
+      // what the harness makes of it. Section 8 of docs/pi-harness-notes.md
       // states the mechanism; this test is the reproduction of it.
       //
       // Pi answers a `prompt` command from one place — the `preflightResult`
@@ -521,24 +522,25 @@ describe("a seat's turn outcomes", () => {
       nextTurn();
       stub.setScript(sleepsPastDeadline(90_000, "A summary nobody is left waiting for."));
       const requestsBefore = stub.requestCount;
-      let rejection: unknown = null;
-      try {
-        await player.playTurn(turn);
-      } catch (error) {
-        rejection = error;
-      }
+      // The turn comes back rather than throwing: a seat that is alive and did
+      // not answer is a turn the harness passes, not a match it gives up on.
+      const wedged = await player.playTurn(turn);
 
-      // Today: the turn rejects, with whatever `RpcClient` threw.
-      expect(rejection).toBeInstanceOf(Error);
-      const message = rejection instanceof Error ? rejection.message : String(rejection);
-      expect(message).toContain("Timeout waiting for response to prompt");
-      // It is not a death, and the harness cannot call it one: these are the
-      // phrases `seatIsGone` reads, and none of them is in the message, which is
-      // why `PiPlayer.command()` rethrows this rather than voiding the match.
-      expect(message).not.toMatch(/process exited|process error|Client not started/i);
+      // Brief §6.3's row for this case, under a reason that is not the runner's
+      // `timeout`: that one is the runner stopping a seat that was playing, and
+      // this seat never took the question at all. `no_submission` would read as
+      // a model that was asked and chose to sit the turn out.
+      expect(wedged.turn).toBe(turn);
+      expect(wedged.passed).toBe("prompt_timeout");
+      expect(wedged.submitted).toBe(false);
+      // The turn is a record with the calls it made, and it made none: the
+      // prompt never reached the session. Whatever a seat had already made before
+      // its client gave up stays with the turn, instead of the turn going missing
+      // along with the match.
+      expect(wedged.toolCalls).toEqual([]);
       // The seat's process is alive, and still working: it made a provider
       // request after the command was given up on, and that request is still
-      // open. A dead child makes neither.
+      // open. A dead child makes neither, and a dead child is a void instead.
       expect(stub.requestCount).toBeGreaterThan(requestsBefore);
       expect(stub.repliesInFlight).toBeGreaterThan(0);
       if (existsSync("/proc")) {
@@ -556,16 +558,6 @@ describe("a seat's turn outcomes", () => {
       expect(JSON.stringify(entries)).toContain(`Turn ${String(abortedTurn)} of 25.`);
       expect(JSON.stringify(entries)).not.toContain(`Turn ${String(turn)} of 25.`);
       expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
-      // What that leaves the match with, today: no turn record, and a
-      // throw that is not the one match-level failure a player can report a
-      // reason for. `MatchVoided` is how a player says "write no log for
-      // this match, and here is the reason code the series records"; a bare
-      // `Error` escapes `runMatch` before the log is written and reaches the
-      // series record as its raw message, which is how seed 479473028 came to be
-      // played twice. There is no `PassReason` for a seat that was alive and
-      // simply did not answer its prompt, so there is no turn to log either.
-      expect(rejection).not.toBeInstanceOf(MatchVoided);
-      expect((rejection as { reason?: unknown }).reason).toBeUndefined();
     },
     // The 30 s the client waits for the prompt, on top of an aborted turn that
     // a starved box can hold until the 120 s reply it is sitting in lands — the

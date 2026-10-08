@@ -44,6 +44,7 @@ No match ended in a knockout.
 | turns passed | 2 | 2 | 0 | 0 |
 | passed: no_submission | 2 | 2 | 0 | 0 |
 | passed: timeout | 0 | 0 | 0 | 0 |
+| passed: prompt_timeout | 0 | 0 | 0 | 0 |
 | passed: token_budget | 0 | 0 | 0 | 0 |
 | passed: provider_error | 0 | 0 | 0 | 0 |
 | passed: harness_crash | 0 | 0 | 0 | 0 |
@@ -85,6 +86,7 @@ Compaction turns: seed 572152369, marvin/subagent in seat A, turn 18; seed 70812
 | turns passed | 0 | 0 | 0 | 0 |
 | passed: no_submission | 0 | 0 | 0 | 0 |
 | passed: timeout | 0 | 0 | 0 | 0 |
+| passed: prompt_timeout | 0 | 0 | 0 | 0 |
 | passed: token_budget | 0 | 0 | 0 | 0 |
 | passed: provider_error | 0 | 0 | 0 | 0 |
 | passed: harness_crash | 0 | 0 | 0 | 0 |

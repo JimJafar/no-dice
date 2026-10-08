@@ -54,6 +54,11 @@ export interface RejectedSubmission {
  * two are not turns at all: they end the match, and a player reports them by
  * throwing `MatchVoided` rather than by handing back an outcome.
  *
+ * `prompt_timeout` is the one a Pi seat can report and no other seat can: the
+ * harness sent the turn's `prompt` command and the seat's own client gave up on
+ * the answer, with the process still running. It is not `timeout`, which is the
+ * runner's turn cap and is written by the runner, not by a seat.
+ *
  * The names are repeated here rather than imported, for the same reason
  * `ToolCallRecord` repeats `toolCallSchema`: the harness does not depend on the
  * runner, and the runner checks what a seat reports against its own schema.
@@ -61,6 +66,7 @@ export interface RejectedSubmission {
 export type PassReason =
   | "no_submission"
   | "timeout"
+  | "prompt_timeout"
   | "token_budget"
   | "provider_error"
   | "harness_crash"

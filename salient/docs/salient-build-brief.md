@@ -345,6 +345,7 @@ At the end of the match, close the process's stdin; Pi shuts down in an orderly 
 | The server has an accepted submission but the agent is still running | Wait 10 seconds, then send `abort` |
 | `agent_settled` arrives with no accepted submission | Pass, logged with reason `no_submission` |
 | 5 minutes pass with no accepted submission | Send `abort`, pass, reason `timeout` |
+| The `prompt` command is never answered and the Pi process is still running | Pass, reason `prompt_timeout` — not `timeout`, which is the turn cap above. The seat's own client gives up on the command, the turn is not played, and the player stays in the match |
 | Output tokens for the turn exceed the budget | Send `abort`, pass unless already submitted, reason `token_budget` |
 | Provider error after Pi's retries | Pass, reason `provider_error`; the series runner may void and replay the match |
 | The Pi process exits during the match | Void the match, reason `harness_crash` |

@@ -41,6 +41,7 @@ const SEATS: readonly Seat[] = ["A", "B"];
 export const PASS_TEXT: Record<PassReason, string> = {
   no_submission: "sent no orders",
   timeout: "ran out of time",
+  prompt_timeout: "never took the prompt",
   token_budget: "ran out of output tokens",
   provider_error: "hit a provider error",
   harness_crash: "crashed its harness",
