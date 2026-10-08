@@ -34,7 +34,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -604,6 +604,40 @@ describe("a series command line that does not ask for a series it can run", () =
 
     expect(result.code).not.toBe(0);
     expect(result.err[0]).toContain("--concurrency needs a value");
+  });
+
+  it("names a series another run is playing, before playing a match of it", async () => {
+    const seriesDir = join(dir, "series", "locked-by-another-run");
+    await mkdir(seriesDir, { recursive: true });
+    // The lock of a run that is playing this directory right now. This test process is
+    // alive, so the run is refused rather than told the lock is stale.
+    await writeFile(
+      join(seriesDir, "series.lock"),
+      `${JSON.stringify({ pid: process.pid, started_at: "2026-01-01T00:00:00.000Z" })}\n`,
+      "utf8",
+    );
+
+    const result = await run([...SERIES, "--dir", seriesDir]);
+
+    expect(result.code).toBe(1);
+    expect(result.err).toHaveLength(1);
+    expect(result.err[0]).toMatch(
+      new RegExp(
+        `^error: another series run holds .*series\.lock: pid ${String(process.pid)} started at`,
+      ),
+    );
+
+    // The plan ran, and the seed fields with it; nothing else did. No match was played,
+    // and the record holds no pairs and no run state from a run that never started.
+    expect(existsSync(join(seriesDir, "matches"))).toBe(false);
+    const record = JSON.parse(await readFile(join(seriesDir, "series.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(record).not.toHaveProperty("pairs");
+    expect(record).not.toHaveProperty("state");
+    // The lock is the other run's, and this one leaves it where it found it.
+    expect(existsSync(join(seriesDir, "series.lock"))).toBe(true);
   });
 });
 

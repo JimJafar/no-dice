@@ -9,7 +9,8 @@
     "./cli": "./src/cli.ts",
     "./args": "./src/args.ts",
     "./providers": "./src/providers.ts",
-    "./series-plan": "./src/series-plan.ts"
+    "./series-plan": "./src/series-plan.ts",
+    "./series-lock": "./src/series-lock.ts"
   },
   "bin": {
     "no-dice": "./src/cli.ts"

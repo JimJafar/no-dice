@@ -27,6 +27,12 @@
  * reason, and is played again by the next run. It is never counted as a match that
  * was played, and it does not take the rest of its batch down with it.
  *
+ * A run holds `<dir>/series.lock` — its pid, and when it started — for as
+ * long as it plays, and is refused before it plays a match if that lock names a live
+ * process. That is what stops the console's Resume, or a second `no-dice series --dir`,
+ * from playing a second run over the matches this one is playing; `./series-lock.ts`
+ * holds the lock and what it does with a run that died without letting go.
+ *
  * The stopping rules are brief §6.5's and live beside this loop, in
  * `./series-stop.ts`. They are asked at the end of every batch of 5 pairs, and
  * their ceilings also before the next batch starts, never in the middle of a
@@ -60,7 +66,8 @@ import type { SeatArg } from "./args.ts";
 import { runMatch, seatSpec } from "./match.ts";
 import type { MatchOutcome, RunMatchOptions, SeatSpec } from "./match.ts";
 import { planSeries, seriesRecordPath, writeSeriesRecord } from "./series-plan.ts";
-import type { PlannedMatch, PlannedPair } from "./series-plan.ts";
+import type { PlannedMatch, PlannedPair, SeriesPlan } from "./series-plan.ts";
+import { acquireSeriesLock, releaseSeriesLock } from "./series-lock.ts";
 import {
   BATCH_PAIRS,
   ceilingsPassed,
@@ -403,22 +410,22 @@ const slots = (n: number): (<R>(task: () => Promise<R>) => Promise<R>) => {
 };
 
 /**
- * Play a series: plan it, play what the plan says is missing, and record every
- * pair after every batch of 5.
+ * Play a series: plan it, take the lock on its directory, play what the plan says
+ * is missing, and record every pair after every batch of 5.
  *
- * The plan is the whole list, including the pairs already on disk, so the record
- * a restart leaves describes the whole series rather than only the part this run
- * played. Pairs from an earlier record that this plan does not cover — a lowered
- * `--max-pairs` — are carried over rather than dropped: a played match is never
- * erased from the series' memory.
+ * A run that finds the directory locked by a live process is refused before it plays
+ * anything, and a run that gets as far as the plan leaves the seed fields the
+ * plan wrote and nothing else. `./series-lock.ts` says why the lock is one small
+ * file rather than a claim nobody can check.
  */
 export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
-  const playMatch = options.playMatch ?? runMatch;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
   const ceilings: Ceilings = {
     ...(options.maxCostUsd === undefined ? {} : { maxCostUsd: options.maxCostUsd }),
     ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
   };
+  // Both are refused before anything is planned, locked or written: a run that cannot
+  // be scheduled, or cannot say what it may spend, is a mistake on the command line.
   checkCeilings(ceilings);
   checkConcurrency(concurrency);
   const plan = await planSeries({
@@ -429,6 +436,36 @@ export async function runSeries(options: RunSeriesOptions): Promise<SeriesRun> {
     ...(options.seedBase === undefined ? {} : { seedBase: options.seedBase }),
   });
 
+  // The lock on the directory, taken after the plan — the plan has made the directory
+  // and written the seed fields, which a run refused here leaves as it found them — and
+  // so before the first match and the first record write. It is released in a `finally`,
+  // so a run that throws — an unreadable log, a stop, anything — leaves no lock behind
+  // for the next run to have to steal.
+  await acquireSeriesLock(plan.dir);
+  try {
+    return await playPlan(plan, options, options.playMatch ?? runMatch, concurrency, ceilings);
+  } finally {
+    await releaseSeriesLock(plan.dir);
+  }
+}
+
+/**
+ * What a run does once it holds the lock on its own directory: play the plan, and
+ * record every pair after every batch of 5.
+ *
+ * The plan is the whole list, including the pairs already on disk, so the record
+ * a restart leaves describes the whole series rather than only the part this run
+ * played. Pairs from an earlier record that this plan does not cover — a lowered
+ * `--max-pairs` — are carried over rather than dropped: a played match is never
+ * erased from the series' memory.
+ */
+async function playPlan(
+  plan: SeriesPlan,
+  options: RunSeriesOptions,
+  playMatch: PlayMatch,
+  concurrency: number,
+  ceilings: Ceilings,
+): Promise<SeriesRun> {
   // What the record already said, so the seed fields `planSeries` wrote and the
   // pairs this plan does not plan both survive being rewritten.
   const existing = await readRawRecord(plan.dir);
