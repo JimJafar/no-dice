@@ -150,8 +150,9 @@ const seatsHaveCredentials = async (
     // A provider the registry names is checked with the `models.json` its seat
     // will be given, since the seat home that would otherwise hold it is made per
     // match and a series is asked before its first one exists. A provider the
-    // registry does not name is checked against the operator's own Pi config,
-    // which is how a built-in provider's exported key has always been found.
+    // registry does not name is checked with an empty config directory, which is
+    // what `createSeatHome` gives every seat: an exported key is found there, and a
+    // login kept in the operator's own `~/.pi/agent` — which no seat reads — is not.
     const auth = await checkPiAuth({ model, modelsJson: seatModelsJson(model) ?? undefined });
     if (!auth.ok) {
       stderr(`error: seat ${seat}: ${auth.message}`);

@@ -34,15 +34,16 @@
  * **The credential check opens no connection.** `POST /api/providers/check`
  * makes the exact call `packages/runner/src/cli.ts` makes before a run —
  * `checkPiAuth` with the seat's `models.json` when the registry names the
- * provider — and `pi auth check` reads configuration only. That is what makes
- * the route testable with no credential on the machine: it is a question about
- * the registry and the environment, not a request to an endpoint, and it plays
- * no match. A check that answers "not ready" is answered with 200 and Pi's own
- * reason, because the check *was* made; only a request that asked for something
- * that is not a `<provider>/<id>` is a 400 — and the provider half has to be a
- * name the registry could hold, because `checkPiAuth` hands it to Pi as
- * `--provider <name>` and a model like `--flag/x` would be a flag in Pi's parser
- * rather than a provider.
+ * provider, and with an empty config directory when it does not, which is what
+ * `createSeatHome` gives every seat — and `pi auth check` reads configuration
+ * only. That is what makes the route testable with no credential on the machine:
+ * it is a question about the registry and the environment, not a request to an
+ * endpoint, and it plays no match. A check that answers "not ready" is answered
+ * with 200 and Pi's own reason, because the check *was* made; only a request that
+ * asked for something that is not a `<provider>/<id>` is a 400 — and the provider
+ * half has to be a name the registry could hold, because `checkPiAuth` hands it
+ * to Pi as `--provider <name>` and a model like `--flag/x` would be a flag in
+ * Pi's parser rather than a provider.
  */
 import { addProvider, isProviderName, reloadProviders, seatModelsJson } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
@@ -195,9 +196,11 @@ const askedModel = (payload: unknown): { ok: true; model: string } | ProviderRef
  *
  * The call is the CLI's own, `seatModelsJson` included: a provider the registry
  * names is checked against the `models.json` its seat would be given, and one it
- * does not name is checked against the operator's own Pi config. So the page
- * cannot report a seat as ready that `no-dice` would stop, and the two answers
- * cannot drift.
+ * does not name is checked with an empty config directory, because that is what
+ * a seat gets — `createSeatHome` relocates `PI_CODING_AGENT_DIR` to a fresh one
+ * for every match. So the page cannot report a seat as ready that `no-dice`
+ * would stop, and cannot report one ready from an OAuth login kept in the
+ * operator's own `~/.pi/agent`, which no seat this console starts ever reads.
  */
 export const checkCredential = async (payload: unknown): Promise<CheckResult> => {
   const asked = askedModel(payload);

@@ -11,13 +11,23 @@
  * seat that has none stops the run with one line naming the provider.
  *
  * The check runs the pinned CLI, never the `pi` on `PATH`, with the environment
- * the seat's own process is about to get: `PI_CODING_AGENT_DIR` at the seat's
- * home, so a provider named in the seat's `models.json` is found there, and a key
- * the operator exported is found in the environment. That is what lets a test
- * point a seat at a stub provider on loopback and pass the check with no
- * credential in the world. A check made before the seat exists — the command line
- * asking about a series' seats — is handed the seat's `models.json` instead of a
- * home, and asks of a throwaway directory holding just that file.
+ * the seat's own process is about to get, so a key the operator exported is
+ * found in it. That is what lets a test point a seat at a stub provider on
+ * loopback and pass the check with no credential in the world.
+ *
+ * **The config directory is always one this call made and throws away.** With a
+ * `models.json` handed to the call it holds that file alone; without one it is
+ * empty. Either way it replaces whatever `PI_CODING_AGENT_DIR` the caller's
+ * environment names, because that is the condition a seat is in:
+ * `createSeatHome` relocates the variable to a fresh directory for every seat,
+ * and the operator's own `~/.pi/agent` — with the OAuth logins its `auth.json`
+ * holds — is a directory no seat ever reads. Asked there instead, the check can
+ * answer `ready` from a login the seat will never see, and the run it just
+ * encouraged then fails at the first turn. A check made before the seat exists —
+ * the command line asking about a series' seats, or the console asking about a
+ * model before anyone starts a run — is handed the seat's `models.json` rather
+ * than a home, and gets an empty directory when the registry names no entry for
+ * the provider.
  */
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -35,13 +45,17 @@ export interface PiAuthOptions {
   model: string;
   /**
    * The variables the seat's process will be given, merged over this process's
-   * own. The seat's `models.json` is read from the `PI_CODING_AGENT_DIR` in here.
+   * own. An exported key in here is what a provider Pi knows natively has its
+   * credential from; a `PI_CODING_AGENT_DIR` in here is not what the question is
+   * asked with — see `askInFreshHome`.
    */
   env?: Record<string, string>;
   /**
    * The `models.json` the seat is about to be given, for a run that asks before
    * the seat exists — the command line checks a series' seats before there is a
-   * match directory to write a home in. See `askWithModelsJson`.
+   * match directory to write a home in. Leave it out for a model no registry
+   * entry names: the question is then asked of an empty config directory, which
+   * is what a seat on a provider Pi knows natively is given. See `askInFreshHome`.
    */
   modelsJson?: unknown;
 }
@@ -117,24 +131,28 @@ const askPi = (provider: string, env: Record<string, string>): Promise<PiAnswer>
   });
 
 /**
- * The same question, of a config directory holding only the `models.json` the
- * seat is about to be given.
+ * The same question, of a config directory made for the asking: the
+ * `models.json` the seat is about to be given when there is one, and nothing in
+ * it when there is not.
  *
- * A seat's own check already has its home, and the file is in it. The command
- * line's check runs before a series has a match directory to make a home in, so
- * without this the question is asked of the operator's own config, where a
- * provider the repo's registry names is not — and the run stops with "name the
- * provider in its models.json" one step before the file that names it would be
- * written. The directory is thrown away as soon as Pi has answered.
+ * The command line's check runs before a series has a match directory to make a
+ * home in, so the file is handed to it rather than read from a home. The empty
+ * branch is the one that used to inherit the caller's `PI_CODING_AGENT_DIR`, and
+ * inheriting it asked the wrong question: an operator logged into a provider by
+ * OAuth answers `ready` there, while the seat the console then starts reads an
+ * empty directory and has no credential at all. The directory is thrown away
+ * as soon as Pi has answered.
  */
-const askWithModelsJson = async (
+const askInFreshHome = async (
   provider: string,
   env: Record<string, string>,
   modelsJson: unknown,
 ): Promise<PiAnswer> => {
   const home = mkdtempSync(join(tmpdir(), "no-dice-auth-"));
   try {
-    writeFileSync(join(home, "models.json"), `${JSON.stringify(modelsJson, null, 2)}\n`, "utf-8");
+    if (modelsJson !== undefined) {
+      writeFileSync(join(home, "models.json"), `${JSON.stringify(modelsJson, null, 2)}\n`, "utf-8");
+    }
     return await askPi(provider, { ...env, PI_CODING_AGENT_DIR: home });
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -156,10 +174,10 @@ export const checkPiAuth = async (options: PiAuthOptions): Promise<PiAuth> => {
     if (typeof value === "string") env[name] = value;
   }
 
-  const ran =
-    options.modelsJson === undefined
-      ? await askPi(provider, env)
-      : await askWithModelsJson(provider, env, options.modelsJson);
+  // Both branches go through the same fresh directory, and neither reads the
+  // caller's: what is being asked is what a seat would find, and a seat's own
+  // home is empty apart from the `models.json` the registry made for it.
+  const ran = await askInFreshHome(provider, env, options.modelsJson);
 
   const report = reportOf(ran.stdout);
   if (ran.timedOut) {

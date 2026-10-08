@@ -19,8 +19,9 @@
  *   after a write is for;
  * - the check answers what `checkPiAuth` answers, which is testable because
  *   `pi auth check` reads configuration only: a keyless entry is ready, an entry
- *   whose variable is not exported is not, and no connection is opened and no
- *   match played either way.
+ *   whose variable is not exported is not, a model no entry names is asked about
+ *   in an empty config directory as a seat would be, and no connection is opened
+ *   and no match played either way.
  *
  * Every test writes a registry of its own in a temp directory, so none of them
  * touches the committed `providers.json`, and every server listens on port 0 and
@@ -150,6 +151,9 @@ const KEYED = "ndkeyed";
 
 /** The variable the keyed entry names, which nothing in this test sets. */
 const NOT_EXPORTED = "ND_PROVIDERS_TEST_KEY_NOT_EXPORTED";
+
+/** A key that is not a key: the pinned Pi reads a provider's variable as set at all. */
+const DUMMY_KEY = "a-key-that-is-not-a-key";
 
 /** One provider entry, spelled out, to post or to put in a fixture file. */
 const entryOf = (baseUrl: string, apiKeyEnv: string | null): Record<string, unknown> => ({
@@ -552,9 +556,10 @@ describe("asking Pi about a seat's credential", () => {
   });
 
   it("answers what checkPiAuth answered, for a provider the registry does not name", async () => {
-    // A provider the registry does not name is handed no `models.json`, which is
-    // what leaves it to Pi's own lookup — and with no credential on the machine,
-    // that lookup says not ready. The route does not invent an answer for it.
+    // A provider the registry does not name is handed no `models.json`, which
+    // leaves the question to be asked with an empty config directory — what
+    // `createSeatHome` gives the seat — and with no credential on the machine that
+    // answer is not ready. The route does not invent an answer for it.
     const port = await consoleOn(registryFile());
     const answer = await post(port, "/api/providers/check", { model: "ndnowhere/m1" });
 
@@ -564,5 +569,35 @@ describe("asking Pi about a seat's credential", () => {
     const direct = await checkCredential({ model: "ndnowhere/m1" });
     expect(direct.ok).toBe(true);
     expect(direct.ok && direct.auth.ok).toBe(false);
+  }, 60_000);
+
+  it("says ready for a model no registry entry names, on a key in its own environment", async () => {
+    // `deepseek/deepseek-flash` is a provider the pinned Pi knows natively: no
+    // entry in this console's registry, no base URL, no key variable typed. The
+    // seat this console would start gets an empty config directory and this
+    // process's environment, so the check is asked the same way — and an exported
+    // key is the whole of the credential. Asked of the operator's own
+    // `~/.pi/agent` instead, a login no seat will ever read could answer ready.
+    const had = process.env.DEEPSEEK_API_KEY;
+    process.env.DEEPSEEK_API_KEY = DUMMY_KEY;
+    try {
+      const port = await consoleOn(registryFile());
+      const answer = await post(port, "/api/providers/check", {
+        model: "deepseek/deepseek-flash",
+      });
+
+      expect(answer.status).toBe(200);
+      expect(JSON.parse(answer.body)).toEqual({
+        ok: true,
+        provider: "deepseek",
+        reason: null,
+        message: "",
+      });
+      // The check answers about the credential; it never carries one.
+      expect(answer.body).not.toContain(DUMMY_KEY);
+    } finally {
+      if (had === undefined) delete process.env.DEEPSEEK_API_KEY;
+      else process.env.DEEPSEEK_API_KEY = had;
+    }
   }, 60_000);
 });

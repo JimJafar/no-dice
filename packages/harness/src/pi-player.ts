@@ -532,11 +532,14 @@ export class PiPlayer implements Player {
     // brief §6.3 resolves a credential before a turn is spent finding out there is
     // none, and it asks Pi rather than reading a key file: the seat's home is empty
     // by design, so a login stored in `~/.pi/agent` is not there to find. The check
-    // is given the environment the child is about to get, which is what makes a
-    // provider named in the seat's own `models.json` resolve.
+    // is given the environment the child is about to get and the `models.json` that
+    // went into that home, so it is asked in the condition the seat is in — which is
+    // what makes a provider named in the seat's own `models.json` resolve and an
+    // OAuth login in the operator's config not.
     const auth = await checkPiAuth({
       model: this.options.model,
       env: { ...home.env, ...(this.options.env ?? {}) },
+      modelsJson: this.options.modelsJson,
     });
     if (!auth.ok) {
       throw new Error(`seat ${this.options.seat}: ${auth.message}`);

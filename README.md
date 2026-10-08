@@ -100,7 +100,15 @@ lists every entry with its endpoint and its key variable's *name* (never a
 value), `POST /api/providers` adds one through the same schema the file is read
 back with, and
 `POST /api/providers/check` asks Pi what it would say about seating a model
-before anyone tries. The console writes the file its `--providers <file>` flag
+before anyone tries — with that entry's `models.json` when this file names the
+provider, and with an empty config directory when it does not, which is what a
+seat is given. `GET /api/models` lists the models the pinned Pi knows natively
+that this console's own environment has a key for — the cheapest seats to take,
+since they need no entry in this file, no endpoint and no key variable typed —
+and its rows carry providers, model ids and Pi's own figures, with no key value
+and no key variable among them. That list is a route of its own rather than a
+field of `/api/state` because it costs a subprocess of about 0.7 s: the views
+that need it ask for it once, and nothing polls it. The console writes the file its `--providers <file>` flag
 names, which defaults to this one, and re-reads it at startup and after every
 entry it adds — so the runs a console starts seat on the registry it writes, and
 an entry typed at the page is seatable by the next run without a restart. It

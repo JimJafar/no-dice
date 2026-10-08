@@ -20,7 +20,11 @@
  * adds an entry through the runner's own schema and re-reads the registry,
  * so the next run this process starts seats on it. `/api/providers/check` asks
  * Pi what it would say about seating a model, which is the same question the
- * CLI asks before a run and one that opens no connection.
+ * CLI asks before a run and one that opens no connection. `/api/models` asks Pi
+ * which of the models it knows natively this console's own environment has a key
+ * for — the seats that need no registry entry at all — and is a route of its own
+ * rather than a field of `/api/state`, because it costs a subprocess and nothing
+ * should poll it (`./models.ts`).
  * The run slot says what it holds: the run in flight, or the last one, with the
  * lines it has printed. A run
  * is started by `POST /api/run/match` or `POST /api/run/series`, and it is
@@ -74,12 +78,15 @@ import { createReadStream, realpathSync, statSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
+import { listPiModels } from "@no-dice/harness";
 import { PROVIDERS_FILE, providerRegistry, reloadProviders } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
 import { ESTIMATE_PATH, estimateQueryOf, estimateRows } from "./estimate.ts";
 import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
+import { MODELS_PATH, modelList } from "./models.ts";
+import type { PiModelSource } from "./models.ts";
 import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, playingRows, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
 import type { RunKind, RunSlot } from "./runs.ts";
@@ -171,6 +178,13 @@ export interface UiOptions {
    * test points it at a file of its own, including a broken one.
    */
   registry?: () => ProviderRegistry;
+  /**
+   * Where the models Pi knows natively come from. The pinned Pi by default —
+   * asked with no `env` option, so it reads this process's own
+   * environment, which is the one the seats this console starts get. A test
+   * answers with a list of its own rather than starting a second Pi.
+   */
+  models?: PiModelSource;
 }
 
 /** The page this server can write for itself, when the app has not been built. */
@@ -465,9 +479,9 @@ const postedJson = async (
 
 /**
  * One request, routed. The reads answer out of the state, the provider registry,
- * the run slot and the two roots on disk; the write POSTs read their body and
- * ask the run slot for a run, the registry for an entry, or Pi about a
- * credential.
+ * the pinned Pi, the run slot and the two roots on disk; the write POSTs read
+ * their body and ask the run slot for a run, the registry for an entry, or Pi
+ * about a credential.
  * The route is `async` only because a body arrives over more than one event — a
  * started run is not awaited here, and a request that is answered while its run
  * has nineteen minutes to go is the whole design of this file.
@@ -476,6 +490,7 @@ const route = async (
   config: UiConfig,
   stateOf: StateOf,
   registryOf: RegistryOf,
+  modelsOf: PiModelSource,
   runs: RunSlot,
   path: string,
   method: string,
@@ -603,6 +618,18 @@ const route = async (
     return;
   }
 
+  // The models Pi knows natively that this console's own environment has a key
+  // for. Its own route rather than a field of `/api/state`, because `/api/state`
+  // is read on every page load and answers out of memory while this costs a
+  // subprocess of about 0.7 s: the views that need it ask once and nothing polls
+  // it. A Pi that could not answer throws, and `handle` below answers it with a
+  // 500 carrying the line — an empty list would tell the operator that no key is
+  // set, which is the opposite of what happened.
+  if (path === MODELS_PATH) {
+    sendJson(response, 200, await modelList(modelsOf));
+    return;
+  }
+
   // What is on disk. Both listings read their roots on every request, and
   // `./results.ts` says what that costs and why it is still the right trade.
   if (path === "/api/series") {
@@ -699,6 +726,7 @@ const handle = (
   config: UiConfig,
   stateOf: StateOf,
   registryOf: RegistryOf,
+  modelsOf: PiModelSource,
   runs: RunSlot,
   request: IncomingMessage,
   response: ServerResponse,
@@ -728,7 +756,7 @@ const handle = (
   };
 
   try {
-    route(config, stateOf, registryOf, runs, path, request.method ?? "GET", request, response).catch(
+    route(config, stateOf, registryOf, modelsOf, runs, path, request.method ?? "GET", request, response).catch(
       failed,
     );
   } catch (error) {
@@ -756,12 +784,16 @@ export async function startServer(options: UiOptions = {}): Promise<Server> {
   // reload above.
   const registryOf = options.registry ?? providerRegistry;
   const stateOf = (roots: UiRoots): UiState => uiState(roots, registryOf());
+  // The same for the model list: the pinned Pi asked with no `env` option, so the
+  // child reads this process's own environment — the one the seats this console
+  // starts inherit — and a test that does not want a second Pi answers instead.
+  const modelsOf = options.models ?? listPiModels;
   // One slot per console, made here rather than at module scope: a test that
   // starts two consoles in one process must not have them refuse each
   // other's runs, and a console that is closed has no run to hand on.
   const runs = createRunSlot({ roots: config, cwd: config.cwd });
   const server = createServer((request, response) =>
-    handle(config, stateOf, registryOf, runs, request, response),
+    handle(config, stateOf, registryOf, modelsOf, runs, request, response),
   );
 
   await new Promise<void>((listening, failed) => {
