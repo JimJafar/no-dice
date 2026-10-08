@@ -7,9 +7,17 @@ missing and what a re-run of it would do — so a second pairing can be started,
 and anyone tempted to replay this one knows what they would get, without either
 having to be re-derived from the code.
 
-The figures themselves are in the report:
-[`reports/series/marvin-subagent-vs-greedy.md`](../reports/series/marvin-subagent-vs-greedy.md).
-Related: [the pi harness notes, §7](pi-harness-notes.md), which is where the
+Sections 1 to 7 are that run — **run 1**, and every figure in them is run 1's. Section 8 records
+the **rerun** of the same pairing, played on 2026-10-07: a second series on the same five maps, a
+second sample, and not a continuation of run 1's record.
+
+The figures themselves are in the reports:
+[`reports/series/marvin-subagent-vs-greedy.md`](../reports/series/marvin-subagent-vs-greedy.md) for
+run 1, and
+[`reports/series/marvin-subagent-vs-greedy-rerun.md`](../reports/series/marvin-subagent-vs-greedy-rerun.md)
+with
+[`…-rerun-evidence.md`](../reports/series/marvin-subagent-vs-greedy-rerun-evidence.md) for the
+rerun. Related: [the pi harness notes, §7](pi-harness-notes.md), which is where the
 per-match cost estimate this run was budgeted against came from.
 
 ---
@@ -292,3 +300,142 @@ are the half that went missing last time.
 unanchored, `series/` matched `reports/series/` too and the report could not be
 tracked. The runner's own series directories are all at the repository root, so
 anchoring costs nothing.
+
+---
+
+## 8. The rerun: the same five maps played again, on 2026-10-07
+
+Run 1's two kept documents are all of run 1 that survives. The same pairing was played again on
+2026-10-07, and this time the record was kept on purpose. This section is that run's sections 1 to
+6 in one place — the command, the ceiling, the concurrency, the wall time, the matches that went
+missing, where the copies are — and every figure in it is **run 2**'s, never pooled with run 1's. Its win rate, margin and
+seat split are in the report, not here: **2 wins in 10, 20.0% with a 95% Wilson interval of
+5.7% – 51.0%**, mean margin 18.5, no knockouts.
+
+**The command, verbatim:**
+
+```bash
+no-dice series --game salient --a marvin/subagent --b bot:greedy \
+  --name marvin-subagent-vs-greedy --max-pairs 5 --max-tokens 60000000 --concurrency 1
+```
+
+The same `--max-pairs 5` pair limit, the same `--max-tokens 60000000` ceiling of section 2, the
+same `--concurrency 1`, `--seed-base` left at its default. **Jim ran it himself from his own clone,
+`/home/jim/code/no-dice`, and not inside a task workspace** — which is the lesson of sections 6
+and 7: a series played inside a task workspace is caught by the anchored `/series/` rule and
+deleted with it, and that is what cost run 1 its logs. It wrote
+`/home/jim/code/no-dice/series/marvin-subagent-vs-greedy/`. Everything else about the seat is
+unchanged from section 1's table — Pi 1.0.2 in RPC mode, `thinking medium`, `contextWindow:
+131072`, `maxTokens: 8192`, `cost_usd: 0` on every turn because Marvin is unpriced.
+
+**It is a new series, not a continuation of run 1.** Run 1's `series/` directory is gone (section
+6), so `planSeries` had no `series.json` to read: `seedBase` fell back to the default `0` and
+`drawSeeds` drew a fresh list, which at five pairs gives back exactly the five seeds run 1 drew —
+**572152369, 708123, 479473028, 313966722, 1003578858** — and so the same ten maps. The records are
+not one record, and neither is the harness: run 1 was played before `749d236` made a call to one of
+the seven tools by its bare name a *refused* call rather than a `tool_surface` void (section 5), so
+the two runs are **separate samples of the same ten maps**, never one series of ten pairs.
+[`docs/rules-review.md`](rules-review.md) labels every figure it quotes run 1's or run 2's for that
+reason, and run 1's kept report stays where it is.
+
+**Wall time, start to finish: 2 h 48 m 28 s**, 2026-10-07 22:00:41Z to 2026-10-08 00:49:09Z —
+against run 1's **5 h 27 m 44 s**. Both ends come out of the tracked logs: each match's
+`created` stamp less the sum of its per-turn `wall_ms` gives its start.
+
+| pair | seed | pair finished | minutes |
+| --- | ---: | --- | ---: |
+| 1 | 572152369 | 22:35:08 | 34.4 |
+| 2 | 708123 | 23:02:09 | 27.0 |
+| 3 | 479473028 | 00:49:09 | 37.8 |
+| 4 | 313966722 | 00:06:08 | 30.4 |
+| 5 | 1003578858 | 00:28:03 | 21.9 |
+
+**21.9 to 37.8 minutes a pair** against run 1's 63.5 to 74.8, and **9.6 to 23.8 minutes a match**
+against run 1's 56 to 75 for a played match. A pair's minutes are its two matches' own turn time
+added, and pair 3's row ends at a replayed log (below), which is why its finish time sits after
+pair 4's and pair 5's.
+
+Two things account for the difference, and the first is not the machine. Commit `9049e4f` ("runner:
+`--concurrency` bounds matches, so at 1 a pair's two matches take turns") landed in that clone at
+22:00:34Z, seconds before this run's first turn, so the rerun played under the new rule:
+`--concurrency 1` puts **one match** in flight and a pair's two matches take turns one after the
+other. Section 3's "a pair's two matches are played together" is run 1's runner, not this one. One
+seat in flight means one seat's conversation in Marvin's KV cache, and the cache says so: **98.3% of
+the rerun's prompt tokens were cache reads** — 58,125,343 cache-read of its 59,967,929 tokens —
+against run 1's 14.2% to 80.4% a match.
+
+The second is contention, and this is where that caveat lives. **The rerun was played by hand, by
+Jim, outside the factory**, and the task that asked for it said in terms that nothing else on the
+box should send Marvin requests while it played; with one match in flight, the single-request
+server had one seat queueing on it. The record bears that out:
+of the model seat's 250 turns, **0 were `timeout` passes and 0 were `provider_error`**, its slowest
+turn took **141.6 s** against the 300 s cap, and only 2 turns passed at all — both `no_submission`,
+both in turns 1-8. Run 1's **34 `timeout` and 18 `provider_error`** passes are to be read against
+that: section 3 says the factory's own builder agent was on the same one-request-at-a-time server
+while run 1 played, so run 1's per-turn times and pass counts measure a **contended** server and
+the rerun's measure a seat playing alone. Nothing in either report says which of run 1's 53 passes
+were the queue's, and the two runs' pass counts are not comparable.
+
+**The matches that went missing: none — 10 counted, 0 missing**, against run 1's 8 of 10. The two
+matches run 1 voided for `tool_surface` over a bare `submit_orders` (section 5) both produced logs
+this time, which is `749d236` doing what it was expected to do, and `series.json` records
+`matches_failed: 0` with `stop_reason: "max_pairs"` and `stopped_early: false`: the pair limit
+reached at the series' full length.
+
+One match was played twice, and it is not a missing one. **Seed 479473028, seat A**: the first
+attempt, 23:02:11Z to 23:18:03Z, ended with Pi's request aborted on the turn-19 prompt — that
+seat's transcript ends on an assistant message with `stopReason: "error"` and `errorMessage: "This
+operation was aborted"` — so it wrote no log. The same command run again after the rest of the
+series had finished skipped the nine logs on disk and played only that match, 00:28:27Z to
+00:49:09Z, which is pair 3's finish time above. The failed attempt's transcript is kept beside the
+replay's under `series/marvin-subagent-vs-greedy/sessions/`, and nothing was changed between the
+two attempts.
+
+**What it cost: 59,967,929 tokens** over the ten counted matches — 984,264 input, 858,322 output,
+58,125,343 cache-read, 0 cache-write — at `cost_usd: 0` throughout, so tokens and wall time again.
+That is **99.9% of the 60,000,000 ceiling**, 32,071 tokens short of it, and 5,996,793 a match
+against run 1's 2,172,486. The ceiling did not stop the run — the pair limit did — but it came
+within one match of doing so, which is the first caution below.
+
+**Where the kept copies live.**
+[`reports/series/marvin-subagent-vs-greedy-rerun.md`](../reports/series/marvin-subagent-vs-greedy-rerun.md)
+and
+[`reports/series/marvin-subagent-vs-greedy-rerun-evidence.md`](../reports/series/marvin-subagent-vs-greedy-rerun-evidence.md),
+copied verbatim out of `/home/jim/code/no-dice/series/marvin-subagent-vs-greedy/` — its
+`report.md` and its `evidence.md` — and still byte-identical to them. The evidence file is what
+`no-dice evidence` wrote over the finished series:
+
+```bash
+no-dice evidence --series /home/jim/code/no-dice/series/marvin-subagent-vs-greedy
+```
+
+It reads only `series.json` and the logs, so it runs from anywhere over an absolute path.
+Section 7's rule is why both files are there: `series/` is gitignored, so what outlives a run is
+what was copied somewhere tracked, and run 1 copied its report and not its evidence. Both copies
+name absolute paths on the machine that played the series, which is what the two generators write.
+
+This run beat section 7's rule in one respect: **its whole series directory is tracked as well**,
+at `series/marvin-subagent-vs-greedy/` — `series.json`, `report.md`, `evidence.md`, the ten match
+logs and the seats' transcripts — unignored by the `!` lines in `.gitignore` and committed by Jim
+as a second baseline. So the rerun's five counters can be regenerated from the logs they were
+counted out of, which run 1's never could, and
+[`scripts/kept-series-evidence.test.mjs`](../scripts/kept-series-evidence.test.mjs) regenerates the
+kept evidence copy from those logs and fails if the two disagree.
+
+**How to extend it.** The same command at a higher `--max-pairs`, run in the directory Jim ran it
+in — `/home/jim/code/no-dice`, his own clone, not a task workspace and not this checkout — resumes
+from the logs on disk there: `planSeries` reads that directory's `series.json`, keeps the seed list
+it holds, appends to it, and a match whose `matches/<seed>-<seat-map>.json` exists is skipped
+(section 6). `--dir <path>` points at the same directory from elsewhere. At `--max-pairs 10` the
+second batch of five pairs is where the adaptive stop becomes available, `MIN_TEST_PAIRS` being 10
+pairs.
+
+Two cautions before anyone does. **The ceiling has to be raised with the pair limit:** the ceilings
+are asked *before* each batch, over the tokens of every match already in the record
+(`ceilingsPassed` in `packages/runner/src/series-stop.ts`), and this series has already spent
+59,967,929 of its 60,000,000 — so the same command at `--max-pairs 10` stops on `max_tokens` before
+it plays a single new match; give it a ceiling the extra pairs are worth instead. And **that directory is outside the repository and nothing in git protects it:** the
+tracked copy under `series/marvin-subagent-vs-greedy/` is a copy, and a resumed run reads the
+`series.json` and the logs it is run beside. If `/home/jim/code/no-dice` goes, the resumable
+series goes with it, and what remains is the kept copies of section 7 and the tracked copy of what
+was played on 2026-10-07.
