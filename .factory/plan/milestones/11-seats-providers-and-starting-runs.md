@@ -6,9 +6,12 @@ epic: the-console-is-the-benchmark-s-front-end
 The Providers & models view manages rather than appends. `packages/runner/src/providers.ts` has
 `addProvider` and nothing else, so it gains the update and the removal, and the view gains
 edit and remove per row alongside the add form and the credential check that already exists
-(`checkPiAuth` in `packages/ui/src/providers.ts` asks the pinned Pi CLI for one line with a
-relocated `PI_CODING_AGENT_DIR`). Writes keep refusing while a run is in flight, and the console
-still never touches `~/.pi/agent/models.json` — `providers.json` is the only file it writes.
+(`checkPiAuth` in `packages/ui/src/providers.ts` asks the pinned Pi CLI for one line, with a
+relocated `PI_CODING_AGENT_DIR` — though only on the branch that writes a `models.json`: asked
+about a provider Pi knows natively it inherits the operator's own config directory, where an
+OAuth login can answer `ready` for a seat that gets an empty one and will not find it). Writes
+keep refusing while a run is in flight, and the console still never touches
+`~/.pi/agent/models.json` — `providers.json` is the only file it writes.
 
 The view also lists the models Pi knows natively whose key variable is set in the
 console's environment. That is `node <pinned cli> --list-models` run with `PI_CODING_AGENT_DIR`
@@ -23,11 +26,11 @@ The Runs view then starts a run a person meant. The seat pickers offer all three
 scripted bot, a provider from the registry, one of Pi's own models, which needs no key variable
 named because Pi already has it — and the form's defaults are the benchmark's, not the CLI's:
 five pairs, one pair at a time, no ceiling, with turn timeout, seed base and the ceilings behind
-an advanced block that starts closed. The estimate stops quoting the fixed 11 minutes and 100 000
-tokens per match from `docs/pi-harness-notes.md` §7 and works from what the series under the
-root actually measured — the turns, tokens, cost and wall time the stats package already reports
-per model — and says which matches it measured, falling back to the documented figure, cited,
-when nothing under the root has been played yet.
+an advanced block that starts closed. The estimate stops quoting the fixed figure the page holds
+today — one model match at about 19 minutes and 4.59M tokens, from `docs/pi-harness-notes.md` §7 —
+and works from what the series under the root actually measured — the turns, tokens, cost and wall
+time the stats package already reports per model — and says which matches it measured, falling back
+to the documented figure, cited, when nothing under the root has been played yet.
 
 Done when a provider can be added, edited and removed from the view with the credential check
 reporting what Pi said, when the model list is Pi's built-in models with a usable key and each

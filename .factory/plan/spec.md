@@ -107,6 +107,17 @@ Salient-specific code stays inside `games/salient`; no general game framework in
 - The server reports absolute hex labels to both seats. A bot that ranks moves in board
   coordinates is seat-biased: identical bots in the prototype split 25% to 69% by seat from
   move ordering alone (rules, "Harness and fairness").
+- Pi lists the seats that need no registry entry, on its own. `node <pinned cli> --list-models`
+  with `PI_CODING_AGENT_DIR` pointed at an empty temporary directory answers a fixed-column table
+  (`provider model context max-out thinking images`, columns joined by two spaces, about 0.7 s)
+  naming only the built-in models whose key variable is set in the environment it was run in — on
+  this box, with `DEEPSEEK_API_KEY` set, `deepseek/deepseek-flash` and `deepseek/deepseek-v4-pro`.
+  The empty directory is not a detail: pointed at a directory holding a `models.json`, the same
+  command lists that file's models too, and no seat could play those, because `createSeatHome`
+  relocates the same variable to an empty directory for every seat. With no key set it answers
+  `No models available. Use /login …`. There is no JSON mode. The same rule cuts the other way for
+  the credential check: `pi auth check` asked with the inherited `PI_CODING_AGENT_DIR` can report
+  `ready` from the operator's own `auth.json`, which a seat with an empty one will never see.
 
 ## Out of scope for v0 (brief §3)
 
@@ -132,3 +143,9 @@ tokens and 3-4 hours end to end, so the pair limit ends it before the token ceil
 open from brief §11: the second model for a second pairing, the per-turn output-token budget
 (on Marvin the money cost is zero, so the useful number is tokens per turn), the compaction
 decision, and the rules decisions milestone 06's review puts to him. None of it blocks 01–05.
+
+Milestone 11 puts a turn timeout in the start form's advanced block, and there is no such knob: the
+runner gives every turn five minutes (`TURN_TIMEOUT_MS` in `packages/runner/src/match.ts`) and no
+flag changes it. The plan states that cap on the page rather than editing it, and asks whether the
+operator should be allowed to change it — which would mean a flag on the command line, the cap
+threaded through every match, and a log header whose turn cap follows it.
