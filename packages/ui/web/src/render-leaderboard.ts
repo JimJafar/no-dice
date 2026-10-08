@@ -31,9 +31,20 @@
  * The match links are drawn from the `/api/matches` rows the page already holds,
  * which carry the series each log belongs to and the `viewerUrl` that opens it in
  * the replay viewer. The report link is the row's own `reportUrl`, which is where
- * this console serves the `report.md` the runner wrote beside the record.
+ * this console serves the report the runner wrote beside the record.
+ *
+ * **The tables are named in words, the way the rest of the page is.** A series row
+ * says its name, not the directory it lives in; a match link says who played, on
+ * what seed, on what day, not what its log is called; the pooled table says which
+ * series a model's record was pooled from by the names those series answer with.
+ * The console answers with directories, and the same answer carries a row per
+ * series with its name against its directory, so the page has the mapping in hand
+ * and no reason to put a path in front of a reader. The one line that keeps a path
+ * is a series record that will not parse, where the console's own line about it is
+ * repeated as it was written.
  */
 import { clear } from "./render-frame.ts";
+import { matchLabel } from "./results.ts";
 import type { Interval, Leaderboard, ModelRow, ResultCell, SeriesRow } from "./leaderboard.ts";
 import type { MatchRow } from "./results.ts";
 
@@ -184,6 +195,10 @@ const seatCell = (seat: "A" | "B", result: ResultCell): string =>
  * names the series, and a log says which series it belongs to. A series with no
  * log listed says so, rather than showing an empty cell that could
  * be a series that never played.
+ *
+ * The link says what the match was — the two seats, the seed, the day — and not
+ * what its log is called. The URL it points at is the console's and is untouched:
+ * the rule is about the words a reader sees, not the address a browser follows.
  */
 const matchLinks = (row: SeriesRow, matches: readonly MatchRow[]): Node => {
   const ofSeries = matches.filter((each) => each.series === row.name);
@@ -193,32 +208,42 @@ const matchLinks = (row: SeriesRow, matches: readonly MatchRow[]): Node => {
   ul.className = "series-matches";
   for (const each of ofSeries) {
     const li = document.createElement("li");
-    li.append(link("match-viewer", each.viewerUrl, each.name), document.createTextNode(" "), code(each.url));
+    li.append(link("match-viewer", each.viewerUrl, matchLabel(each)));
     ul.append(li);
   }
   return ul;
 };
 
-/** One series: the pairing as `--a` and `--b` spell it, and the report's figures for it. */
+/** One series: its name, its pairing as the console spells a seat, and the report's figures for it. */
 const seriesCells = (row: SeriesRow, matches: readonly MatchRow[]): Node[] => [
-  cell(code(row.name)),
+  cell(row.name),
   cell(`${row.a} vs ${row.b}`),
   cell(`${String(row.pairs)} of ${String(row.maxPairs)} pairs`),
   cell(`${String(row.matches)} matches`),
   cell(`${String(row.counted)} counted, ${String(row.missing)} missing`),
   cell(rateWith(row.winRate, row.interval, row.confidence)),
   cell(`stopped on ${row.stopReason} — ${row.stoppedEarly ? "short of its pair limit" : "its full length"}`),
-  cell(link("series-report", row.reportUrl, "report.md")),
+  cell(link("series-report", row.reportUrl, "its report")),
   cell(matchLinks(row, matches)),
 ];
 
+/**
+ * Which series a pooled row was pooled from, said by name.
+ *
+ * A directory with no series row beside it in the same answer is said as what it
+ * is: a series this table does not list. That is the honest line, and it is the
+ * only way a path could otherwise reach this column.
+ */
+const namesOf = (dirs: readonly string[], byDir: ReadonlyMap<string, string>): string[] =>
+  dirs.map((dir) => byDir.get(dir) ?? "a series this table does not list");
+
 /** One model: its pooled record, its record from each seat, and what it was pooled from. */
-const modelCells = (row: ModelRow): Node[] => {
+const modelCells = (row: ModelRow, byDir: ReadonlyMap<string, string>): Node[] => {
   const from = document.createElement("ul");
   from.className = "model-series";
-  for (const dir of row.series) {
+  for (const name of namesOf(row.series, byDir)) {
     const li = document.createElement("li");
-    li.append(code(dir));
+    li.append(document.createTextNode(name));
     from.append(li);
   }
 
@@ -249,19 +274,21 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
 
   const roots = paragraph("leaderboard-roots", "");
   roots.append(
-    document.createTextNode("Both tables are read from the series under "),
-    code(board.seriesRoot),
     document.createTextNode(
-      ". Only what is under that root is counted here: a series started with --dir outside it is " +
-        "not on this page, and a leaderboard that left one out without saying so would read as a " +
-        "model that never played it.",
+      "Both tables are read from the series this console lists. A series started in some other " +
+        "folder is not on this page, and a leaderboard that left one out without saying so would " +
+        "read as a model that never played it.",
     ),
   );
   el.append(roots);
 
+  // The pooled table names the series it pooled from, and the per-series rows are
+  // where those names are: the pooled rows themselves only carry directories.
+  const byDir = new Map(board.series.map((row) => [row.dir, row.name]));
+
   el.append(subheading("Per pairing — one row per series"));
   if (board.series.length === 0) {
-    el.append(paragraph("leaderboard-series-none", `No series under ${board.seriesRoot} yet.`));
+    el.append(paragraph("leaderboard-series-none", "No series here yet."));
   } else {
     el.append(
       table(
@@ -276,19 +303,19 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
           "Win rate",
           "Stopped",
           "Report",
-          "Match logs",
+          "Replays",
         ],
         board.series.map((row) => seriesCells(row, matches)),
       ),
     );
   }
 
-  el.append(subheading("Per model, pooled over every series under the root"));
+  el.append(subheading("Per model, pooled over every series this console lists"));
   if (board.models.length === 0) {
     el.append(
       paragraph(
         "leaderboard-models-none",
-        `No model has a counted match under ${board.seriesRoot} yet — a series whose every match ` +
+        "No model has a counted match here yet — a series whose every match " +
           "went missing says nothing about the models its pairing names.",
       ),
     );
@@ -307,7 +334,7 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
           "Pooled from",
           "What “missing” means",
         ],
-        board.models.map(modelCells),
+        board.models.map((row) => modelCells(row, byDir)),
       ),
     );
   }

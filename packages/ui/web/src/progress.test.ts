@@ -9,7 +9,9 @@
  * lines are drawn verbatim rather than re-flowed, that every figure the snapshot
  * carries reaches the page, that the page says the counters move at batch
  * boundaries while the lines move per pair, and that a run that has finished keeps
- * its last lines instead of losing them.
+ * its last lines instead of losing them. The other thing it checks is the split
+ * between those two voices: the run's own output block keeps its paths, and the
+ * page's own sentences have none.
  *
  * The poller is driven with a stubbed `fetch` and a `wait` that returns at once:
  * what is under test is which answers the page acts on and when it stops asking,
@@ -17,6 +19,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { expectPlainWords } from "./plain-words.ts";
 import { createRunPoller, parseRun, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
 
@@ -219,6 +222,18 @@ describe("renderProgress", () => {
   const itemsOf = (el: HTMLElement, listClass: string): string[] =>
     [...el.querySelectorAll<HTMLElement>(`.${listClass} li`)].map((li) => li.textContent ?? "");
 
+  /**
+   * What the page says in its own voice: the section's text with the run's own
+   * output block left out. That block is the CLI's, kept verbatim, and it is
+   * full of paths and file names on purpose; the rule under test is about the
+   * words the page chooses for itself.
+   */
+  const pageWords = (el: HTMLElement): string =>
+    [...el.children]
+      .filter((child) => !child.classList.contains("run-lines"))
+      .map((child) => child.textContent ?? "")
+      .join("\n");
+
   it("says that nothing is in flight, for a console that has never started a run", () => {
     const el = section();
     renderProgress(el, null);
@@ -274,7 +289,9 @@ describe("renderProgress", () => {
 
     expect(el.querySelector(".counters")).toBeNull();
     expect(el.querySelector(".no-record")?.textContent).toContain("no series record");
-    expect(el.querySelector(".run code")?.textContent).toBe("/repo/matches/135-greedy-random.json");
+    // The log it is writing is in the run's own lines, and in the Matches view as
+    // soon as it lands. The page does not put the path in its own voice.
+    expect(el.querySelector(".run code")).toBeNull();
   });
 
   it("says that a series has not written its record yet, rather than counting it as played nothing", () => {
@@ -285,6 +302,15 @@ describe("renderProgress", () => {
     expect(el.querySelector(".no-record")?.textContent).toContain("has not written its record yet");
   });
 
+  it("says what is running without saying which directory it writes into", () => {
+    const el = section();
+    renderProgress(el, RUNNING);
+
+    expect(el.querySelector(".run")?.textContent).toContain("A series is running");
+    expect(el.querySelector(".run")?.textContent).toContain("started");
+    expect(el.querySelector(".run")?.textContent).not.toContain("/repo/series/watched");
+  });
+
   it("replaces what it drew last, so a figure the record no longer carries goes away", () => {
     const el = section();
     renderProgress(el, RUNNING);
@@ -292,5 +318,32 @@ describe("renderProgress", () => {
 
     expect(itemsOf(el, "counters")[0]).toBe("pairs 10 of 12 played, 7 remaining");
     expect(el.querySelectorAll("pre.run-lines")).toHaveLength(1);
+  });
+
+  it("says what a running series is, in plain words", () => {
+    const el = section();
+    renderProgress(el, RUNNING);
+
+    expectPlainWords("runs", pageWords(el));
+  });
+
+  it("says what a finished series and a single match are, in plain words", () => {
+    const series = section();
+    renderProgress(series, DONE);
+    expectPlainWords("runs", pageWords(series));
+
+    const match = section();
+    renderProgress(match, MATCH);
+    expectPlainWords("runs", pageWords(match));
+  });
+
+  it("keeps the run's own lines exactly as they printed, paths and all", () => {
+    // The other half of the rule: the block is the CLI's account of itself, and
+    // the page does not tidy it. These are the lines that would fail the check
+    // above, and they are drawn anyway, verbatim.
+    const el = section();
+    renderProgress(el, DONE);
+
+    expect(el.querySelector("pre.run-lines")?.textContent).toContain("series.json: /repo/series/watched/series.json");
   });
 });

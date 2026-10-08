@@ -13,12 +13,21 @@
  * goes to a provider's `/v1/models`, and no key value is ever drawn: the state
  * carries provider names and the *names* of their key variables only.
  *
- * **The ceilings are beside the Start button, before it is pressed.** The
- * block names what the run will be bounded by and says which of those are the
- * runner's defaults rather than what was typed — a blank `--max-pairs` is 75
- * pairs, not nothing — and under it sits the measured cost of a series at that
- * length. A Start button that says nothing is how a 48-hour run gets started by
- * accident.
+ * **The ceilings are beside the Start button, before it is pressed.** The block
+ * names what the run will be bounded by and says which of those are the runner's
+ * defaults rather than what was typed — a blank pair limit is 75 pairs, not
+ * nothing — and under it sits the measured cost of a series at that length. A
+ * Start button that says nothing is how a 48-hour run gets started by accident.
+ *
+ * **The form speaks in words, not in the command line's words.** Every field is
+ * labelled with what it is for — Pairs, Pairs at once, Cost ceiling, Seed base —
+ * and the ceilings block names each bound the same way its field names it. The
+ * form posts the same body and the console starts the same run; only the words
+ * over the boxes change. A label that reads `--max-cost` tells a reader that the
+ * browser is a skin over a terminal, which is the one thing this page has to
+ * avoid saying. The console's own refusal line is the exception, kept verbatim:
+ * it names the field and the value it rejected, and it is the line whoever typed
+ * the form has to act on.
  *
  * **A refusal is the console's line, verbatim.** The page does not decide what a
  * valid run is: it posts, and shows what came back. A refusal starts nothing, so
@@ -54,13 +63,6 @@ export interface StartViewOptions {
 const paragraph = (className: string, text: string): HTMLElement => {
   const el = document.createElement("p");
   el.className = className;
-  el.textContent = text;
-  return el;
-};
-
-/** A flag or a path, as a path. */
-const code = (text: string): HTMLElement => {
-  const el = document.createElement("code");
   el.textContent = text;
   return el;
 };
@@ -133,18 +135,20 @@ const seatPicker = (which: "a" | "b", choices: SeatChoices): SeatPicker => {
     model.hidden = !provider;
     // A model id typed against a bot is left in the box rather than cleared: it
     // is what the operator typed, and switching the seat back should not lose it.
-    model.placeholder = provider ? `model id, as --${which} ${select.value}/<id> takes it` : "model id";
+    // The hint shows the shape a seat takes — `provider/model` — without
+    // dressing it up as a command.
+    model.placeholder = provider ? `model id, as ${select.value}/<id>` : "model id";
     sent.textContent = `seat ${which} — ${seat()}`;
   };
 
   return { root, select, model, seat, draw };
 };
 
-/** One ceiling as the page states it: the flag, the value, and whose value it is. */
+/** One ceiling as the page states it: what the run is bounded by, the value, and whose it is. */
 const ceilingItem = (ceiling: Ceiling): HTMLLIElement => {
   const li = document.createElement("li");
   li.className = `ceiling ceiling-${ceiling.source}`;
-  li.append(code(ceiling.flag), document.createTextNode(` ${ceiling.value}`));
+  li.append(document.createTextNode(`${ceiling.label}: ${ceiling.value}`));
   // Only a runner's default is explained. A value that came from the form needs
   // no attribution, and a fact about the command is not a field's value at all.
   if (ceiling.source === "runner") {
@@ -193,16 +197,16 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
   const maxTokens = textInput("field-max-tokens", "no ceiling");
   const maxCost = textInput("field-max-cost", "no ceiling");
   const concurrency = textInput("field-concurrency", "1");
-  const name = textInput("field-name", "<a>-vs-<b> when blank");
+  const name = textInput("field-name", "named from the two seats, when blank");
 
   const limits: readonly LimitField[] = [
-    { wrap: field("--seed, for a match", seed, "field-seed-wrap"), kinds: ["match"] },
-    { wrap: field("--seed-base", seedBase, "field-seed-base-wrap"), kinds: ["series"] },
-    { wrap: field("--max-pairs", maxPairs, "field-max-pairs-wrap"), kinds: ["series"] },
-    { wrap: field("--max-tokens", maxTokens, "field-max-tokens-wrap"), kinds: ["series"] },
-    { wrap: field("--max-cost", maxCost, "field-max-cost-wrap"), kinds: ["series"] },
-    { wrap: field("--concurrency", concurrency, "field-concurrency-wrap"), kinds: ["series"] },
-    { wrap: field("--name", name, "field-name-wrap"), kinds: ["series"] },
+    { wrap: field("Seed, for one match", seed, "field-seed-wrap"), kinds: ["match"] },
+    { wrap: field("Seed base", seedBase, "field-seed-base-wrap"), kinds: ["series"] },
+    { wrap: field("Pairs", maxPairs, "field-max-pairs-wrap"), kinds: ["series"] },
+    { wrap: field("Token ceiling", maxTokens, "field-max-tokens-wrap"), kinds: ["series"] },
+    { wrap: field("Cost ceiling", maxCost, "field-max-cost-wrap"), kinds: ["series"] },
+    { wrap: field("Pairs at once", concurrency, "field-concurrency-wrap"), kinds: ["series"] },
+    { wrap: field("Series name", name, "field-name-wrap"), kinds: ["series"] },
   ];
 
   const limitsBlock = document.createElement("div");
@@ -229,7 +233,7 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
   form.className = "start-form";
   form.append(
     field("Run", kind, "field-kind-wrap"),
-    field("--game", game, "field-game-wrap"),
+    field("Game", game, "field-game-wrap"),
     seatA.root,
     seatB.root,
     limitsBlock,
@@ -283,7 +287,9 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
     }
 
     outcome.className = "start-outcome start-started";
-    outcome.textContent = `Started a ${payload.kind} in ${String(answer.run.dir ?? answer.run.out)}.`;
+    // The run is reported as what started, not as where it writes: the directory
+    // is the operator's, and the run's own lines name it below, verbatim.
+    outcome.textContent = `Started a ${payload.kind}.`;
     options.onStarted(answer.run);
   };
 

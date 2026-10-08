@@ -19,6 +19,12 @@
  * keeps its terms — and zod's line naming the field it refused is drawn as it
  * arrived. A refusal adds nothing, so the list stays exactly as it was.
  *
+ * **The section's own words are plain.** No flag name, no path into the machine:
+ * the hint beside a name says what a name is used for rather than which command
+ * takes it. The entry's base URL is the exception in kind — it is not a path a
+ * reader has to do anything with, it is what the entry *is*, and it is the address
+ * a run is seated on.
+ *
  * **The credential check is asked per row, and answered per row.** A small input
  * for a model id and a button, sending `{ model: "<provider>/<id>" }` to
  * `/api/providers/check` — the same question `no-dice series` asks before it
@@ -162,7 +168,7 @@ const addForm = (
   onAdd: (values: AddValues) => Promise<AddOutcome>,
   onAdded: (name: string) => void,
 ): HTMLElement => {
-  const name = textInput("field-provider-name", "one path segment, as --a takes it");
+  const name = textInput("field-provider-name", "the name before the slash, as in marvin/subagent");
   const baseUrl = textInput("field-base-url", "https://example.ts.net:8033/v1");
   const api = textInput("field-api", "openai-completions");
   const apiKeyEnv = textInput("field-api-key-env", "variable name, blank for no key checked");

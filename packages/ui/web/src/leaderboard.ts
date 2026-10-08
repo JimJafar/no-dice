@@ -22,7 +22,10 @@
  * **What the row declares.** Only what this section draws. The
  * per-pairing row carries the pairing, the counts, the rate with its interval and
  * the stop, plus `reportUrl` — the `report.md` this console serves — and leaves
- * out the ceilings and the resume flag, which the results section owns. The
+ * out the ceilings and the resume flag, which the results section owns. It keeps
+ * `dir` for one reason: a pooled row names the series it pooled from by
+ * directory, and the page needs to know which name each of those directories
+ * goes by before it can say them. The
  * pooled row carries the counts, the pooled result, the seat split, the missing
  * count with the stats package's own note about what it means, and the series it
  * was pooled from. A model with no counted match is in no row at all, which is
@@ -64,6 +67,12 @@ export interface ResultCell {
 export interface SeriesRow {
   /** The directory's own name, which is what `--name` gave it. */
   name: string;
+  /**
+   * Where the series lives. The page never shows it: it is read because a pooled
+   * row names the series it pooled from *by directory*, and this is the only
+   * answer that says which name each of those directories goes by.
+   */
+  dir: string;
   /** The pairing, spelled as `--a` and `--b` spell it. */
   a: string;
   b: string;
@@ -199,6 +208,7 @@ const seriesRowOf = (value: unknown, what: string): SeriesRow => {
   const row = recordOf(value, what);
   return {
     name: stringOf(row["name"], `${what}.name`),
+    dir: stringOf(row["dir"], `${what}.dir`),
     a: stringOf(row["a"], `${what}.a`),
     b: stringOf(row["b"], `${what}.b`),
     maxPairs: countOf(row["maxPairs"], `${what}.maxPairs`),

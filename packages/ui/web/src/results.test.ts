@@ -13,10 +13,23 @@
  * which read the filesystem and pull in `@no-dice/stats`. The server's own
  * `results.test.ts` checks its answer against the stats report; this file checks
  * that the page draws whatever that answer says.
+ *
+ * The section speaks in words: no flag name, no absolute path and no log file
+ * name in anything it draws. That is checked at the bottom of this file, over
+ * the whole text of a section drawn from a listing that has a series, a broken
+ * record and a match in it — the fixture is deliberately one of everything, so a
+ * path or a name sneaking in through one row fails the check.
  */
 import { describe, expect, it } from "vitest";
 
-import { fetchResults, parseMatchListing, parseSeriesListing, renderResults } from "./results.ts";
+import { expectPlainWords } from "./plain-words.ts";
+import {
+  fetchResults,
+  parseMatchListing,
+  parseSeriesListing,
+  readMatchHeader,
+  renderResults,
+} from "./results.ts";
 import type { Results } from "./results.ts";
 
 /** One series, as `/api/series` answers it: two counted matches, a full-length stop. */
@@ -52,13 +65,47 @@ const MATCH = {
   series: "alpha",
 };
 
+/** What that log's own header says about the match, once the page has read it. */
+const HEADER = {
+  seats: ["bot:greedy", "bot:random"] as [string, string],
+  seed: 1234,
+  playedOn: "2026-10-07T20:19:32.132Z",
+};
+
+/** The match row as the page holds it: the listing, and the label read off the log. */
+const LABELED = { ...MATCH, header: HEADER };
+
+/** The head of a match log, as the log writes it — header first, then the match. */
+const logHead = (players: unknown): string =>
+  JSON.stringify(
+    {
+      format: "salient-log/1",
+      ruleset: "v0",
+      engine_version: "0.1.0",
+      created: HEADER.playedOn,
+      seed: HEADER.seed,
+      config: { turns: 25, action_points: 6 },
+      harness: { pi_version: null, context: "continuous" },
+      players,
+      map: [],
+    },
+    null,
+    2,
+  );
+
+const LOG_HEAD = logHead({ A: { kind: "bot", bot: "greedy" }, B: { kind: "bot", bot: "random" } });
+
+/** A log answer: the header, and a body long enough that reading it all would be the point. */
+const logAnswer = (head: string): Response =>
+  new Response(`${head}\n"turns": ${JSON.stringify(Array.from({ length: 400 }, () => ({ n: 1 })))}`);
+
 /** Both listings, as the page holds them. */
 const RESULTS: Results = {
   seriesRoot: "/repo/series",
   matchesRoot: "/repo/matches",
   series: [SERIES],
   unreadable: [],
-  matches: [MATCH],
+  matches: [LABELED],
 };
 
 /** A section, as `index.html` has one. */
@@ -125,6 +172,9 @@ describe("parseMatchListing", () => {
     expect(listing.matchesRoot).toBe("/repo/matches");
     expect(listing.matches.map((each) => each.series)).toEqual(["alpha", null]);
     expect(listing.matches[0]!.viewerUrl).toBe(MATCH.viewerUrl);
+    // The listing carries no label: what the match was comes from the log, and
+    // a row straight off the answer has not read one yet.
+    expect(listing.matches.map((each) => each.header)).toEqual([null, null]);
   });
 
   it("names the field when the answer is missing one", () => {
@@ -142,6 +192,7 @@ describe("fetchResults", () => {
     const asked: string[] = [];
     const results = await fetchResults((path) => {
       asked.push(path);
+      if (path === MATCH.url) return Promise.resolve(logAnswer(LOG_HEAD));
       return Promise.resolve(
         Response.json(
           path === "/api/series"
@@ -151,7 +202,10 @@ describe("fetchResults", () => {
       );
     });
 
-    expect(asked).toEqual(["/api/series", "/api/matches"]);
+    // The two listings, and then one read of each listed log for the label
+    // its row is named by — at the URL the listing gave it, which is the same one
+    // the row links its replay at.
+    expect(asked).toEqual(["/api/series", "/api/matches", MATCH.url]);
     expect(results).toEqual(RESULTS);
   });
 
@@ -163,13 +217,69 @@ describe("fetchResults", () => {
   });
 });
 
+describe("readMatchHeader", () => {
+  it("reads the two seats, the seed and the date out of the head of a log", async () => {
+    const header = await readMatchHeader(MATCH.url, () => Promise.resolve(logAnswer(LOG_HEAD)));
+
+    expect(header).toEqual(HEADER);
+  });
+
+  it("spells a model seat as its log names it, and a bot seat as the report spells it", async () => {
+    const head = logHead({
+      A: { kind: "bot", bot: "greedy" },
+      B: { kind: "pi", model: "marvin/subagent", thinking: "medium", context_window: 131072 },
+    });
+    const header = await readMatchHeader(MATCH.url, () => Promise.resolve(logAnswer(head)));
+
+    expect(header?.seats).toEqual(["bot:greedy", "marvin/subagent"]);
+  });
+
+  it("says nothing rather than the wrong thing about a log it cannot read", async () => {
+    const missing = (): Promise<Response> =>
+      Promise.resolve(Response.json({ error: "no match log at /logs/alpha/matches/x.json" }, { status: 404 }));
+    // A log cut off inside its header has no seats to name and no date to give.
+    const cutOff = (): Promise<Response> => Promise.resolve(new Response(LOG_HEAD.slice(0, 120)));
+
+    expect(await readMatchHeader(MATCH.url, missing)).toBeNull();
+    expect(await readMatchHeader(MATCH.url, cutOff)).toBeNull();
+    expect(await readMatchHeader(MATCH.url, () => Promise.resolve(new Response("<!doctype html>not a log")))).toBeNull();
+    expect(await readMatchHeader(MATCH.url, () => Promise.reject(new Error("the console is not there")))).toBeNull();
+  });
+
+  it("stops reading once the header is in hand, and does not take the match with it", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(LOG_HEAD));
+        // Everything the page must never ask for: the turns of a real match run
+        // to the better part of a megabyte.
+        for (let at = 0; at < 200; at += 1) {
+          controller.enqueue(new TextEncoder().encode(`,"turn-${String(at)}":"${"x".repeat(2000)}"`));
+        }
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const header = await readMatchHeader(MATCH.url, () => Promise.resolve(new Response(body)));
+
+    expect(header).toEqual(HEADER);
+    expect(cancelled).toBe(true);
+  });
+});
+
 describe("renderResults", () => {
-  it("states the two roots, and that only what is under them is listed", () => {
+  it("says which folders are in view, without naming them", () => {
     const { text } = drawn(RESULTS);
 
-    expect(text).toContain("/repo/series");
-    expect(text).toContain("/repo/matches");
-    expect(text).toContain("Only what is under those two roots is listed here");
+    expect(text).toContain(
+      "This console lists the series and matches in the folders it was started with. " +
+        "A series started somewhere else is not here.",
+    );
+    // The folders themselves are not on the page: a reader cannot do anything
+    // with a path, and the caveat works without one.
+    expect(text).not.toContain("/repo");
   });
 
   it("draws one row per series, with the console's figures and no others", () => {
@@ -237,19 +347,36 @@ describe("renderResults", () => {
     expect(resumed).toEqual([]);
   });
 
-  it("links every finished match at the viewer's URL for it, and shows where it is served", () => {
+  it("links every finished match at the viewer's URL for it, and says what the match was", () => {
     const el = section();
-    const other = { ...MATCH, name: "1-x-y.json", series: null };
-    renderResults(el, { ...RESULTS, matches: [MATCH, other] }, () => undefined);
+    const other = { ...LABELED, name: "1-x-y.json", series: null };
+    renderResults(el, { ...RESULTS, matches: [LABELED, other] }, () => undefined);
 
     const links = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
+    // The URLs are the console's, unchanged: only the words over them changed.
     expect(links.map((link) => link.getAttribute("href"))).toEqual([MATCH.viewerUrl, MATCH.viewerUrl]);
-    expect(links[0]!.textContent).toBe("alpha/1234-greedy-random.json");
-    expect(links[1]!.textContent).toBe("1-x-y.json");
+    expect(links[0]!.textContent).toBe("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
+    expect(links[1]!.textContent).toBe("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
     expect(itemsOf(el, "matches")).toEqual([
-      "alpha/1234-greedy-random.json /logs/alpha/matches/1234-greedy-random.json",
-      "1-x-y.json /logs/alpha/matches/1234-greedy-random.json",
+      "bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — from alpha",
+      "bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — a match played on its own",
     ]);
+  });
+
+  it("says what a match was, and not what its log is called", () => {
+    const { text } = drawn(RESULTS);
+
+    expect(text).toContain("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
+    // A file name says those three things to whoever named the file, and nothing
+    // to anyone reading the row.
+    expect(text).not.toContain("1234-greedy-random");
+  });
+
+  it("says when a match log will not say what the match was", () => {
+    const { text } = drawn({ ...RESULTS, matches: [{ ...LABELED, header: null }] });
+
+    expect(text).toContain("a match whose log this console could not read");
+    expect(text).not.toContain("1234-greedy-random");
   });
 
   it("keeps a record it cannot read on the page, with the line the console gave", () => {
@@ -262,12 +389,12 @@ describe("renderResults", () => {
     expect(text).toContain("series.json is not a series record");
   });
 
-  it("says when there is nothing to list, in both roots", () => {
+  it("says when there is nothing to list, in both folders", () => {
     const empty = { ...RESULTS, series: [], unreadable: [], matches: [] };
     const { text } = drawn(empty);
 
-    expect(text).toContain("No series under /repo/series yet.");
-    expect(text).toContain("No finished match under /repo/matches yet.");
+    expect(text).toContain("No series here yet.");
+    expect(text).toContain("No finished match here yet.");
   });
 
   it("replaces the whole section, so a series that went away does not stay on the page", () => {
@@ -278,5 +405,30 @@ describe("renderResults", () => {
     expect(itemsOf(el, "series")).toEqual([]);
     expect(itemsOf(el, "matches")).toEqual([]);
     expect(el.querySelectorAll("button.resume")).toHaveLength(0);
+  });
+});
+
+describe("the words the results section speaks", () => {
+  it("draws a section holding a series, a broken record and a match, in plain words", () => {
+    // One of everything the section can draw, so a path or a file name sneaking
+    // in through any one of the three kinds of row fails here.
+    const { text } = drawn({
+      ...RESULTS,
+      unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
+    });
+
+    expectPlainWords("results", text);
+  });
+
+  it("passes the console's own line about a record it cannot read, path and all", () => {
+    // The one row where a path belongs: the series is the record, and where it
+    // lies is the fact the reader has to act on. The page adds no path of its
+    // own; it repeats the line the console wrote.
+    const { text } = drawn({
+      ...RESULTS,
+      unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "no series record under /repo/series/broken" }],
+    });
+
+    expect(text).toContain("no series record under /repo/series/broken");
   });
 });

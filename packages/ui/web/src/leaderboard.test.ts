@@ -78,11 +78,14 @@ describe("parseLeaderboard", () => {
 
     expect(board.seriesRoot).toBe("/repo/series");
     // The row as the page reads it: the figures it draws, and nothing it does
-    // not. `dir`, `seats` and the counts of wins and losses are in the answer and
-    // on no leaderboard row, so they are not in the shape either.
+    // not. `seats` and the counts of wins and losses are in the answer and on no
+    // leaderboard row, so they are not in the shape either. `dir` is kept, though
+    // no row shows it, because a pooled row names its series by directory and
+    // this is the answer that says what each of those directories is called.
     expect(board.series).toEqual([
       {
         name: "alpha",
+        dir: "/repo/series/alpha",
         a: "bot:greedy",
         b: "marvin/subagent",
         maxPairs: 4,

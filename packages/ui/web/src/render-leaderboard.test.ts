@@ -15,6 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
+import { expectPlainWords } from "./plain-words.ts";
 import { renderLeaderboard } from "./render-leaderboard.ts";
 import type { Leaderboard } from "./leaderboard.ts";
 import type { MatchRow } from "./results.ts";
@@ -22,6 +23,7 @@ import type { MatchRow } from "./results.ts";
 /** One series row, as the leaderboard answers it: seven counted matches, one missing. */
 const SERIES = {
   name: "alpha",
+  dir: "/repo/series/alpha",
   a: "bot:greedy",
   b: "marvin/subagent",
   maxPairs: 4,
@@ -41,6 +43,7 @@ const SERIES = {
 const BETA = {
   ...SERIES,
   name: "beta",
+  dir: "/repo/series/beta",
   a: "bot:greedy",
   b: "bot:random",
   maxPairs: 10,
@@ -87,13 +90,18 @@ const RANDOM = {
   series: ["/repo/series/beta"],
 };
 
-/** A finished log of one series, as `/api/matches` answers it. */
+/** A finished log of one series, and what its own header says about the match. */
 const MATCH: MatchRow = {
   name: "1234-greedy-subagent.json",
   path: "/repo/series/alpha/matches/1234-greedy-subagent.json",
   url: "/logs/alpha/matches/1234-greedy-subagent.json",
   viewerUrl: "/viewer/?log=/logs/alpha/matches/1234-greedy-subagent.json",
   series: "alpha",
+  header: {
+    seats: ["bot:greedy", "marvin/subagent"] as [string, string],
+    seed: 1234,
+    playedOn: "2026-10-07T20:19:32.132Z",
+  },
 };
 
 /** A finished log of the other series, and one played on its own. */
@@ -103,6 +111,11 @@ const BETA_MATCH: MatchRow = {
   url: "/logs/beta/matches/77-greedy-random.json",
   viewerUrl: "/viewer/?log=/logs/beta/matches/77-greedy-random.json",
   series: "beta",
+  header: {
+    seats: ["bot:greedy", "bot:random"] as [string, string],
+    seed: 77,
+    playedOn: "2026-10-08T09:14:00.000Z",
+  },
 };
 
 const ALONE: MatchRow = {
@@ -111,6 +124,11 @@ const ALONE: MatchRow = {
   url: "/logs/9-solo.json",
   viewerUrl: "/viewer/?log=/logs/9-solo.json",
   series: null,
+  header: {
+    seats: ["bot:greedy", "bot:random"] as [string, string],
+    seed: 9,
+    playedOn: "2026-10-09T18:00:00.000Z",
+  },
 };
 
 /** Both tables, as the page holds them. */
@@ -151,15 +169,19 @@ const linksOf = (el: HTMLElement, selector: string): string[] =>
   );
 
 describe("renderLeaderboard", () => {
-  it("states the root both tables were read from, and that a series outside it is not counted", () => {
+  it("states the folders both tables were read from, and that a series outside them is not counted", () => {
     const { text } = drawn(BOARD);
 
-    expect(text).toContain("/repo/series");
-    expect(text).toContain("outside");
-    expect(text).toContain("--dir");
+    expect(text).toContain(
+      "Both tables are read from the series this console lists. A series started in some other " +
+        "folder is not on this page",
+    );
     // The reason the caveat is on the page rather than in a comment: an omitted
     // series reads as a model that never played it.
     expect(text).toContain("a model that never played it");
+    // And it says so without naming the folder, which nobody reading a browser
+    // can do anything with.
+    expect(text).not.toContain("/repo");
   });
 
   it("draws one row per series, with the console's figures and no others", () => {
@@ -168,7 +190,7 @@ describe("renderLeaderboard", () => {
 
     expect(rowsOf(el, "leaderboard-series")).toHaveLength(2);
     expect(row![0]).toBe("alpha");
-    // The pairing spelled as `--a` and `--b` spell it.
+    // The pairing spelled the way the console spells a seat.
     expect(row![1]).toBe("bot:greedy vs marvin/subagent");
     expect(row![2]).toBe("4 of 4 pairs");
     expect(row![3]).toBe("8 matches");
@@ -183,12 +205,12 @@ describe("renderLeaderboard", () => {
     expect(text).not.toContain("87.5%");
   });
 
-  it("links each series to the report.md this console serves for it", () => {
+  it("links each series to the report this console serves for it", () => {
     const { el } = drawn(BOARD);
 
     expect(linksOf(el, "a.series-report")).toEqual([
-      "/logs/alpha/report.md report.md",
-      "/logs/beta/report.md report.md",
+      "/logs/alpha/report.md its report",
+      "/logs/beta/report.md its report",
     ]);
   });
 
@@ -204,9 +226,10 @@ describe("renderLeaderboard", () => {
 
     const rows = [...el.querySelectorAll<HTMLTableRowElement>("table.leaderboard-series tbody tr")];
     // The `viewerUrl` is what opens a log in the viewer, and which series a log
-    // belongs to comes from the `/api/matches` rows the page already holds.
-    expect(linksIn(rows[0]!)).toEqual([`${MATCH.viewerUrl} ${MATCH.name}`]);
-    expect(linksIn(rows[1]!)).toEqual([`${BETA_MATCH.viewerUrl} ${BETA_MATCH.name}`]);
+    // belongs to comes from the `/api/matches` rows the page already holds. The
+    // words over the link say what the match was, not what its log is called.
+    expect(linksIn(rows[0]!)).toEqual([`${MATCH.viewerUrl} bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026`]);
+    expect(linksIn(rows[1]!)).toEqual([`${BETA_MATCH.viewerUrl} bot:greedy vs bot:random — seed 77, played 8 Oct 2026`]);
 
     // A match played on its own belongs to no series row, and a series with no
     // log listed says so rather than showing a blank cell.
@@ -239,8 +262,11 @@ describe("renderLeaderboard", () => {
     // visible as that, not as a good model.
     expect(row![4]).toBe("seat A: 5 matches — 90.0% (95% CI 40.0% – 99.0%)");
     expect(row![5]).toBe("seat B: 5 matches — 40.0% (95% CI 12.0% – 73.0%)");
-    expect(row![6]).toContain("/repo/series/alpha");
-    expect(row![6]).toContain("/repo/series/beta");
+    expect(row![6]).toContain("alpha");
+    expect(row![6]).toContain("beta");
+    // The console answers a pooled row with directories; the table says the names
+    // the same answer gives those directories in.
+    expect(row![6]).not.toContain("/repo");
 
     // The pooled rate is the console's over the pooled ten: not the mean of the
     // two series' rates, and not one taken over the matches that went missing.
@@ -273,8 +299,8 @@ describe("renderLeaderboard", () => {
   it("says when there is nothing to rank, in both tables", () => {
     const { text } = drawn({ seriesRoot: "/repo/series", series: [], models: [], unreadable: [] });
 
-    expect(text).toContain("No series under /repo/series yet.");
-    expect(text).toContain("No model has a counted match under /repo/series yet");
+    expect(text).toContain("No series here yet.");
+    expect(text).toContain("No model has a counted match here yet");
     // A series whose every match went missing has no counted match to pool, and
     // the stats package gives such a model no row at all — the page says why.
     expect(text).toContain("says nothing about the models its pairing names");
@@ -325,5 +351,39 @@ describe("renderLeaderboard", () => {
     const { el } = drawn(BOARD);
     const counts = [...el.querySelectorAll<HTMLTableCellElement>("td.num")].map((td) => td.textContent);
     expect(counts).toEqual(["10", "2", "3", "0"]);
+  });
+});
+
+describe("the words the leaderboard speaks", () => {
+  it("draws both tables, a broken record and a match link, in plain words", () => {
+    // Both tables and one of everything: a series row, a pooled row, a log of
+    // each series, and a record the console cannot read.
+    const { text } = drawn({
+      ...BOARD,
+      unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
+    });
+
+    expectPlainWords("leaderboard", text);
+  });
+
+  it("says what a directory it cannot name is, rather than printing the directory", () => {
+    // The only way a path could reach the pooled column is by the page printing
+    // the directory it was handed, and it does not.
+    const { text } = drawn({ ...BOARD, models: [{ ...GREEDY, series: ["/repo/series/gone"] }] });
+
+    expect(text).toContain("a series this table does not list");
+    expect(text).not.toContain("/repo/series/gone");
+  });
+
+  it("passes the console's own line about a record it cannot read, path and all", () => {
+    // The exception, on the table where it matters most: the series is its
+    // record, the console said where that record is, and a reader who wants the
+    // matches back has to know which folder to look in.
+    const { text } = drawn({
+      ...BOARD,
+      unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "no series record under /repo/series/broken" }],
+    });
+
+    expect(text).toContain("no series record under /repo/series/broken");
   });
 });

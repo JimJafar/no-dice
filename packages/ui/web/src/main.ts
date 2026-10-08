@@ -48,7 +48,7 @@ import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import { startRun } from "./start.ts";
 import { fetchResults, renderResults } from "./results.ts";
-import type { MatchRow } from "./results.ts";
+import type { MatchRow, SeriesRow } from "./results.ts";
 import { parseState } from "./state.ts";
 import { mountViews } from "./views.ts";
 
@@ -81,6 +81,14 @@ const fetchJson: FetchJson = (path, init) => fetch(path, init);
 let listedMatches: readonly MatchRow[] = [];
 
 /**
+ * The series the last `/api/series` read gave, kept for the same reason: the
+ * resume button hands over a directory, because that is all the route takes, and
+ * the line the page writes afterwards is about the series a reader can see —
+ * so the page looks the name up rather than repeating the path back.
+ */
+let listedSeries: readonly SeriesRow[] = [];
+
+/**
  * Read what the console has on disk and redraw the results section and the
  * leaderboard from it.
  *
@@ -95,6 +103,7 @@ const refreshListings = async (): Promise<void> => {
   try {
     const results = await fetchResults(fetchJson);
     listedMatches = results.matches;
+    listedSeries = results.series;
     renderResults(sections.results, results, (dir) => void resumeSeries(dir));
     say(`${String(results.series.length)} series and ${String(results.matches.length)} matches listed.`);
   } catch (error) {
@@ -114,13 +123,16 @@ const refreshListings = async (): Promise<void> => {
 
 /**
  * Ask the console to finish a series. The directory is all that is sent: the
- * pairing and the pair limit come from the series' own record, which is the only
- * thing that knows what the interrupted run was running.
+ * pairing and the pair limit come from the series' own record, which is the
+ * only thing that knows what the interrupted run was running. The line afterwards
+ * names the series, not the directory: the reader asked for the row they can see,
+ * and the path is what the route needed, not what they wanted told back.
  */
 const resumeSeries = async (dir: string): Promise<void> => {
+  const name = listedSeries.find((row) => row.dir === dir)?.name ?? null;
   try {
     await postJson("/api/run/resume", { dir }, fetchJson);
-    say(`Resuming ${dir}.`);
+    say(name === null ? "Resuming that series." : `Resuming ${name}.`);
     void poller.run();
     await refreshListings();
   } catch (error) {

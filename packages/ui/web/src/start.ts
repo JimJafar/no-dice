@@ -69,8 +69,13 @@ export const DEFAULTS = {
   maxTokens: null,
 } as const;
 
-/** What a measured model match costs, from `docs/pi-harness-notes.md` §7. */
-export const MEASURED_MATCH = "~19 minutes and 4.59M tokens (docs/pi-harness-notes.md §7)";
+/**
+ * What a measured model match costs, as the page says it. Where the
+ * measurement comes from — `docs/pi-harness-notes.md` §7 — is said here rather
+ * than on the page: a reader in a browser has no use for a path into the repo,
+ * and the figure's claim to be quoted, not computed, is made by the sentence.
+ */
+export const MEASURED_MATCH = "about 19 minutes and 4.59M tokens";
 
 /**
  * What a series at its default length costs, said from that measurement. Quoted
@@ -155,9 +160,9 @@ export const payloadOf = (values: StartValues): StartPayload => {
 
 /** One ceiling as the page states it. */
 export interface Ceiling {
-  /** The flag it stands for, spelled as the terminal spells it. */
-  flag: string;
-  /** What the run will be bounded by, as the terminal would write it. */
+  /** What the run is bounded by, in the words the form's own field uses. */
+  label: string;
+  /** What the bound is set to, and whose setting it is. */
   value: string;
   /** Where that value came from, which is what the page says beside it. */
   source: CeilingSource;
@@ -173,11 +178,11 @@ export interface Ceiling {
 export type CeilingSource = "form" | "runner" | "fixed";
 
 /** One limit as a ceiling: the typed value, or the default that a blank leaves. */
-const ceilingOf = (flag: string, raw: string, fallback: string): Ceiling => {
+const ceilingOf = (label: string, raw: string, fallback: string): Ceiling => {
   const value = raw.trim();
   return value === ""
-    ? { flag, value: fallback, source: "runner" }
-    : { flag, value, source: "form" };
+    ? { label, value: fallback, source: "runner" }
+    : { label, value, source: "form" };
 };
 
 /**
@@ -185,22 +190,31 @@ const ceilingOf = (flag: string, raw: string, fallback: string): Ceiling => {
  * has no ceilings — it is one pair, played both ways — and the page says that
  * rather than leaving the block empty, because an empty block reads as "no
  * limits" and a match really does have none.
+ *
+ * Each is named in the words the form's field is named in, not in the words the
+ * terminal spells it in: the block is there to tell someone what the browser is
+ * about to do, and `--max-pairs` would send them back to the command line to find
+ * out.
  */
 export const ceilingsOf = (values: StartValues): Ceiling[] =>
   values.kind === "match"
     ? [
-        { flag: "matches", value: "2 — one pair, both seat orders", source: "fixed" },
+        { label: "Matches", value: "2 — one pair, both seat orders", source: "fixed" },
         values.seed.trim() === ""
-          ? { flag: "--seed", value: "none given", source: "fixed" }
-          : { flag: "--seed", value: values.seed.trim(), source: "form" },
-        { flag: "ceilings", value: "none: a single match has no pair, cost or token limit", source: "fixed" },
+          ? { label: "Seed", value: "none given", source: "fixed" }
+          : { label: "Seed", value: values.seed.trim(), source: "form" },
+        {
+          label: "Ceilings",
+          value: "none: a single match has no pair, cost or token limit",
+          source: "fixed",
+        },
       ]
     : [
-        ceilingOf("--max-pairs", values.maxPairs, String(DEFAULTS.maxPairs)),
-        ceilingOf("--concurrency", values.concurrency, String(DEFAULTS.concurrency)),
-        ceilingOf("--max-cost", values.maxCost, "none"),
-        ceilingOf("--max-tokens", values.maxTokens, "none"),
-        ceilingOf("--seed-base", values.seedBase, String(DEFAULTS.seedBase)),
+        ceilingOf("Pairs", values.maxPairs, String(DEFAULTS.maxPairs)),
+        ceilingOf("Pairs at once", values.concurrency, String(DEFAULTS.concurrency)),
+        ceilingOf("Cost ceiling", values.maxCost, "none"),
+        ceilingOf("Token ceiling", values.maxTokens, "none"),
+        ceilingOf("Seed base", values.seedBase, String(DEFAULTS.seedBase)),
       ];
 
 /** What a start answered: the run now in flight, or the console's own line. */

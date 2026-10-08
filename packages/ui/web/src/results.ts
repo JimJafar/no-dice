@@ -15,10 +15,22 @@
  * page that sent the pairing it had rendered would be offering to resume a series
  * under the pairing it happened to be displaying.
  *
- * **A series outside the two roots is not listed, and the page says so.**
- * `--dir` is the operator's escape hatch, and a run started with it is real work
- * that this page will never show. The alternative — a section that quietly omits
- * it — reads as though the run had never happened.
+ * **A series outside the two roots is not listed, and the page says so.** A run
+ * started into some other folder is real work that this page will never show.
+ * The alternative — a section that quietly omits it — reads as though the run
+ * had never happened. What the page says is that the console lists the folders
+ * it was started with; it does not print those folders, because a path is not
+ * something a reader does anything with, and the one row that does carry a path
+ * is a series record that will not parse, where the path is the fact.
+ *
+ * **A match is named by what it was, not by what its log is called.** The row
+ * says the two seats, the seed and the day it was played. Those three are not in
+ * `/api/matches`, whose rows carry a log's name and its two URLs; they are in the
+ * log's own header, which is the one place that says who played, on what seed,
+ * when. So the page reads the header — the first kilobyte of the log and no
+ * more, since a real log runs to a megabyte and everything after the header is
+ * the match itself. A log whose header will not read is a row that says so, not
+ * a section that failed.
  *
  * The shapes below are declared here rather than imported from
  * `packages/ui/src/results.ts`, which reads the filesystem and pulls in
@@ -63,6 +75,16 @@ export interface UnreadableRow {
   error: string;
 }
 
+/** What a match log's own header says about the match it is the log of. */
+export interface MatchHeader {
+  /** The two seats, spelled as the log's header spells them: `bot:greedy`, `marvin/subagent`. */
+  seats: [string, string];
+  /** The seed the match was played on. */
+  seed: number;
+  /** The date the header carries, as the ISO timestamp it carries it in. */
+  playedOn: string;
+}
+
 /** A finished match log, and the two URLs it is reachable at. */
 export interface MatchRow {
   name: string;
@@ -70,6 +92,12 @@ export interface MatchRow {
   url: string;
   viewerUrl: string;
   series: string | null;
+  /**
+   * The row's label: what the match was, read out of the log itself.
+   * `null` when the log would not read, and for a row that came straight from
+   * `/api/matches` before the page had read anything.
+   */
+  header: MatchHeader | null;
 }
 
 /** Everything the section draws, from the console's two listings. */
@@ -179,7 +207,7 @@ export const parseSeriesListing = (value: unknown): {
   };
 };
 
-/** The answer from `/api/matches`. */
+/** The answer from `/api/matches`. Its rows carry no header: that is a second read. */
 export const parseMatchListing = (value: unknown): { matchesRoot: string; matches: MatchRow[] } => {
   const listing = recordOf(value, "the answer from /api/matches");
   const matches = listing["matches"];
@@ -194,12 +222,129 @@ export const parseMatchListing = (value: unknown): { matchesRoot: string; matche
         url: stringOf(row["url"], `matches[${String(at)}].url`),
         viewerUrl: stringOf(row["viewerUrl"], `matches[${String(at)}].viewerUrl`),
         series: stringOrNull(row["series"], `matches[${String(at)}].series`),
+        header: null,
       };
     }),
   };
 };
 
-/** Both listings, read together. The section is one thing, so it arrives as one. */
+/** How much of a log the page reads to label a row: its header, and nothing after it. */
+const HEADER_LIMIT = 4096;
+
+/** The first `limit` characters of an answer, with the rest of it left unread. */
+const prefixOf = async (response: Response, limit: number): Promise<string> => {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return (await response.text()).slice(0, limit);
+
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const next = await reader.read();
+    if (next.done === true) break;
+    text += decoder.decode(next.value, { stream: true });
+    if (text.length >= limit) break;
+  }
+  // The rest of the log stays where it is. A real one is about a megabyte, and
+  // everything past the header is the match: turns, orders, tool calls. A
+  // page that read all of it to label a row would be downloading every match it
+  // lists, which is what the replay does when someone asks for the replay.
+  await reader.cancel().catch(() => undefined);
+  return text.slice(0, limit);
+};
+
+/**
+ * The `{...}` that follows `"key"` in a JSON prefix, strings skipped so a brace
+ * inside a value is not counted as one of the object's. `null` when the prefix
+ * stops short of closing it — which is what a truncated read looks like.
+ */
+const objectOf = (text: string, key: string): unknown => {
+  const named = text.indexOf(`"${key}"`);
+  const open = named === -1 ? -1 : text.indexOf("{", named);
+  if (open === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let at = open; at < text.length; at += 1) {
+    const char = text[at];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}" && (depth -= 1) === 0) {
+      try {
+        return JSON.parse(text.slice(open, at + 1)) as unknown;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+};
+
+/** One seat as the log's header spells it — the same spelling the report uses. */
+const playerOf = (player: unknown): string | null => {
+  if (player === null || typeof player !== "object") return null;
+  const { kind, bot, model } = player as { kind?: unknown; bot?: unknown; model?: unknown };
+  if (kind === "bot" && typeof bot === "string") return `bot:${bot}`;
+  if (kind === "pi" && typeof model === "string") return model;
+  return null;
+};
+
+/** The three facts a row is labelled from, out of the log's first kilobyte. */
+const headerOf = (prefix: string): MatchHeader | null => {
+  const created = /"created"\s*:\s*"([^"]*)"/.exec(prefix)?.[1];
+  const seed = /"seed"\s*:\s*(-?\d+)/.exec(prefix)?.[1];
+  const players = objectOf(prefix, "players");
+  if (created === undefined || seed === undefined || players === null || typeof players !== "object") {
+    return null;
+  }
+  const seatA = playerOf((players as Record<string, unknown>)["A"]);
+  const seatB = playerOf((players as Record<string, unknown>)["B"]);
+  if (seatA === null || seatB === null || Number.isNaN(Date.parse(created))) return null;
+  return { seats: [seatA, seatB], seed: Number(seed), playedOn: created };
+};
+
+/**
+ * What one match log says about itself, or `null` when it will not say.
+ *
+ * The read is of the log the console already serves at `url` — the same URL the
+ * row links its replay at — and it stops as soon as the header is in hand. A log
+ * that is not there, is not JSON, or has a header this page cannot read is one
+ * row with no label rather than a listing that failed: the listing came from the
+ * console, and this is only the wording over a link.
+ */
+export const readMatchHeader = async (
+  url: string,
+  fetchJson: FetchJson = fetch,
+): Promise<MatchHeader | null> => {
+  try {
+    const response = await fetchJson(url);
+    if (!response.ok) return null;
+    return headerOf(await prefixOf(response, HEADER_LIMIT));
+  } catch {
+    return null;
+  }
+};
+
+/** Every listed log, labelled from its own header. */
+const withHeaders = async (rows: readonly MatchRow[], fetchJson: FetchJson): Promise<MatchRow[]> => {
+  const headers = await Promise.all(rows.map((row) => readMatchHeader(row.url, fetchJson)));
+  return rows.map((row, at) => ({ ...row, header: headers[at] ?? null }));
+};
+
+/**
+ * Both listings, read together. The section is one thing, so it arrives as one.
+ *
+ * Each match row is then read once more, at the URL its own listing gave it, for
+ * the header the row is labelled from. That is one small request per match —
+ * the page stops after the first kilobyte — and it is what keeps a row saying
+ * what the match was instead of what its file is called.
+ */
 export const fetchResults = async (fetchJson: FetchJson = fetch): Promise<Results> => {
   const series = parseSeriesListing(await getJson<unknown>("/api/series", fetchJson));
   const matches = parseMatchListing(await getJson<unknown>("/api/matches", fetchJson));
@@ -208,7 +353,7 @@ export const fetchResults = async (fetchJson: FetchJson = fetch): Promise<Result
     matchesRoot: matches.matchesRoot,
     series: series.series,
     unreadable: series.unreadable,
-    matches: matches.matches,
+    matches: await withHeaders(matches.matches, fetchJson),
   };
 };
 
@@ -220,7 +365,7 @@ const paragraph = (className: string, text: string): HTMLElement => {
   return el;
 };
 
-/** A path or a name, as a path. */
+/** A name, a URL, or a line the console wrote — set in the CLI's face. */
 const code = (text: string): HTMLElement => {
   const el = document.createElement("code");
   el.textContent = text;
@@ -244,16 +389,44 @@ const level = (n: number): string => `${String(Math.round(n * 100))}%`;
 /** Money as the report writes it. */
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * The day a log's header says it was written, as the page says it: `7 Oct 2026`.
+ *
+ * The header writes its timestamp in UTC, and the day is read back in UTC, so a
+ * match played just after midnight there is not filed under the day before it on
+ * the other side of the world.
+ */
+export const dateOf = (iso: string): string => {
+  const at = new Date(iso);
+  return `${String(at.getUTCDate())} ${MONTHS[at.getUTCMonth()]} ${String(at.getUTCFullYear())}`;
+};
+
+/**
+ * What a match was, in the words a reader looks for: the two seats, the seed,
+ * the day. The log's own file name says the same three things to whoever named
+ * the file, and nothing to anyone else.
+ */
+export const matchLabel = (row: MatchRow): string => {
+  const header = row.header;
+  if (header === null) return "a match whose log this console could not read";
+  return (
+    `${header.seats[0]} vs ${header.seats[1]} — seed ${String(header.seed)}, ` +
+    `played ${dateOf(header.playedOn)}`
+  );
+};
+
 /**
  * What the series is and how far it got: its name, its pairing, and the pair
- * and match counts. The pairing is spelled the way `--a` and `--b` spell it, so
- * the line can be read against the terminal's own.
+ * and match counts. The pairing is spelled the way the console spells a seat, so
+ * the line can be read against the leaderboard's.
  */
 const seriesHead = (row: SeriesRow): Node => {
   const el = document.createElement("span");
   el.className = "series-head";
   el.append(
-    code(row.name),
+    document.createTextNode(row.name),
     document.createTextNode(` — ${row.a} vs ${row.b}, ${String(row.pairs)} of ${String(row.maxPairs)} pairs`),
   );
   return el;
@@ -310,41 +483,42 @@ const seriesItem = (row: SeriesRow, onResume: (dir: string) => void): HTMLLIElem
   return li;
 };
 
-/** One finished match, linked at the viewer's own URL for it. */
+/** One finished match: what it was, linked at the viewer's own URL for it. */
 const matchItem = (row: MatchRow): HTMLLIElement => {
   const li = document.createElement("li");
   li.className = "match-row";
   const link = document.createElement("a");
   link.className = "match-viewer";
   link.href = row.viewerUrl;
-  link.textContent = row.series === null ? row.name : `${row.series}/${row.name}`;
-  li.append(link, document.createTextNode(" "), code(row.url));
+  link.textContent = matchLabel(row);
+  li.append(
+    link,
+    document.createTextNode(row.series === null ? " — a match played on its own" : ` — from ${row.series}`),
+  );
   return li;
 };
 
 /**
  * The section, as the console's two listings describe it.
  *
- * The roots go first, with the caveat that only what is under them is listed: a
- * series started with `--dir` somewhere else is not here, and a page that said
- * "no series" without saying that would be a page that contradicted what its
- * reader watched start.
+ * The page says which folders are in view without naming them: a series
+ * started somewhere else is real work this console will never list, and a page
+ * that said "no series" without saying that would be a page that contradicted
+ * what its reader watched start.
  */
 export const renderResults = (el: HTMLElement, results: Results, onResume: (dir: string) => void): void => {
   clear(el);
 
-  const roots = paragraph("roots", "");
-  roots.append(
-    document.createTextNode("Series under "),
-    code(results.seriesRoot),
-    document.createTextNode(", matches under "),
-    code(results.matchesRoot),
-    document.createTextNode(". Only what is under those two roots is listed here."),
+  el.append(
+    paragraph(
+      "roots",
+      "This console lists the series and matches in the folders it was started with. A series " +
+        "started somewhere else is not here.",
+    ),
   );
-  el.append(roots);
 
   if (results.series.length === 0) {
-    el.append(paragraph("series-none", `No series under ${results.seriesRoot} yet.`));
+    el.append(paragraph("series-none", "No series here yet."));
   } else {
     el.append(list("series", results.series.map((row) => seriesItem(row, onResume))));
   }
@@ -367,7 +541,7 @@ export const renderResults = (el: HTMLElement, results: Results, onResume: (dir:
   }
 
   if (results.matches.length === 0) {
-    el.append(paragraph("matches-none", `No finished match under ${results.matchesRoot} yet.`));
+    el.append(paragraph("matches-none", "No finished match here yet."));
   } else {
     el.append(list("matches", results.matches.map(matchItem)));
   }

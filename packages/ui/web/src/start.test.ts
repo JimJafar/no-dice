@@ -143,12 +143,12 @@ describe("ceilingsOf", () => {
   it("names the runner's defaults for a series whose limits are all blank", () => {
     const ceilings = ceilingsOf(BLANK);
 
-    expect(ceilings.map((each) => `${each.flag} ${each.value}`)).toEqual([
-      "--max-pairs 75",
-      "--concurrency 1",
-      "--max-cost none",
-      "--max-tokens none",
-      "--seed-base 0",
+    expect(ceilings.map((each) => `${each.label}: ${each.value}`)).toEqual([
+      "Pairs: 75",
+      "Pairs at once: 1",
+      "Cost ceiling: none",
+      "Token ceiling: none",
+      "Seed base: 0",
     ]);
     // Every one of them is the runner's, not something the operator chose, and
     // the page says so: a blank field is not "no limit".
@@ -158,30 +158,39 @@ describe("ceilingsOf", () => {
   it("names what was typed instead, and says whose value it is", () => {
     const ceilings = ceilingsOf(filled({ maxPairs: "3", maxCost: "12.5" }));
 
-    expect(ceilings.map((each) => [each.flag, each.value, each.source])).toEqual([
-      ["--max-pairs", "3", "form"],
-      ["--concurrency", "1", "runner"],
-      ["--max-cost", "12.5", "form"],
-      ["--max-tokens", "none", "runner"],
-      ["--seed-base", "0", "runner"],
+    expect(ceilings.map((each) => [each.label, each.value, each.source])).toEqual([
+      ["Pairs", "3", "form"],
+      ["Pairs at once", "1", "runner"],
+      ["Cost ceiling", "12.5", "form"],
+      ["Token ceiling", "none", "runner"],
+      ["Seed base", "0", "runner"],
     ]);
   });
 
   it("says a match has no ceilings, and names the seed it plays", () => {
     const ceilings = ceilingsOf(filled({ kind: "match", seed: "135" }));
 
-    expect(ceilings.map((each) => `${each.flag} ${each.value}`)).toEqual([
-      "matches 2 — one pair, both seat orders",
-      "--seed 135",
-      "ceilings none: a single match has no pair, cost or token limit",
+    expect(ceilings.map((each) => `${each.label}: ${each.value}`)).toEqual([
+      "Matches: 2 — one pair, both seat orders",
+      "Seed: 135",
+      "Ceilings: none: a single match has no pair, cost or token limit",
     ]);
   });
 
+  it("names each ceiling in the words its field is labelled in", () => {
+    // The block sits under the Start button and is read by someone looking at the
+    // fields above it, so a bound has to be called what its field calls it.
+    const series = ceilingsOf(filled({ maxPairs: "3", maxTokens: "900000", maxCost: "12.5", concurrency: "2" }));
+    const match = ceilingsOf(filled({ kind: "match", seed: "135" }));
+
+    expect([...series, ...match].map((each) => each.label).join(" ")).not.toMatch(/--/);
+  });
+
   it("says when a match has no seed given, without deciding that it is refused", () => {
-    const [seed] = ceilingsOf(filled({ kind: "match" })).filter((each) => each.flag === "--seed");
-    // No default stands behind `--seed`, so the page says what the form holds
+    const [seed] = ceilingsOf(filled({ kind: "match" })).filter((each) => each.label === "Seed");
+    // No default stands behind the seed, so the page says what the form holds
     // and lets the console say what it makes of that.
-    expect(seed).toEqual({ flag: "--seed", value: "none given", source: "fixed" });
+    expect(seed).toEqual({ label: "Seed", value: "none given", source: "fixed" });
   });
 });
 

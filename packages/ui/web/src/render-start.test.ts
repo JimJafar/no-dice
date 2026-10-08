@@ -14,9 +14,15 @@
  * and what the page makes of the answer are `start.ts`'s tests, and what is under
  * test here is the drawing and the wiring — which control appears when, and what
  * the page says after an answer arrives.
+ *
+ * The form is also where the page is most tempted to talk like a terminal, so its
+ * labels and its ceilings are checked for flag names, absolute paths and log file
+ * names at the bottom of this file. The console's own refusal line is the one line
+ * that is not: it names the field and the value it rejected, verbatim.
  */
 import { describe, expect, it } from "vitest";
 
+import { expectPlainWords } from "./plain-words.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import type { RunKind, StartBody, StartOutcome } from "./start.ts";
@@ -148,8 +154,9 @@ describe("the seat pickers", () => {
     expect(model.hidden).toBe(true);
     set(el, "select.field-seat-a", "marvin");
     expect(model.hidden).toBe(false);
-    // The placeholder says what the flag expects, in the flag's own words.
-    expect(model.placeholder).toContain("--a marvin/<id>");
+    // The placeholder shows the shape a seat takes, without dressing it up as a
+    // command the reader would have to type somewhere else.
+    expect(model.placeholder).toContain("marvin/<id>");
 
     set(el, "select.field-seat-a", "bot:greedy");
     expect(model.hidden).toBe(true);
@@ -205,11 +212,11 @@ describe("the ceilings beside Start", () => {
     const { el } = drawn({ ok: true, run: STARTED });
 
     expect(ceilingItems(el)).toEqual([
-      "--max-pairs 75 — the runner's default, the field is blank",
-      "--concurrency 1 — the runner's default, the field is blank",
-      "--max-cost none — the runner's default, the field is blank",
-      "--max-tokens none — the runner's default, the field is blank",
-      "--seed-base 0 — the runner's default, the field is blank",
+      "Pairs: 75 — the runner's default, the field is blank",
+      "Pairs at once: 1 — the runner's default, the field is blank",
+      "Cost ceiling: none — the runner's default, the field is blank",
+      "Token ceiling: none — the runner's default, the field is blank",
+      "Seed base: 0 — the runner's default, the field is blank",
     ]);
   });
 
@@ -220,11 +227,11 @@ describe("the ceilings beside Start", () => {
     set(el, "input.field-max-tokens", "900000");
 
     expect(ceilingItems(el)).toEqual([
-      "--max-pairs 3",
-      "--concurrency 1 — the runner's default, the field is blank",
-      "--max-cost none — the runner's default, the field is blank",
-      "--max-tokens 900000",
-      "--seed-base 0 — the runner's default, the field is blank",
+      "Pairs: 3",
+      "Pairs at once: 1 — the runner's default, the field is blank",
+      "Cost ceiling: none — the runner's default, the field is blank",
+      "Token ceiling: 900000",
+      "Seed base: 0 — the runner's default, the field is blank",
     ]);
   });
 
@@ -244,9 +251,9 @@ describe("the ceilings beside Start", () => {
     set(el, "input.field-seed", "135");
 
     expect(ceilingItems(el)).toEqual([
-      "matches 2 — one pair, both seat orders",
-      "--seed 135",
-      "ceilings none: a single match has no pair, cost or token limit",
+      "Matches: 2 — one pair, both seat orders",
+      "Seed: 135",
+      "Ceilings: none: a single match has no pair, cost or token limit",
     ]);
     // The series' limits are not a match's flags, and a field that is not sent
     // is not shown.
@@ -271,7 +278,9 @@ describe("pressing Start", () => {
       },
     ]);
     expect(started).toEqual([STARTED]);
-    expect(textOf(el, ".start-started")).toContain("/repo/series/alpha");
+    // The run is reported as what started. Where it writes is in the run's own
+    // lines, and the reader who needs them can read them there.
+    expect(textOf(el, ".start-started")).toBe("Started a series.");
   });
 
   it("shows a payload the console refuses as the console's own line, and starts nothing", async () => {
@@ -345,5 +354,52 @@ describe("what the section says about the run's life", () => {
     expect(el.querySelectorAll("h2")).toHaveLength(1);
     expect(el.querySelectorAll("button.start")).toHaveLength(1);
     expect([...el.querySelectorAll<HTMLSelectElement>("select.field-seat-a")[0]!.options]).toHaveLength(2);
+  });
+});
+
+describe("the words the start form speaks", () => {
+  it("labels every field with what it is for, not with the flag it stands for", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+
+    expect([...el.querySelectorAll<HTMLElement>(".field-label")].map((each) => each.textContent ?? "")).toEqual([
+      "Run",
+      "Game",
+      "Seat A",
+      "Seat B",
+      "Seed, for one match",
+      "Seed base",
+      "Pairs",
+      "Token ceiling",
+      "Cost ceiling",
+      "Pairs at once",
+      "Series name",
+    ]);
+  });
+
+  it("draws the form, its ceilings and its answer in plain words", () => {
+    // A series with every limit blank, which is the state a run gets started by
+    // accident from: the block under the button is the page's own prose, and it
+    // has to say 75 pairs without saying `--max-pairs`.
+    const { el } = drawn({ ok: true, run: STARTED });
+
+    expectPlainWords("runs", el.textContent ?? "");
+  });
+
+  it("draws a match run's ceilings in plain words too", () => {
+    const { el } = drawn({ ok: true, run: STARTED });
+    set(el, "select.field-kind", "match");
+
+    expectPlainWords("runs", el.textContent ?? "");
+  });
+
+  it("repeats the console's refusal as the console wrote it, flag and all", async () => {
+    // The one line the page quotes rather than words. It names the field and the
+    // value the console rejected, and whoever typed the form is the one who can
+    // fix it — so the line is shown exactly as it came back.
+    const { el, press } = drawn({ ok: false, error: NO_MODEL });
+    set(el, "select.field-seat-a", "marvin");
+    await press();
+
+    expect(textOf(el, ".start-refused")).toBe(NO_MODEL);
   });
 });

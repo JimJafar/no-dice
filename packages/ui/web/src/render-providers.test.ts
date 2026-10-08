@@ -10,10 +10,13 @@
  * whatever those answers say, sends the body the routes take, and shows the
  * server's own line when it refuses — including the two things the page must
  * never do, which are hold a key value in a field and decide for itself that an
- * entry is valid.
+ * entry is valid. It also checks the words the section speaks: no flag name and
+ * no path into the machine, because a reader here is naming an endpoint, not
+ * typing a command.
  */
 import { describe, expect, it } from "vitest";
 
+import { expectPlainWords } from "./plain-words.ts";
 import {
   addProvider,
   checkCredential,
@@ -317,6 +320,16 @@ describe("renderProviders", () => {
     expect(text).toContain("The registry names no provider yet.");
   });
 
+  it("says what a name is for, rather than which command takes it", () => {
+    const { el } = drawn([MARVIN]);
+    const name = el.querySelector<HTMLInputElement>(".field-provider-name")!;
+
+    // The hint has to say how the name is used — it is the part of a seat before
+    // the slash — without reaching for the flag that carries it.
+    expect(name.placeholder).toContain("marvin/subagent");
+    expect(name.placeholder).not.toContain("--");
+  });
+
   it("asks the credential check per row, sending <provider>/<id> and rendering what Pi said", async () => {
     const asked: string[] = [];
     const el = withView({
@@ -478,5 +491,22 @@ describe("renderProviders", () => {
     expect(itemsOf(el, "providers")).toEqual([]);
     expect(el.querySelectorAll("button.check")).toHaveLength(0);
     expect(el.querySelectorAll("h2")).toHaveLength(1);
+  });
+});
+
+describe("the words the providers section speaks", () => {
+  it("lists the entries and the add form in plain words", () => {
+    // The base URL is drawn, and it is the one address on this page that is the
+    // fact rather than the furniture: it is what the entry is, and what a run is
+    // seated on. Nothing else here names a path or a flag.
+    const { text } = drawn([MARVIN, OPENAI]);
+
+    expectPlainWords("providers", text);
+  });
+
+  it("lists an empty registry and its add form in plain words", () => {
+    const { text } = drawn([]);
+
+    expectPlainWords("providers", text);
   });
 });

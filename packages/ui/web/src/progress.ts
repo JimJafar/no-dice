@@ -24,6 +24,15 @@
  * nothing here clears a section that has something to show, because the figures a
  * finished run left behind are the reason for looking at it.
  *
+ * **The lines are the run's; everything else is the page's, and the page's words
+ * are plain.** The `<pre>` holds `runCli`'s output exactly as it printed it,
+ * paths and file names and all — it is the same account the terminal shows, and a
+ * page that tidied it would be a page that disagreed with the terminal. What the
+ * page says in its own voice names no flag and no path: the headline says what is
+ * running and when it began, not which directory it writes into, because a reader
+ * in a browser has nothing to do with that directory and the run's own lines name
+ * it for whoever needs it.
+ *
  * The shape below is declared here rather than imported from
  * `packages/ui/src/runs.ts`: that module reads `providers.json` and the registry
  * off disk through `@no-dice/runner`, and a browser bundle may not. It is the same
@@ -252,13 +261,6 @@ const list = (className: string, items: readonly string[]): HTMLElement => {
   return ul;
 };
 
-/** A path, as a path. */
-const code = (text: string): HTMLElement => {
-  const el = document.createElement("code");
-  el.textContent = text;
-  return el;
-};
-
 /** A time as the page says it: the clock's own hours, minutes and seconds. */
 const clockOf = (iso: string): string => {
   const at = new Date(iso);
@@ -269,16 +271,23 @@ const clockOf = (iso: string): string => {
 /** Money as the report writes it. */
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 
-/** How the run is described, in one line: what it is, where it is, and how it went. */
+/**
+ * How the run is described, in one line: what it is, and how it went.
+ *
+ * Not where it writes. The directory the run was started into is the operator's,
+ * and the one line on this page that names a path is the line the console writes
+ * when it refuses to start a run into one — where the path is the fact being
+ * reported. Here the run's own lines, kept verbatim below, name it.
+ */
 const stateParagraph = (run: RunSnapshot): HTMLElement => {
   const what = run.dir !== null ? "series" : "match";
   const el = document.createElement("p");
   el.className = `run run-${run.state}`;
   if (run.state === "running") {
     el.append(
-      document.createTextNode(`A ${what} is running in `),
-      code(String(run.dir ?? run.out)),
-      document.createTextNode(run.startedAt === null ? "." : `, started ${clockOf(run.startedAt)}.`),
+      document.createTextNode(
+        `A ${what} is running${run.startedAt === null ? "." : `, started ${clockOf(run.startedAt)}.`}`,
+      ),
     );
     return el;
   }
