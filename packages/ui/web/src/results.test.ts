@@ -513,6 +513,15 @@ describe("matchLabel", () => {
       "a match on seed 1234, whose log this console has not read",
     );
   });
+
+  it("says it has no facts about a log whose name does not carry a seed either", () => {
+    // The seed in the listing's own name for the log is the one fact in it that
+    // tells two rows like this apart. With no seed in the name, the row says that,
+    // rather than inventing a figure or falling back to the file name.
+    expect(matchLabel({ ...MATCH, name: "salient-match.json", header: null, outcome: null })).toBe(
+      "a match this console has no facts about, whose log this console has not read",
+    );
+  });
 });
 
 describe("viewerUrlFor", () => {
@@ -901,15 +910,15 @@ describe("renderResults", () => {
   });
 
   it("keeps the listing's order for its blocks, and puts one series' logs in one block", () => {
-    // The facts route walks the roots in its own order, and a series' logs
-    // are not necessarily consecutive in it. The blocks follow the order the listing
-    // gives — the page does not sort the series into one of its own.
+    // The facts route walks the roots in the listing's order, but a series' logs are
+    // not necessarily consecutive in it. The blocks follow that order — the page does
+    // not sort the series into one of its own.
     const facts: MatchFacts = {
       matchesRoot: "/repo/matches",
       matches: [fact("beta", 2200), fact("alpha", 1234), fact("beta", 2201), fact("alpha", 1235)],
       unreadable: [],
     };
-    const { el } = drawn({ ...RESULTS, series: [SERIES, BETA] }, ready(facts));
+    const { el } = drawn({ ...RESULTS, series: [SERIES, BETA], matches: facts.matches }, ready(facts));
 
     expect(groupsOf(el)).toEqual([
       {
@@ -927,6 +936,32 @@ describe("renderResults", () => {
         ],
       },
     ]);
+  });
+
+  it("puts a series whose logs are all unreadable where the listing puts it", () => {
+    // The facts answer splits its logs into the ones it could read and the ones it
+    // could not, so its own order would file a series with nothing readable after
+    // every series that has one. The listing walks both roots once and names
+    // both kinds of log, and it is that order the blocks follow.
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [fact("beta", 2200)],
+      unreadable: [
+        {
+          name: "1234-greedy-random.json",
+          path: "/repo/series/alpha/matches/1234-greedy-random.json",
+          url: "/logs/alpha/matches/1234-greedy-random.json",
+          series: "alpha",
+          error: "not a match log",
+        },
+      ],
+    };
+    const { el } = drawn(
+      { ...RESULTS, series: [SERIES, BETA], matches: [fact("alpha", 1234), fact("beta", 2200)] },
+      ready(facts),
+    );
+
+    expect(groupsOf(el).map((group) => group.head)).toEqual(["bot:greedy vs bot:random", "bot:greedy vs marvin/subagent"]);
   });
 
   it("names the series in a heading where two blocks share a pairing", () => {
@@ -1022,6 +1057,32 @@ describe("renderResults", () => {
       },
     ]);
     expect(el.querySelectorAll("a.match-viewer")).toHaveLength(1);
+  });
+
+  it("says it has no facts about an unreadable log whose name carries no seed", () => {
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [],
+      unreadable: [
+        {
+          name: "salient-match.json",
+          path: "/repo/matches/salient-match.json",
+          url: "/logs/salient-match.json",
+          series: null,
+          error: "not a match log",
+        },
+      ],
+    };
+    const { el } = drawn(RESULTS, ready(facts));
+
+    // A log with no seed in its name is still a match of the folder it sits in, and
+    // the row says what it does not know instead of inventing a figure.
+    expect(groupsOf(el)).toEqual([
+      {
+        head: "Played on their own — matches that belong to no series",
+        rows: ["a match this console has no facts about, whose log the console could not read: not a match log"],
+      },
+    ]);
   });
 
   it("says the facts are on their way, and draws the series rows while they are", () => {
@@ -1309,14 +1370,30 @@ describe("createPlayingPoller", () => {
 });
 
 describe("the words the results section speaks", () => {
-  it("draws a section holding a series, a broken record and a match, in plain words", () => {
+  it("draws a section holding a series, a broken record, a match and a broken log, in plain words", () => {
     // One of everything the section can draw, so a path or a file name sneaking
-    // in through any one of the three kinds of row fails here — including the
-    // resume button's explanation, which is a label with no text under it.
-    const { el } = drawn({
-      ...RESULTS,
-      unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
-    });
+    // in through any one of the four kinds of row fails here — including the
+    // resume button's explanation, which is a label with no text under it, and the
+    // line the facts route gives for a log it could not read.
+    const facts: MatchFacts = {
+      ...FACTS,
+      unreadable: [
+        {
+          name: "77-greedy-random.json",
+          path: "/repo/series/alpha/matches/77-greedy-random.json",
+          url: "/logs/alpha/matches/77-greedy-random.json",
+          series: "alpha",
+          error: "the log's last line is not JSON",
+        },
+      ],
+    };
+    const { el } = drawn(
+      {
+        ...RESULTS,
+        unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
+      },
+      ready(facts),
+    );
 
     expectPlainWords("results", wordsOf(el));
   });
@@ -1331,6 +1408,29 @@ describe("the words the results section speaks", () => {
     });
 
     expect(text).toContain("no series record under /repo/series/broken");
+  });
+
+  it("passes the console's own line about a log it cannot read, path and all", () => {
+    // The second row where a path belongs, beside the series record above it: the log
+    // is the match, and where it lies is the fact the operator acts on. The page adds
+    // no path of its own — it repeats the line the console wrote, which is the shape
+    // `failureOf` in the facts route answers a corrupt log in.
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [],
+      unreadable: [
+        {
+          name: "77-greedy-random.json",
+          path: "/repo/series/alpha/matches/77-greedy-random.json",
+          url: "/logs/alpha/matches/77-greedy-random.json",
+          series: "alpha",
+          error: "/repo/series/alpha/matches/77-greedy-random.json: not valid JSON",
+        },
+      ],
+    };
+    const { text } = drawn(RESULTS, ready(facts));
+
+    expect(text).toContain("/repo/series/alpha/matches/77-greedy-random.json: not valid JSON");
   });
 
   it("says what a series another process is playing, and one a dead run left, in plain words", () => {

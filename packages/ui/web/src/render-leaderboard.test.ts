@@ -279,6 +279,53 @@ describe("renderLeaderboard", () => {
     expect(link.getAttribute("href")).toBe(MATCH_LINK);
   });
 
+  it("says a log could not be read, in words, when the header read comes back with nothing", async () => {
+    const el = section();
+    renderLeaderboard(el, {
+      board: BOARD,
+      matches: [{ ...MATCH, header: null }],
+      headers: () => Promise.resolve(null),
+    });
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    // Still a link to the replay: the listing named the log and the console serves
+    // it whatever its header turns out to be. Only the words say the page could not
+    // read what the match was.
+    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
+    expect(link.textContent).toBe("a match on seed 1234, whose log this console could not read");
+    expect(link.getAttribute("href")).toBe(MATCH_LINK);
+  });
+
+  it("leaves a replay link's words alone when the header read fails, rather than raising out of a render", async () => {
+    const el = section();
+    renderLeaderboard(el, {
+      board: BOARD,
+      matches: [{ ...MATCH, header: null }],
+      headers: () => Promise.reject(new Error("the socket dropped")),
+    });
+
+    await new Promise((later) => void setTimeout(later, 0));
+
+    // The row keeps the words it was drawn with. An unhandled rejection out of a
+    // render is a page that stops working, which is worse than a plain label.
+    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
+    expect(link.textContent).toBe("a match on seed 1234, whose log this console has not read");
+    expect(link.getAttribute("href")).toBe(MATCH_LINK);
+  });
+
+  it("says it has no facts about a log whose name does not carry a seed either", () => {
+    const el = section();
+    renderLeaderboard(el, { board: BOARD, matches: [{ ...MATCH, name: "salient-match.json", header: null }] });
+
+    // The seed in the listing's own name for the log is the one fact that tells two
+    // rows like this apart. With no seed in the name the row says so, rather than
+    // inventing a figure or falling back to the file name.
+    expect(el.querySelector("a.match-viewer")?.textContent).toBe(
+      "a match this console has no facts about, whose log this console has not read",
+    );
+  });
+
   it("links each series to its own matches in the replay viewer, and no one else's", () => {
     const el = section();
     renderLeaderboard(el, { board: BOARD, matches: [MATCH, BETA_MATCH, ALONE] });

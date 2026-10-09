@@ -20,8 +20,10 @@
  * The alternative — a section that quietly omits it — reads as though the run
  * had never happened. What the page says is that the console lists the folders
  * it was started with; it does not print those folders, because a path is not
- * something a reader does anything with, and the one row that does carry a path
- * is a series record that will not parse, where the path is the fact.
+ * something a reader does anything with. The rows that do carry a path are the two
+ * that name something the console could not read — a series record that will not
+ * parse, and a match log that will not — where where the thing lies *is* the fact,
+ * and the path arrives in the console's own line rather than in the page's words.
  *
  * **A match is named by what it was, not by what its log is called.** The row
  * says the two seats, who won, the final score, the seed and the day it was
@@ -1033,12 +1035,18 @@ interface MatchGroup {
  *
  * The grouping is the listing's own: `series` is a field the console answers, and a
  * log that is under a series' directory is in that series whatever the page thinks.
- * Groups appear in order of first appearance, which is the order `/api/matches`
- * walks the roots in, so the page does not put the series in an order of its own.
+ * A block's place is where its series' first log sits in `/api/matches`, which is
+ * the one walk both routes make of the two roots — not the order the facts answer
+ * happens to arrive in. That answer splits its logs into the ones it could read and
+ * the ones it could not, so its own order would file a series whose logs are all
+ * unreadable after every series that has one readable log. A series the listing does
+ * not name — a log that appeared between the two reads — keeps the facts answer's
+ * order, behind the series it does name.
+ *
  * An unreadable log joins the group it belongs to rather than starting a list of
  * failures at the bottom of the view.
  */
-const groupsOf = (facts: MatchFacts): MatchGroup[] => {
+const groupsOf = (facts: MatchFacts, listing: readonly MatchRow[]): MatchGroup[] => {
   const groups = new Map<string | null, MatchGroup>();
   const groupOf = (series: string | null): MatchGroup => {
     let group = groups.get(series);
@@ -1050,7 +1058,16 @@ const groupsOf = (facts: MatchFacts): MatchGroup[] => {
   };
   for (const row of facts.matches) groupOf(row.series).rows.push(row);
   for (const row of facts.unreadable) groupOf(row.series).unreadable.push(row);
-  return [...groups.values()];
+
+  // Where each series' first log sits in the listing, and so where its block goes.
+  const rank = new Map<string | null, number>();
+  for (const row of listing) {
+    if (!rank.has(row.series)) rank.set(row.series, rank.size);
+  }
+  // `sort` is stable, so the series the listing does not name keep the order the
+  // facts answer gave them, behind the ones it names.
+  const placeOf = (series: string | null): number => rank.get(series) ?? Number.MAX_SAFE_INTEGER;
+  return [...groups.values()].sort((left, right) => placeOf(left.series) - placeOf(right.series));
 };
 
 /** The pairing a group was played under, or `null` when the series listing does not know it. */
@@ -1129,7 +1146,7 @@ export const fillMatchLabel = (link: HTMLAnchorElement, row: MatchRow, headers?:
  * routes — and the page's status line carries the reason, as every other failed read
  * does.
  */
-const matchGroups = (facts: MatchFactsRead, series: readonly SeriesRow[]): Node[] => {
+const matchGroups = (facts: MatchFactsRead, results: Results): Node[] => {
   if (facts.state === "reading") return [paragraph("matches-reading", "Reading what each match was.")];
   if (facts.state === "failed") {
     return [
@@ -1139,9 +1156,9 @@ const matchGroups = (facts: MatchFactsRead, series: readonly SeriesRow[]): Node[
       ),
     ];
   }
-  const groups = groupsOf(facts.facts);
+  const groups = groupsOf(facts.facts, results.matches);
   if (groups.length === 0) return [paragraph("matches-none", "No finished match here yet.")];
-  const heads = groupHeads(groups, series);
+  const heads = groupHeads(groups, results.series);
   return groups.map((group, at) => matchGroupItem(heads[at], group));
 };
 
@@ -1196,7 +1213,7 @@ export const renderResults = (
     );
   }
 
-  el.append(...matchGroups(facts, results.series));
+  el.append(...matchGroups(facts, results));
 };
 
 /** What the page does with one answer from the console's cheap route. */

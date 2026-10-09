@@ -210,6 +210,19 @@ const refreshListings = async (): Promise<void> => {
     say(error instanceof Error ? error.message : String(error), true);
   }
 
+  // A listing that shows a series being played has counters that move, and this is
+  // the only moment the page learns they do: the listing read above is the one
+  // that says somebody holds the directory. The poll asks the cheap route once and
+  // keeps asking only while that answer names a playing series, so a listing with
+  // nobody playing costs one read and no loop.
+  //
+  // It starts here rather than after the facts read below, because the poll is the
+  // cheap read and the facts are the expensive one. A run in somebody else's process
+  // moves on the poll's tick, and queueing the first tick behind a pass over every
+  // match log of every series would hold those counters still — and the row's Resume
+  // button with them — for as long as that pass takes.
+  if (listedSeries.some((row) => row.playing !== null)) void playingPoller.run();
+
   // The facts last, and on their own: of everything on this page they are the read
   // that costs the console a full pass over every match log, so nothing above waits
   // for them, and a read that failed says its line after every other line has said
@@ -217,13 +230,6 @@ const refreshListings = async (): Promise<void> => {
   // under the series rows.
   facts = await readMatchFacts();
   drawResults();
-
-  // A listing that shows a series being played has counters that move, and this is
-  // the only moment the page learns they do: the listing read above is the one
-  // that says somebody holds the directory. The poll asks the cheap route once and
-  // keeps asking only while that answer names a playing series, so a listing with
-  // nobody playing costs one read and no loop.
-  if (listedSeries.some((row) => row.playing !== null)) void playingPoller.run();
 };
 
 /**
