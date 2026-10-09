@@ -45,7 +45,10 @@
  * `/api/leaderboard` answers both leaderboard views over those same records in
  * one call (`./leaderboard.ts`), `/api/estimate` measures what a run of a given
  * pairing would cost off the series that have already played those seats
- * (`./estimate.ts`),
+ * (`./estimate.ts`), `/api/model-detail` answers one model's detail — the pooled
+ * headline figures and one block per series that model played in, at the cost of
+ * one more read of the logs of each of those series, which is what makes it a
+ * click rather than a load (`./model-detail.ts`),
  * `/logs/<path>` serves the JSON a listing names and the `report.md` a finished
  * series wrote beside its record, `/reports/<name>.md` serves the kept copy of that
  * report and of the series' rules evidence — the two files `docs/series-notes.md`
@@ -100,6 +103,7 @@ import {
 } from "./args.ts";
 import { ESTIMATE_PATH, estimateQueryOf, estimateRows } from "./estimate.ts";
 import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
+import { MODEL_DETAIL_PATH, detailLabelOf, modelDetailOf } from "./model-detail.ts";
 import { MATCH_FACTS_PATH, matchFactsRows } from "./match-facts.ts";
 import { MODELS_PATH, modelList } from "./models.ts";
 import type { PiModelSource } from "./models.ts";
@@ -723,6 +727,30 @@ const route = async (
   // are the stats package's rather than a second account of them.
   if (path === LEADERBOARD_PATH) {
     sendJson(response, 200, await leaderboardRows(config, runs.inFlightSeries()));
+    return;
+  }
+
+  // One model's detail: the pooled headline figures, and one block per series
+  // that counted a match for it. Its own route rather than more fields on the
+  // leaderboard answer above, because the rules' counters and the per-series
+  // figures come from `seriesEvidence` over each series this model played in — a
+  // second read of every log those series hold — and the page would pay for that
+  // on every open and every run that ends to draw a table that shows none of
+  // them. A click, so nothing polls it; `./model-detail.ts` says what one opening
+  // costs, and a series it cannot read is a block carrying the line it failed
+  // on rather than a block that is missing.
+  if (path === MODEL_DETAIL_PATH) {
+    const asked = detailLabelOf(request.url);
+    if (!asked.ok) {
+      sendJson(response, 400, { error: asked.error });
+      return;
+    }
+    const detail = await modelDetailOf(config, asked.label, runs.inFlightSeries());
+    if (!detail.ok) {
+      sendJson(response, 404, { error: detail.error });
+      return;
+    }
+    sendJson(response, 200, detail.detail);
     return;
   }
 
