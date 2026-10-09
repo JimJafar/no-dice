@@ -20,7 +20,10 @@
  *   is read from, and the seat's own `models.json` interpolates it, so the value
  *   exists only in the seat's environment;
  * - an entry can be added to a registry file and re-read in the same process, which
- *   is how the console seats its next run on a provider the operator just typed in.
+ *   is how the console seats its next run on a provider the operator just typed in;
+ * - an entry can be edited and removed, under the name it is filed under — the name
+ *   is the identity, so an edit is never a rename, and a name the registry does not
+ *   name is refused by both rather than adding or deleting an entry by accident.
  *
  * None of it needs a network, a credential or a live provider: the seat is read
  * back as the spec the runner is handed, not as a match it would play.
@@ -42,7 +45,9 @@ import {
   providerEntrySchema,
   providerRegistrySchema,
   reloadProviders,
+  removeProvider,
   seatModelsJson,
+  updateProvider,
 } from "./providers.ts";
 import type { ProviderEntry } from "./providers.ts";
 
@@ -382,6 +387,99 @@ describe("adding a provider to the registry", () => {
   });
 });
 
+describe("editing and removing a registry entry", () => {
+  it("replaces one entry in place, and leaves every other entry as it was", () => {
+    withTempRegistry({ marvin: MARVIN, acme: ACME }, (dir, path) => {
+      const edited = { ...ACME, contextWindow: 64_000 };
+      const saved = updateProvider("acme", edited, path);
+      expect(saved.acme).toEqual(edited);
+      expect(saved.marvin).toEqual(MARVIN);
+      // The name is the identity, not a field: an edit changes what one name says
+      // and moves nothing, so the registry holds the same names in the same order
+      // and no second entry appears beside the one it replaced.
+      expect(Object.keys(saved)).toEqual(["marvin", "acme"]);
+      // What the caller is told is what the file says: the answer is re-read.
+      expect(loadProviders(path)).toEqual(saved);
+      expect(readdirSync(dir)).toEqual(["providers.json"]);
+      expect(readFileSync(path, "utf8")).toBe(
+        `${JSON.stringify({ marvin: MARVIN, acme: edited }, null, 2)}\n`,
+      );
+    });
+  });
+
+  it("writes an edited entry that names no key variable as an explicitly keyless one", () => {
+    const { apiKeyEnv: _apiKeyEnv, ...keyless } = ACME;
+    withTempRegistry({ acme: ACME }, (_dir, path) => {
+      expect(updateProvider("acme", keyless, path).acme?.apiKeyEnv).toBeNull();
+      expect(readFileSync(path, "utf8")).toContain('"apiKeyEnv": null');
+    });
+  });
+
+  it("refuses a name the registry does not name, rather than adding an entry nobody asked for", () => {
+    // An update to a name that is not there is a typo that would otherwise write a
+    // new entry, and a remove of one is the same typo about to delete nothing while
+    // the entry it meant is left seated. `addProvider` stays the only new entry.
+    withTempRegistry({ marvin: MARVIN }, (dir, path) => {
+      const before = readFileSync(path, "utf8");
+      expect(() => updateProvider("acme", ACME, path)).toThrow(/does not name "acme"/);
+      expect(() => removeProvider("acme", path)).toThrow(/does not name "acme"/);
+      expect(readFileSync(path, "utf8")).toBe(before);
+      expect(readdirSync(dir)).toEqual(["providers.json"]);
+      expect(loadProviders(path)).toEqual({ marvin: MARVIN });
+    });
+  });
+
+  it("refuses an edited entry the schema refuses, so an update cannot smuggle a key in", () => {
+    withTempRegistry({ marvin: MARVIN, acme: ACME }, (dir, path) => {
+      const before = readFileSync(path, "utf8");
+      expect(() => updateProvider("acme", { ...ACME, apiKey: "sk-not-a-secret" }, path)).toThrow(
+        /apiKey/,
+      );
+      expect(() => updateProvider("acme", { ...ACME, contextWindow: 0 }, path)).toThrow(
+        /contextWindow/,
+      );
+      expect(() => updateProvider("acme", { ...ACME, baseUrl: "not a url" }, path)).toThrow(
+        /baseUrl/,
+      );
+      // A refusal writes nothing: not the target, and no half file beside it.
+      expect(readFileSync(path, "utf8")).toBe(before);
+      expect(readdirSync(dir)).toEqual(["providers.json"]);
+    });
+  });
+
+  it("refuses a name either of them could not have written in the first place", () => {
+    for (const name of ["", ".", "..", "acme/m1", "__proto__"]) {
+      withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+        const before = readFileSync(path, "utf8");
+        expect(() => updateProvider(name, ACME, path)).toThrow(/one path segment/);
+        expect(() => removeProvider(name, path)).toThrow(/one path segment/);
+        expect(readFileSync(path, "utf8")).toBe(before);
+      });
+    }
+  });
+
+  it("deletes one entry and leaves the rest of the registry alone", () => {
+    withTempRegistry({ marvin: MARVIN, acme: ACME }, (dir, path) => {
+      const saved = removeProvider("acme", path);
+      expect(Object.keys(saved)).toEqual(["marvin"]);
+      expect(saved.marvin).toEqual(MARVIN);
+      expect(loadProviders(path)).toEqual(saved);
+      expect(readdirSync(dir)).toEqual(["providers.json"]);
+      expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify({ marvin: MARVIN }, null, 2)}\n`);
+    });
+  });
+
+  it("leaves an empty registry that still loads, because the view has to be able to empty it", () => {
+    withTempRegistry({ marvin: MARVIN }, (_dir, path) => {
+      expect(Object.keys(removeProvider("marvin", path))).toEqual([]);
+      expect(readFileSync(path, "utf8")).toBe("{}\n");
+      // An empty registry is a registry that names nothing — a valid file, and the
+      // one that leaves every seat to Pi's own lookup rather than a broken one.
+      expect(Object.keys(loadProviders(path))).toEqual([]);
+    });
+  });
+});
+
 describe("re-reading the registry in the same process", () => {
   // These reload the module's cache from a temp file, so they hand it back to the
   // committed registry when they are done.
@@ -425,6 +523,19 @@ describe("re-reading the registry in the same process", () => {
       expect(seatModelsJson("acme/m1")).toMatchObject({
         providers: { acme: { baseUrl: ACME.baseUrl, apiKey: "${ACME_API_KEY}" } },
       });
+    });
+  });
+
+  it("leaves a seat to Pi's own lookup once its entry has been removed", () => {
+    // The console can empty the registry, and the next run this process starts has
+    // to see that: the name is no longer one it holds, so the seat is given no
+    // `models.json` at all rather than one for a provider that is gone.
+    withReloaded({ marvin: MARVIN, acme: ACME }, (path) => {
+      expect(providerEntry("acme")).toEqual(ACME);
+      reloadProviders(removeProvider("acme", path));
+      expect(providerEntry("acme")).toBeNull();
+      expect(seatModelsJson("acme/m1")).toBeNull();
+      expect(providerEntry("marvin")).toEqual(MARVIN);
     });
   });
 

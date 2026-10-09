@@ -34,7 +34,16 @@
  * The console can add an entry to that file and seat the next run on it in the
  * same process: `addProvider` writes through the same schema and the same
  * single-rename discipline the logs are written with, and `reloadProviders` is
- * the one deliberate exception to reading the registry once per process.
+ * the one deliberate exception to reading the registry once per process. The
+ * console edits and empties the same file through `updateProvider` and
+ * `removeProvider`, and an edit is not a rename: the name an entry is filed
+ * under is its identity — a seat is `<provider>/<id>` and `providerOf` splits it
+ * on the first `/`, while the entry itself carries no name — so a rename is a
+ * remove followed by an add, and `addProvider` stays the only route to a new
+ * entry. Removing an entry reaches no match already played: a log header names
+ * its own `<provider>/<id>` and `context_window`, each turn's `cost_usd` was
+ * computed from the rates of the moment it was played, and the kept `series/`
+ * baselines are never rewritten.
  */
 import { randomUUID } from "node:crypto";
 import {
@@ -308,6 +317,83 @@ export const addProvider = (
     ...current,
     [name]: { ...parsed.data, apiKeyEnv: parsed.data.apiKeyEnv ?? null },
   });
+  return loadProviders(path);
+};
+
+/**
+ * Replace the entry the registry holds under `name` with `entry`, and answer with
+ * the registry as it now stands on disk.
+ *
+ * **The name is the identity, not a field.** An entry carries no name — which is
+ * why `addProvider` takes one — so `name` is an argument here too, and an update
+ * never changes the name the entry is filed under: a seat is `<provider>/<id>`
+ * and `providerOf` splits it on the first `/`, so moving an entry to another name
+ * would leave every run seated on the old one pointing at a provider nobody
+ * chose. A rename is `removeProvider` followed by `addProvider`, two calls that
+ * say what they do.
+ *
+ * A name the registry does not hold is refused: an update that quietly *added* an
+ * entry is a typo dressed up as an edit, and `addProvider` stays the only route
+ * to a new one. The entry goes through `providerEntrySchema` before anything is
+ * written, so an update cannot smuggle a key value in any more than an add can,
+ * and cannot leave behind an entry the loader would refuse. Every refusal — of
+ * the name or of the entry — happens before a byte is written, so the file stays
+ * byte-identical, and the write is the same temp-file-and-rename step, so
+ * `loadProviders` never reads half a file. One writer at a time is assumed, as
+ * with `addProvider`: a file someone else edits in between is overwritten.
+ */
+export const updateProvider = (
+  name: string,
+  entry: unknown,
+  path: string = PROVIDERS_FILE,
+): ProviderRegistry => {
+  checkProviderName(name);
+  const current = loadProviders(path);
+  if (!Object.hasOwn(current, name)) {
+    throw new Error(
+      `the provider registry does not name "${name}": an update replaces the entry ` +
+        "that is there, and adding one is addProvider",
+    );
+  }
+  const parsed = providerEntrySchema.safeParse(entry);
+  if (!parsed.success) {
+    throw new Error(`"${name}" is not a provider entry: ${describeIssues(parsed.error.issues)}`);
+  }
+  writeRegistry(path, {
+    ...current,
+    // Spread keeps the entry in the registry's own order: an edit changes what one
+    // name says, and moves nothing.
+    [name]: { ...parsed.data, apiKeyEnv: parsed.data.apiKeyEnv ?? null },
+  });
+  return loadProviders(path);
+};
+
+/**
+ * Delete the entry the registry holds under `name`, and answer with the registry
+ * as it now stands on disk.
+ *
+ * A name the registry does not hold is refused, as an update to one is: a remove
+ * that matches nothing has usually mis-typed a name that does exist. An empty
+ * registry is a valid file — removing the last entry leaves `{}`, which
+ * `loadProviders` reads — because the view has to be able to empty it, and a
+ * registry that names nothing is what leaves every seat to Pi's own lookup.
+ *
+ * What is removed is the entry, and nothing played on it. A match log already
+ * names its own `<provider>/<id>` and `context_window`, and every turn's
+ * `cost_usd` was computed from the rates of the moment it was played, so no
+ * result moves; the kept `series/` baselines are never rewritten either.
+ */
+export const removeProvider = (name: string, path: string = PROVIDERS_FILE): ProviderRegistry => {
+  checkProviderName(name);
+  const current = loadProviders(path);
+  if (!Object.hasOwn(current, name)) {
+    throw new Error(`the provider registry does not name "${name}": there is no entry to remove`);
+  }
+  const next: ProviderRegistry = Object.create(null);
+  for (const [held, entry] of Object.entries(current)) {
+    if (held !== name) next[held] = entry;
+  }
+  writeRegistry(path, next);
   return loadProviders(path);
 };
 
