@@ -25,13 +25,20 @@
  * labels and its ceilings are checked for flag names, absolute paths and log file
  * names at the bottom of this file. The console's own refusal line is the one line
  * that is not: it names the field and the value it rejected, verbatim.
+ *
+ * The estimate is read rather than held, so what is checked here is that the page
+ * draws what the read answered — the series it measured, how many matches it
+ * counted, and the figures per match and over the run — that it asks again when a
+ * seat or the pair count changes and not per keystroke, and that a read which
+ * failed leaves the estimate already on the page standing, with one line saying the
+ * estimate could not be read.
  */
 import { describe, expect, it } from "vitest";
 
 import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
-import type { RunKind, StartBody, StartOutcome } from "./start.ts";
+import type { Estimate, RunKind, StartBody, StartOutcome, StartValues } from "./start.ts";
 import type { RunSnapshot } from "./progress.ts";
 
 /** The seats a console with one provider in its registry offers. */
@@ -80,6 +87,66 @@ const STARTED: RunSnapshot = {
 /** `parseArgs`'s own line for a provider picked with no model id typed. */
 const NO_MODEL = '--a takes bot:random, bot:greedy and <provider>/<model-id>, not "marvin/"';
 
+/**
+ * What the estimate route answers for these two seats: one series that played both,
+ * ten matches counted, and the figures per match and over the run. The figures are
+ * the route's, and what the tests below check is that the page says them — rounded
+ * for reading, and never recomputed.
+ */
+const ESTIMATE: Estimate = {
+  pairs: 5,
+  matches: 10,
+  seats: [
+    {
+      label: "deepseek/deepseek-flash",
+      measured: {
+        series: ["deepseek-flash-vs-greedy"],
+        matches: 10,
+        perMatch: { turns: 25, tokens: 14_755_955, costUsd: 0.3154, seatMs: 935_106 },
+      },
+      run: { turns: 250, tokens: 147_559_550, costUsd: 3.154, seatMs: 9_351_065 },
+    },
+    {
+      label: "bot:greedy",
+      measured: {
+        series: ["deepseek-flash-vs-greedy"],
+        matches: 10,
+        perMatch: { turns: 25, tokens: 0, costUsd: 0, seatMs: 12_000 },
+      },
+      run: { turns: 250, tokens: 0, costUsd: 0, seatMs: 120_000 },
+    },
+  ],
+};
+
+/**
+ * The same answer with a seat nothing under the root has ever played. The quoted
+ * figure is the route's to hold and is not repeated here: this fixture stands in for
+ * it with a number of its own, which is also how the test below can tell the page
+ * drew the route's line rather than one it wrote itself.
+ */
+const UNMEASURED: Estimate = {
+  pairs: 5,
+  matches: 10,
+  seats: [
+    {
+      label: "nowhere/ghost",
+      measured: null,
+      fallback: {
+        perMatch: { tokens: 3_200_000, seatMs: 840_000 },
+        line:
+          "the only model match measured on this repo's record: the first Marvin match, " +
+          "about 14 minutes and 3.2M tokens for one match",
+      },
+    },
+    ESTIMATE.seats[1]!,
+  ],
+};
+
+/** How the estimate read answers: measured, quoted, or unable to be read. */
+const measured = (): Promise<Estimate> => Promise.resolve(ESTIMATE);
+const quoted = (): Promise<Estimate> => Promise.resolve(UNMEASURED);
+const unreadable = (): Promise<Estimate> => Promise.reject(new Error("the console answered 500"));
+
 /** A section in the shape `index.html` gives it. */
 const section = (): HTMLElement => {
   const el = document.createElement("section");
@@ -122,16 +189,22 @@ interface Asked {
 const drawn = (
   answer: StartOutcome,
   choices: SeatChoices = CHOICES,
+  onEstimate: () => Promise<Estimate> = measured,
 ): {
   el: HTMLElement;
   asked: Asked[];
   started: RunSnapshot[];
+  /** The form as each estimate read was asked with it. */
+  estimateAsks: StartValues[];
   /** Press Start and let the answer arrive. */
   press: () => Promise<void>;
+  /** Let an estimate read that is in flight arrive. */
+  settle: () => Promise<void>;
 } => {
   const el = section();
   const asked: Asked[] = [];
   const started: RunSnapshot[] = [];
+  const estimateAsks: StartValues[] = [];
 
   renderStart(el, {
     choices,
@@ -139,17 +212,27 @@ const drawn = (
       asked.push({ kind, body });
       return Promise.resolve(answer);
     },
+    onEstimate: (values) => {
+      estimateAsks.push(values);
+      return onEstimate();
+    },
     onStarted: (run) => void started.push(run),
   });
+
+  const settle = async (): Promise<void> => {
+    await new Promise((later) => void setTimeout(later, 0));
+  };
 
   return {
     el,
     asked,
     started,
+    estimateAsks,
+    settle,
     press: async () => {
       control<HTMLButtonElement>(el, "button.start").click();
       // The answer arrives on a promise, and the drawing that follows it with.
-      await new Promise((later) => void setTimeout(later, 0));
+      await settle();
     },
   };
 };
@@ -440,15 +523,6 @@ describe("the ceilings beside Start", () => {
     ]);
   });
 
-  it("states what a series at its default length costs, in the measurement's own words", () => {
-    const { el } = drawn({ ok: true, run: STARTED });
-
-    const measured = textOf(el, ".start-measured");
-    expect(measured).toContain("48 hours");
-    expect(measured).toContain("688M tokens");
-    expect(measured).toContain("150 matches");
-  });
-
   it("says a match is one pair and has no ceilings", () => {
     const { el } = drawn({ ok: true, run: STARTED });
 
@@ -464,7 +538,219 @@ describe("the ceilings beside Start", () => {
     // is not shown.
     expect(control<HTMLElement>(el, ".field-max-pairs-wrap").hidden).toBe(true);
     expect(control<HTMLElement>(el, ".field-seed-wrap").hidden).toBe(false);
-    expect(control<HTMLElement>(el, ".start-measured").hidden).toBe(true);
+    // An estimate of a run of pairs is not an answer about one pair.
+    expect(control<HTMLElement>(el, ".estimate").hidden).toBe(true);
+  });
+});
+
+describe("the estimate the page reads", () => {
+  it("names the series it measured, the matches it counted, and the figures per match and for the run", async () => {
+    // Nothing here holds a figure: every number on the block is the read's,
+    // and the block says which series and how many matches it rests on.
+    const { el, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    const heads = [...el.querySelectorAll<HTMLElement>(".estimate-seat-head")].map((each) => each.textContent);
+    expect(heads).toEqual([
+      "deepseek/deepseek-flash — measured over 10 matches in deepseek-flash-vs-greedy",
+      "bot:greedy — measured over 10 matches in deepseek-flash-vs-greedy",
+    ]);
+
+    const lines = [...el.querySelectorAll<HTMLElement>(".estimate-figures li")].map((each) => each.textContent);
+    expect(lines).toEqual([
+      "Per match: about 25 turns, 14.8M tokens, $0.32 and 15 minutes in the seat",
+      "For the run's 10 matches: about 250 turns, 148M tokens, $3.15 and 2 hours 35 minutes in the seat",
+      "Per match: about 25 turns, 0 tokens, no cost on record and 12 seconds in the seat",
+      "For the run's 10 matches: about 250 turns, 0 tokens, no cost on record and 2 minutes in the seat",
+    ]);
+  });
+
+  it("says what the run is, in the route's own counts", async () => {
+    const { el, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    expect(textOf(el, ".estimate-head")).toBe(
+      "What a run of 5 pairs — 10 matches — would cost, measured off the matches this console has already seen.",
+    );
+  });
+
+  it("asks with the seats the pickers hold and the pair count the form holds", async () => {
+    const { el, estimateAsks, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    expect(estimateAsks).toHaveLength(1);
+    expect(estimateAsks[0]?.seatA).toBe("bot:random");
+    expect(estimateAsks[0]?.seatB).toBe("bot:random");
+    expect(estimateAsks[0]?.maxPairs).toBe("5");
+    // The seat as it will be sent, id and all: the estimate is asked about the run
+    // the form would start. The picker's change asks, the id typed into the box does
+    // not until the operator leaves the box.
+    set(el, "select.field-seat-a", "marvin");
+    set(el, "input.field-model-a", "subagent");
+    await settle();
+    expect(estimateAsks).toHaveLength(2);
+    expect(estimateAsks[1]?.modelA).toBe("");
+
+    control<HTMLInputElement>(el, "input.field-model-a").dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+
+    expect(estimateAsks).toHaveLength(3);
+    expect(estimateAsks[2]?.seatA).toBe("marvin");
+    expect(estimateAsks[2]?.modelA).toBe("subagent");
+  });
+
+  it("asks again when a seat picker changes", async () => {
+    const { el, estimateAsks, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    set(el, "select.field-seat-b", "deepseek/deepseek-flash");
+    await settle();
+
+    expect(estimateAsks).toHaveLength(2);
+    expect(estimateAsks[1]?.seatB).toBe("deepseek/deepseek-flash");
+  });
+
+  it("asks when the pair box is left, and not for each character typed in it", async () => {
+    // The read walks every match log under the root, which is seconds. A keystroke
+    // is not a question, and neither are eleven of them.
+    const { el, estimateAsks, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    const box = control<HTMLInputElement>(el, "input.field-max-pairs");
+    for (const character of "12") {
+      box.value += character;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await settle();
+    expect(estimateAsks).toHaveLength(1);
+
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle();
+    expect(estimateAsks).toHaveLength(2);
+    expect(estimateAsks[1]?.maxPairs).toBe("512");
+  });
+
+  it("asks no more often for a model id typed a character at a time", async () => {
+    const { el, estimateAsks, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    const box = control<HTMLInputElement>(el, "input.field-model-a");
+    for (const character of "subagent") {
+      box.value += character;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    await settle();
+
+    expect(estimateAsks).toHaveLength(1);
+  });
+
+  it("asks nothing about a match, whose run is one pair and needs no estimate", async () => {
+    const { el, estimateAsks, settle } = drawn({ ok: true, run: STARTED });
+    await settle();
+
+    set(el, "select.field-kind", "match");
+    set(el, "select.field-seat-a", "marvin");
+    await settle();
+
+    expect(estimateAsks).toHaveLength(1);
+    expect(control<HTMLElement>(el, ".estimate").hidden).toBe(true);
+  });
+
+  it("quotes a seat nothing under the root has played, says what the figure was measured on, and says it is not a measurement", async () => {
+    const { el, settle } = drawn({ ok: true, run: STARTED }, CHOICES, quoted);
+    await settle();
+
+    const [seat] = [...el.querySelectorAll<HTMLElement>(".estimate-seat")];
+    const said = seat?.textContent ?? "";
+
+    expect(said).toContain("nowhere/ghost");
+    // Cited in words, as the route wrote them: what it was measured on, and
+    // the figure itself, with no path into the repo.
+    expect(said).toContain("the only model match measured on this repo's record");
+    expect(said).toContain("not a measurement of nowhere/ghost");
+    expect(said).toContain("3.2M tokens");
+    expect(said).toContain("14 minutes in the seat");
+    // No run figure for a quoted match: the route gave none, and doubling one here
+    // would be the page doing arithmetic it is not allowed to do.
+    expect(said).not.toContain("For the run's");
+  });
+
+  it("leaves the last estimate standing and says the estimate could not be read", async () => {
+    let failing = false;
+    const { el, settle } = drawn({ ok: true, run: STARTED }, CHOICES, () =>
+      failing ? unreadable() : measured(),
+    );
+    await settle();
+
+    failing = true;
+    set(el, "select.field-seat-a", "bot:greedy");
+    await settle();
+
+    expect(textOf(el, ".estimate-failed")).toContain("The estimate could not be read.");
+    // The figures that were there are still there: a read that failed is not a
+    // reason to leave an operator with nothing to read.
+    expect(textOf(el, ".estimate")).toContain("14.8M tokens");
+    expectPlainWords("runs", wordsOf(el));
+  });
+
+  it("still starts the run when the estimate could not be read", async () => {
+    // The ceilings block is what bounds a run, not the estimate, so a route that
+    // cannot answer is not a Start button that does nothing.
+    const { el, asked, press } = drawn({ ok: true, run: STARTED }, CHOICES, unreadable);
+    await press();
+
+    expect(asked).toHaveLength(1);
+    expect(textOf(el, ".estimate-failed")).toContain("The estimate could not be read.");
+  });
+
+  it("says it is reading while the read is in flight, rather than leaving the block blank", async () => {
+    let answer!: (estimate: Estimate) => void;
+    const { el, settle } = drawn({ ok: true, run: STARTED }, CHOICES, () => {
+      return new Promise<Estimate>((later) => {
+        answer = later;
+      });
+    });
+    await settle();
+
+    expect(textOf(el, ".estimate-waiting")).toContain("Reading what this console has measured");
+    expectPlainWords("runs", wordsOf(el));
+
+    answer(ESTIMATE);
+    await settle();
+    expect(textOf(el, ".estimate")).toContain("14.8M tokens");
+    expect(textOf(el, ".estimate-note")).toBe("");
+  });
+
+  it("draws the answer to the newest ask when two are in flight", async () => {
+    // The route takes seconds, so an operator can change seat A twice before
+    // the first answer lands. The answer about the seat they left behind is not an
+    // answer about the run they are looking at.
+    const answers: ((estimate: Estimate) => void)[] = [];
+    const { el, settle } = drawn({ ok: true, run: STARTED }, CHOICES, () => {
+      return new Promise<Estimate>((later) => void answers.push(later));
+    });
+    await settle();
+    set(el, "select.field-seat-a", "bot:greedy");
+    await settle();
+    expect(answers).toHaveLength(2);
+
+    answers[1]!(UNMEASURED);
+    await settle();
+    answers[0]!(ESTIMATE);
+    await settle();
+
+    expect(textOf(el, ".estimate")).toContain("no series here has played this seat");
+    // The block on the page is the second ask's answer: the first ask was about a
+    // seat the form no longer holds, and its figures are not on the page.
+    expect(textOf(el, ".estimate")).toContain("3.2M tokens");
+    expect(textOf(el, ".estimate")).not.toContain("14.8M tokens");
+  });
+
+  it("draws the estimate in plain words, series names and all", async () => {
+    const { el, settle } = drawn({ ok: true, run: STARTED }, CHOICES, quoted);
+    await settle();
+
+    expectPlainWords("runs", wordsOf(el));
   });
 });
 
@@ -628,6 +914,7 @@ describe("what the section says about the run's life", () => {
     renderStart(el, {
       choices: { bots: [], providers: [], models: [] },
       onStart: () => Promise.resolve({ ok: true, run: STARTED }),
+      onEstimate: measured,
       onStarted: () => undefined,
     });
 
@@ -649,6 +936,7 @@ describe("what the section says about the run's life", () => {
         ],
       },
       onStart: () => Promise.resolve({ ok: true, run: STARTED }),
+      onEstimate: measured,
       onStarted: () => undefined,
     });
 
@@ -664,6 +952,7 @@ describe("what the section says about the run's life", () => {
     const options = {
       choices: CHOICES,
       onStart: () => Promise.resolve({ ok: true, run: STARTED } as StartOutcome),
+      onEstimate: measured,
       onStarted: () => undefined,
     };
 

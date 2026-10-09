@@ -150,6 +150,29 @@ option{color:#eef1f5;background:#12161c}
 .ceilings{flex:1 1 240px}
 .ceiling{font-size:14px;line-height:1.4;color:#c9d1dc}
 .ceiling-runner{color:#aab3bf}
+/* What a run like this one would cost, read off the matches the console has already
+   seen. One panel per seat, since the figures are a seat's and the two seats of a
+   match are not one number to add. A panel measured off logs here is tinted in the
+   colour a run is said in; a panel quoting a documented match is tinted in the colour
+   bad news is, because the quote is the weaker claim. The series the figures were
+   counted over is part of the sentence, not a footnote: a figure with no denominator
+   in sight is a figure someone has to trust. */
+.estimate{display:flex;flex-direction:column;gap:10px}
+.estimate[hidden]{display:none}
+.estimate-seat{display:flex;flex-direction:column;gap:8px;padding:14px 16px;background:#232a33;border-radius:6px}
+.estimate-measured{border-left:3px solid var(--team-a,#2c6fd1)}
+.estimate-unmeasured{border-left:3px solid var(--team-b,#e06f35)}
+.estimate-head,.estimate-fallback,.estimate-no-run{font-size:14px;line-height:1.4;color:#aab3bf}
+.estimate-seat-head{font-size:15px;line-height:1.4;color:#eef1f5}
+.estimate-figures{list-style:none;display:flex;flex-direction:column;gap:6px}
+.estimate-figures li{font-size:14px;line-height:1.4;color:#c9d1dc}
+/* The one line that says a quoted figure is not a measurement of the model in that
+   seat, in the tint a refusal is said in: it is the sentence that stops an estimate
+   being read as a measurement. */
+.estimate-not-measured{font-size:14px;line-height:1.4;color:#f0b18a}
+.estimate-note{font-size:14px;line-height:1.4;color:#aab3bf}
+.estimate-note:empty{display:none}
+.estimate-failed{color:#f0b18a}
 /* The folded block: the seed base and the two ceilings, behind a disclosure that
    starts closed. It wears the same panel the seats and the add form wear, and its
    summary is set as a field label rather than as a button, because opening it
@@ -190,7 +213,7 @@ option{color:#eef1f5;background:#12161c}
 .run-lines{margin:0;padding:14px 16px;background:#12161c;border-radius:6px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:13px;line-height:1.4;color:#c9d1dc;white-space:pre}
 /* The sections' one-line notes about where they were read from — about the page
    rather than about the run, so they sit back from the ink. */
-.roots,.leaderboard-roots,.providers-note,.granularity,.no-record,.start-measured,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
+.roots,.leaderboard-roots,.providers-note,.granularity,.no-record,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
 
 /* The one breakpoint. From 760 px the two forms stop being one long column: the start
    form's fields go two to a row with the limits and the button row across the
@@ -199,7 +222,7 @@ option{color:#eef1f5;background:#12161c}
    its own, and why this block only ever *adds* width. */
 @media (min-width:760px){
 .start-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-.start-form .seat,.start-form .limits,.start-form .advanced,.start-form .start-row,.start-form .start-measured,.start-form .start-outcome{grid-column:1 / -1}
+.start-form .seat,.start-form .limits,.start-form .advanced,.start-form .start-row,.start-form .estimate,.start-form .estimate-note,.start-form .start-outcome{grid-column:1 / -1}
 .start-form .limits{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .provider-add{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .provider-add .provider-add-note,.provider-add .add-provider,.provider-add .add-outcome{grid-column:1 / -1}

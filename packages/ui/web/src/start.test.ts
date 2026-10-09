@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * The form's values as the console takes them: the seat, the payload, and the
- * ceilings the page promises the run will be started under.
+ * The form's values as the console takes them: the seat, the payload, the
+ * ceilings the page promises the run will be started under, and the read that
+ * asks what a run like this one would cost.
  *
  * The two things these tests hold the page to are that it sends what the
  * terminal would be given — a model seat typed as `subagent` against `marvin`
@@ -11,12 +12,29 @@
  * that it never invents a verdict: a payload the console refuses comes back as
  * the console's own line, and a blank limit is reported as the default it is.
  *
+ * The estimate is held to the same two things from the other side: the ask names
+ * the seats the pickers hold and the pair count the form holds — a blank pair box
+ * asking with the runner's own 75, which is what a blank means — and the answer is
+ * read as it stands, so a figure the console did not give is a line rather
+ * than a figure the page made up.
+ *
  * The environment is the page's own rather than Node's, so nothing in this half
  * can quietly reach for a global the browser does not have.
  */
 import { describe, expect, it } from "vitest";
 
-import { DEFAULTS, OPEN_VALUES, ceilingsOf, payloadOf, seatKindOf, seatOf, startRun } from "./start.ts";
+import {
+  DEFAULTS,
+  OPEN_VALUES,
+  ceilingsOf,
+  estimatePathOf,
+  fetchEstimate,
+  parseEstimate,
+  payloadOf,
+  seatKindOf,
+  seatOf,
+  startRun,
+} from "./start.ts";
 import type { StartValues } from "./start.ts";
 import type { RunSnapshot } from "./progress.ts";
 import type { FetchJson } from "./api.ts";
@@ -55,6 +73,58 @@ const STARTED: RunSnapshot = {
 
 /** `parseArgs`'s own line for a provider picked with no model id typed. */
 const NO_MODEL = '--a takes bot:random, bot:greedy and <provider>/<model-id>, not "marvin/"';
+
+/**
+ * What `/api/estimate` answers for a run of five pairs whose seats have both
+ * been played: the series it counted, how many matches it counted, and the
+ * figures per match and over the run. The numbers are the route's, and these
+ * tests hand them back as JSON rather than checking what the route computed.
+ */
+const ESTIMATE = {
+  pairs: 5,
+  matches: 10,
+  concurrency: 1,
+  seats: [
+    {
+      label: "deepseek/deepseek-flash",
+      measured: {
+        series: ["deepseek-flash-vs-greedy"],
+        matches: 10,
+        perMatch: { turns: 25, tokens: 14_755_955, costUsd: 0.3154, seatMs: 935_106 },
+      },
+      run: { turns: 250, tokens: 147_559_550, costUsd: 3.154, seatMs: 9_351_065 },
+    },
+    {
+      label: "bot:greedy",
+      measured: {
+        series: ["deepseek-flash-vs-greedy"],
+        matches: 10,
+        perMatch: { turns: 25, tokens: 0, costUsd: 0, seatMs: 12_000 },
+      },
+      run: { turns: 250, tokens: 0, costUsd: 0, seatMs: 120_000 },
+    },
+  ],
+};
+
+/** The same ask with a seat nothing under the root has ever played. */
+const UNMEASURED = {
+  pairs: 5,
+  matches: 10,
+  concurrency: 1,
+  seats: [
+    {
+      label: "nowhere/ghost",
+      measured: null,
+      fallback: {
+        perMatch: { tokens: 3_200_000, seatMs: 840_000 },
+        line:
+          "the only model match measured on this repo's record: the first Marvin match, " +
+          "about 14 minutes and 3.2M tokens for one match",
+      },
+    },
+    ESTIMATE.seats[1],
+  ],
+};
 
 describe("seatOf", () => {
   it("leaves a bot seat exactly as the picker named it", () => {
@@ -281,6 +351,91 @@ describe("the values the form opens with", () => {
       maxPairs: "5",
       concurrency: "1",
     });
+  });
+});
+
+describe("the estimate the page asks for", () => {
+  it("asks the estimate route with the two seats and the pair count the form holds", () => {
+    // The seats are the strings the run would be sent with, and the pair count is
+    // the box's own. Nothing else the form holds changes what a match costs.
+    const path = new URL(
+      estimatePathOf(filled({ seatA: "deepseek/deepseek-flash", seatB: "marvin", modelB: "subagent", maxPairs: "3" })),
+      "http://127.0.0.1",
+    );
+
+    expect(path.pathname).toBe("/api/estimate");
+    expect(Object.fromEntries(path.searchParams)).toEqual({
+      a: "deepseek/deepseek-flash",
+      b: "marvin/subagent",
+      pairs: "3",
+    });
+  });
+
+  it("asks with the runner's 75 when the pair box is blank, which is what a blank means", () => {
+    // The same 75 the ceilings block states beside the Start button: the ask and
+    // the promise have to be about the same run.
+    const path = new URL(estimatePathOf(BLANK), "http://127.0.0.1");
+
+    expect(path.searchParams.get("pairs")).toBe("75");
+  });
+
+  it("asks with the pair count the form opens on, not with the runner's", () => {
+    const path = new URL(estimatePathOf(filled(OPEN_VALUES)), "http://127.0.0.1");
+
+    expect(path.searchParams.get("pairs")).toBe("5");
+  });
+
+  it("asks about the seat as it stands when no model id was typed, and lets the route refuse it", () => {
+    // The page has no opinion about what a valid seat is, and no opinion here
+    // either: the route reads the same flags and answers with its own line.
+    const path = new URL(estimatePathOf(filled({ seatA: "marvin" })), "http://127.0.0.1");
+
+    expect(path.searchParams.get("a")).toBe("marvin/");
+  });
+
+  it("reads the answer's figures as the route gave them", async () => {
+    const asked: string[] = [];
+    const fetchJson: FetchJson = (path) => {
+      asked.push(path);
+      return Promise.resolve(Response.json(ESTIMATE));
+    };
+
+    const answer = await fetchEstimate(filled(OPEN_VALUES), fetchJson);
+
+    expect(asked).toHaveLength(1);
+    expect(new URL(asked[0]!, "http://127.0.0.1").pathname).toBe("/api/estimate");
+    expect(answer.pairs).toBe(5);
+    expect(answer.matches).toBe(10);
+    expect(answer.seats[0]).toEqual(ESTIMATE.seats[0]);
+    expect(answer.seats[1]).toEqual(ESTIMATE.seats[1]);
+  });
+
+  it("keeps a seat nothing has played as unmeasured, with the figure the route quoted", async () => {
+    const answer = await fetchEstimate(BLANK, () => Promise.resolve(Response.json(UNMEASURED)));
+    const [seat] = answer.seats;
+
+    expect(seat?.measured).toBeNull();
+    if (seat === undefined || seat.measured !== null) throw new Error("the seat came back measured");
+    // Quoted, and cited in words: the page draws this line and holds no copy of
+    // the figure itself.
+    expect(seat.fallback.line).toContain("measured on");
+    expect(seat.fallback.perMatch.seatMs).toBeGreaterThan(0);
+  });
+
+  it("refuses an answer that is not an estimate, rather than drawing an undefined", () => {
+    expect(() => parseEstimate({ pairs: 5 })).toThrow("seats is not a list");
+    expect(() => parseEstimate({ pairs: 5, matches: 10, seats: [{}] })).toThrow(/seats\[0\]\.label/);
+    expect(() => parseEstimate({ pairs: 5, matches: 10, seats: [{ label: "bot:greedy" }] })).toThrow(
+      /seats\[0\]\.measured is not an object/,
+    );
+  });
+
+  it("hands back the route's own line for an ask it refuses", async () => {
+    const error = '--a takes bot:random, bot:greedy and <provider>/<model-id>, not "marvin/"';
+
+    await expect(fetchEstimate(filled({ seatA: "marvin" }), () =>
+      Promise.resolve(Response.json({ error }, { status: 400 })),
+    )).rejects.toThrow(error);
   });
 });
 

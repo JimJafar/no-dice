@@ -26,8 +26,26 @@
  * **The ceilings are beside the Start button, before it is pressed.** The block
  * names what the run will be bounded by and says which of those are the runner's
  * defaults rather than what was typed — a blank pair limit is 75 pairs, not
- * nothing — and under it sits the measured cost of a series at that length. A
- * Start button that says nothing is how a 48-hour run gets started by accident.
+ * nothing. A Start button that says nothing is how a 48-hour run gets started by
+ * accident.
+ *
+ * **What a run would cost is read, and the page draws the answer.** The estimate
+ * block says which series the read measured and how many matches it counted,
+ * and gives turns, tokens, cost and time in the seats per match and over the run.
+ * It holds no figure of its own: the route is the only place the documented match
+ * is spelled out, and when the route says a seat has never been played under
+ * the root the page quotes that figure, says in words what it was measured on, and
+ * says plainly that it is not a measurement of the model in that seat. The page may
+ * round — `about 15 minutes and 14.8M tokens a match` is the route's figure made
+ * readable, and the sentence says *about* — and it may not add, multiply or
+ * average one. That arithmetic happened once, in the route, over the logs.
+ *
+ * **The read is asked when a seat or the pair count changes.** The route walks every
+ * match log under the root, which is seconds, so a keystroke does not ask it: a
+ * picker's `change` does, and the pair box does when the operator leaves it. A read
+ * that fails leaves the estimate already on the page standing and says the estimate
+ * could not be read — the ceilings block, not the estimate, is what bounds the
+ * run, so an operator who cannot get an estimate can still press Start.
  *
  * **The boxes hold what the page sends.** The pair limit and the concurrency open
  * at `OPEN_VALUES` — five pairs, one at a time — rather than blank, because a form
@@ -65,7 +83,6 @@
  */
 import {
   GAMES,
-  MEASURED_SERIES,
   OPEN_VALUES,
   RUN_KINDS,
   ceilingsOf,
@@ -73,7 +90,17 @@ import {
   seatKindOf,
   seatOf,
 } from "./start.ts";
-import type { Ceiling, RunKind, SeatKind, StartBody, StartOutcome, StartValues } from "./start.ts";
+import type {
+  Ceiling,
+  Estimate,
+  RunKind,
+  SeatEstimate,
+  SeatFigures,
+  SeatKind,
+  StartBody,
+  StartOutcome,
+  StartValues,
+} from "./start.ts";
 import { clear } from "./render-frame.ts";
 import type { RunSnapshot } from "./progress.ts";
 import type { ModelRow } from "./providers.ts";
@@ -97,6 +124,13 @@ export interface StartViewOptions {
   choices: SeatChoices;
   /** Ask the console for the run — `start.ts`'s `startRun` in the page's wiring. */
   onStart: (kind: RunKind, body: StartBody) => Promise<StartOutcome>;
+  /**
+   * Ask the console what a run like the form describes would cost —
+   * `start.ts`'s `fetchEstimate` in the page's wiring. It rejects with the
+   * console's line; the section leaves the estimate it has standing and says the
+   * estimate could not be read.
+   */
+  onEstimate: (values: StartValues) => Promise<Estimate>;
   /** What to do once a run is in flight: the page starts watching it. */
   onStarted: (run: RunSnapshot) => void;
 }
@@ -269,6 +303,127 @@ const ceilingItem = (ceiling: Ceiling): HTMLLIElement => {
   return li;
 };
 
+/**
+ * Tokens as the page reads them: three significant figures, and `M` for millions.
+ *
+ * A count under a million is spelled out rather than shrunk to `0.0M`, which is how
+ * a bot's honest nought reads as a rounding error. This is a unit, not a
+ * figure: no number the route gave is added to, multiplied or averaged anywhere on
+ * this page.
+ */
+const tokensAs = (tokens: number): string =>
+  tokens < 1_000_000 ? String(tokens) : `${String(Number((tokens / 1_000_000).toPrecision(3)))}M`;
+
+/** What a seat cost, or the truth about hardware nobody prices. */
+const costAs = (costUsd: number): string => (costUsd === 0 ? "no cost on record" : `$${costUsd.toFixed(2)}`);
+
+/**
+ * One seat's own clock, in the units a person reads a duration in.
+ *
+ * It is a seat's clock and not the match's, and the sentence says so: the two seats
+ * of a match play in turn, so the page has no licence to add the two into one, and a
+ * concurrency of four divides neither. Hours and minutes are the same milliseconds
+ * wearing different units.
+ */
+const durationAs = (seatMs: number): string => {
+  const minutes = Math.floor(seatMs / 60_000);
+  if (minutes < 1) return `${String(Math.floor(seatMs / 1000))} seconds`;
+  if (minutes < 60) return `${String(minutes)} minutes`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes - hours * 60;
+  return rest === 0 ? `${String(hours)} hours` : `${String(hours)} hours ${String(rest)} minutes`;
+};
+
+/** One seat's four figures as one sentence, with the rounding said once. */
+const figuresLine = (figures: SeatFigures): string =>
+  `about ${String(figures.turns)} turns, ${tokensAs(figures.tokens)} tokens, ` +
+  `${costAs(figures.costUsd)} and ${durationAs(figures.seatMs)} in the seat`;
+
+/** What the estimate block says the run is, in the route's own counts. */
+const estimateHead = (estimate: Estimate): string =>
+  `What a run of ${String(estimate.pairs)} pairs — ${String(estimate.matches)} matches — would cost, ` +
+  "measured off the matches this console has already seen.";
+
+/** One `<li>` of a seat's figures. */
+const figureItem = (label: string, figures: string): HTMLLIElement => {
+  const item = document.createElement("li");
+  item.textContent = `${label}: ${figures}`;
+  return item;
+};
+
+/**
+ * One seat of the answer: measured over the series that played it, or quoted.
+ *
+ * A measured seat says which series and how many matches its figures rest on,
+ * because a figure with no denominator in sight is a figure someone has to trust. A
+ * quoted seat says what the quote was measured on, in the route's own words, and says
+ * in the page's own words that it is not a measurement of the model sitting in that
+ * seat — which is the sentence an operator most needs, since it is the one that stops
+ * a quoted figure being read as a measured one.
+ *
+ * A quoted seat gets no run figure. The route gave none, and doubling a documented
+ * match into a run is exactly the arithmetic this page is not allowed to do.
+ */
+const seatBlock = (seat: SeatEstimate, runMatches: number): HTMLElement => {
+  const block = document.createElement("div");
+  const head = paragraph("estimate-seat-head", "");
+  const figures = document.createElement("ul");
+  figures.className = "estimate-figures";
+
+  if (seat.measured === null) {
+    block.className = "estimate-seat estimate-unmeasured";
+    head.textContent = `${seat.label} — no series here has played this seat`;
+    figures.append(
+      figureItem(
+        "Per match",
+        `about ${tokensAs(seat.fallback.perMatch.tokens)} tokens and ` +
+          `${durationAs(seat.fallback.perMatch.seatMs)} in the seat`,
+      ),
+    );
+    block.append(
+      head,
+      paragraph("estimate-fallback", `The figures are quoted, not measured: ${seat.fallback.line}.`),
+      figures,
+      paragraph("estimate-not-measured", `That is not a measurement of ${seat.label}.`),
+      paragraph(
+        "estimate-no-run",
+        `Nothing is said about the run's ${String(runMatches)} matches: the quoted figure is one match, ` +
+          "and this page does not multiply it.",
+      ),
+    );
+    return block;
+  }
+
+  block.className = "estimate-seat estimate-measured";
+  head.textContent =
+    `${seat.label} — measured over ${String(seat.measured.matches)} matches ` +
+    `in ${seat.measured.series.join(", ")}`;
+  const lines: readonly (readonly [string, SeatFigures])[] = [
+    ["Per match", seat.measured.perMatch],
+    [`For the run's ${String(runMatches)} matches`, seat.run],
+  ];
+  for (const [label, each] of lines) figures.append(figureItem(label, figuresLine(each)));
+  block.append(head, figures);
+  return block;
+};
+
+/**
+ * What the block says while a read is in flight. The route walks every match log of
+ * every series under the root, so the wait is seconds, and a block that said nothing
+ * for those seconds is a block someone reloads the page over.
+ */
+const ESTIMATE_WAITING =
+  "Reading what this console has measured. That walks every match log, so it takes a moment.";
+
+/**
+ * What the block says when the read failed. The console's own line is not quoted
+ * here, as it is for a refused run: the line for a half-typed seat names a flag, and
+ * this block is the page's own prose about a figure rather than an answer an operator
+ * acts on. What the seat will be sent as is already written under the picker.
+ */
+const ESTIMATE_UNREAD =
+  "The estimate could not be read. The ceilings above are what bound the run, and Start still works.";
+
 /** A limit field and the commands it belongs to. */
 interface LimitField {
   readonly wrap: HTMLElement;
@@ -399,7 +554,12 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
   const ceilings = document.createElement("ul");
   ceilings.className = "ceilings";
 
-  const measured = paragraph("start-measured", MEASURED_SERIES);
+  const estimate = document.createElement("div");
+  estimate.className = "estimate";
+  // The read's own line — waiting, or unable to be read. It sits outside the block
+  // it is about, so a failed read leaves the figures already drawn standing.
+  const estimateNote = paragraph("estimate-note", "");
+  estimateNote.setAttribute("role", "status");
   const outcome = paragraph("start-outcome", "");
   outcome.setAttribute("role", "status");
 
@@ -421,7 +581,8 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
     limitsBlock,
     advanced,
     row,
-    measured,
+    estimate,
+    estimateNote,
     outcome,
   );
   el.append(form);
@@ -450,7 +611,41 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
     seatB.draw();
     for (const each of limits) each.wrap.hidden = !each.kinds.includes(values.kind);
     ceilings.replaceChildren(...ceilingsOf(values).map(ceilingItem));
-    measured.hidden = values.kind !== "series";
+    // An estimate of a run of pairs says nothing about one pair played both ways,
+    // and the read is not asked for one either: the route walks the logs.
+    const showing = values.kind === "series";
+    estimate.hidden = !showing;
+    estimateNote.hidden = !showing;
+  };
+
+  /**
+   * How many estimate reads have been asked. Only the newest one gets to speak:
+   * the route takes seconds, and two of them in flight would otherwise be an
+   * operator's seat A answered by the ask they made before they changed it.
+   */
+  let asking = 0;
+
+  /** Ask what a run like the form describes would cost, and draw the answer. */
+  const askEstimate = async (): Promise<void> => {
+    const asked = ++asking;
+    estimateNote.className = "estimate-note estimate-waiting";
+    estimateNote.textContent = ESTIMATE_WAITING;
+    try {
+      const answer = await options.onEstimate(valuesOf());
+      if (asked !== asking) return;
+      estimate.replaceChildren(
+        paragraph("estimate-head", estimateHead(answer)),
+        ...answer.seats.map((seat) => seatBlock(seat, answer.matches)),
+      );
+      estimateNote.className = "estimate-note";
+      estimateNote.textContent = "";
+    } catch {
+      if (asked !== asking) return;
+      // The estimate already on the page stays standing: half an estimate is better
+      // than none, and the line below says which of the two the operator is reading.
+      estimateNote.className = "estimate-note estimate-failed";
+      estimateNote.textContent = ESTIMATE_UNREAD;
+    }
   };
 
   /** Ask for the run, and show the answer. A refusal shows the console's line. */
@@ -478,7 +673,33 @@ export const renderStart = (el: HTMLElement, options: StartViewOptions): void =>
 
   form.addEventListener("input", draw);
   form.addEventListener("change", draw);
+
+  /**
+   * The controls whose change changes what an estimate would be about: the two
+   * pickers, the ids typed against them, and the pair box. Nothing else the form
+   * holds — a series name, a seed, a concurrency — changes what a match costs.
+   */
+  const estimateTriggers: readonly EventTarget[] = [
+    kind,
+    seatA.select,
+    seatB.select,
+    seatA.model,
+    seatB.model,
+    maxPairs,
+  ];
+
+  form.addEventListener("change", (event) => {
+    // `change` is the event that says a value has settled — a picker's choice, a box
+    // the operator left — and `input` is the one that fires per keystroke, which this
+    // read cannot afford: it walks every match log under the root.
+    if (event.target !== null && estimateTriggers.includes(event.target) && valuesOf().kind === "series") {
+      void askEstimate();
+    }
+  });
   start.addEventListener("click", () => void submit());
 
   draw();
+  // The form opens on a run the operator could press Start on, so the estimate of
+  // it is asked for as soon as the form exists — once, not on a poll.
+  if (valuesOf().kind === "series") void askEstimate();
 };

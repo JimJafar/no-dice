@@ -44,6 +44,11 @@
  * every heading, so the form and the run the poller is watching both go
  * straight back under the headings they own.
  *
+ * What a run like the form describes would cost is the one read the start section
+ * asks for itself, and not from here: it is the only part of the page that knows when
+ * a seat or the pair count has changed, and the route walks every match log of every
+ * series under the root, so polling it from this loop would be a walk per keystroke.
+ *
  * The three reads draw into the same sections, so the order matters: `renderFrame`
  * replaces everything under every heading, and the run it cannot see is put back
  * from the last snapshot the poller took. Which of those sections is on screen is
@@ -63,7 +68,7 @@ import { renderLeaderboard } from "./render-leaderboard.ts";
 import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
-import { startRun } from "./start.ts";
+import { fetchEstimate, startRun } from "./start.ts";
 import { createMatchHeaderSource, createPlayingPoller, fetchResults, renderResults } from "./results.ts";
 import type { MatchRow, SeriesRow } from "./results.ts";
 import { parseState } from "./state.ts";
@@ -218,11 +223,16 @@ const playingPoller = createPlayingPoller({
  * itself under someone mid-way through typing a model id would lose it. A
  * console that named no seat gets the form anyway, saying that it has nothing to
  * seat a run with, rather than an empty section.
+ *
+ * The estimate read is handed to the section rather than polled here, and a read
+ * that fails is the section's to say about: the estimate it already has stays on the
+ * page.
  */
 const drawStart = (choices: SeatChoices): void => {
   renderStart(sections.start, {
     choices,
     onStart: (kind, body) => startRun(kind, body, fetchJson),
+    onEstimate: (values) => fetchEstimate(values, fetchJson),
     // The run is the console's now, so the page starts reading it: closing this
     // page, or this read failing, changes nothing about the run itself.
     onStarted: (): void => void poller.run(),
