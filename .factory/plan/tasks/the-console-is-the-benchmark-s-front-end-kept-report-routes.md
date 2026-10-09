@@ -44,8 +44,8 @@ pnpm test -- args static results
 tmp=$(mktemp -d); mkdir -p "$tmp/series" "$tmp/matches"
 node packages/ui/src/server.ts --port 8817 --series-root "$tmp/series" --matches-root "$tmp/matches" > "$tmp/console.log" 2>&1 &
 srv=$!; sleep 1
-curl -fsS -H 'origin: http://127.0.0.1:8817' http://127.0.0.1:8817/reports/deepseek-flash-vs-greedy.md | grep -q 'salient'
-curl -fsS -H 'origin: http://127.0.0.1:8817' http://127.0.0.1:8817/reports/deepseek-flash-vs-greedy-evidence.md | grep -q 'salient'
+curl -fsS -H 'origin: http://127.0.0.1:8817' http://127.0.0.1:8817/reports/deepseek-flash-vs-greedy.md | grep -q 'Series report'
+curl -fsS -H 'origin: http://127.0.0.1:8817' http://127.0.0.1:8817/reports/deepseek-flash-vs-greedy-evidence.md | grep -q 'Rules evidence'
 curl -sS -H 'origin: http://127.0.0.1:8817' http://127.0.0.1:8817/reports/no-such-series.md | grep -qi 'no '
 curl -fsS -H 'origin: http://127.0.0.1:8817' http://127.0.0.1:8817/reports/%2e%2e%2fpackage.json > "$tmp/escape.txt" 2>&1 || true
 grep -q 'no-dice' "$tmp/escape.txt" && echo "a climb out of the reports root served a file" && exit 1

@@ -7,7 +7,14 @@ import { describe, expect, it } from "vitest";
 
 import { PROVIDERS_FILE } from "@no-dice/runner/providers";
 
-import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_REPORTS_ROOT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
+import {
+  DEFAULT_MATCHES_ROOT,
+  DEFAULT_PORT,
+  DEFAULT_REPORTS_ROOT,
+  DEFAULT_SERIES_ROOT,
+  USAGE,
+  parseUiFlags,
+} from "./args.ts";
 
 /** The flags, or the one line the parser answered with. */
 const flagsOf = (argv: readonly string[]): unknown => {
