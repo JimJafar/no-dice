@@ -211,6 +211,20 @@ option{color:#eef1f5;background:#12161c}
 .provider-edit[hidden]{display:none}
 .provider-edit-note{color:#aab3bf}
 
+/* The models the pinned Pi knows and this console has a key for, under their own
+   heading in the same section. A row is a record like every other row on the page,
+   and it holds no field: the reference is the seat, Pi's figures are quoted as Pi
+   printed them, and the one control is the credential check. */
+.models{gap:12px}
+.model-row{display:flex;flex-direction:column;gap:10px;padding:14px 16px;background:#232a33;border-radius:6px}
+.model-head{font-size:15px;line-height:1.4}
+.model-fields{font-size:14px;line-height:1.4;color:#aab3bf}
+.model-check{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+/* Why there is nothing to list: no key for any of them, which is a different fact
+   from a Pi that did not answer — that one is the console's own line, in the tint
+   every other section uses for a read that failed. */
+.models-unread{color:#f0b18a}
+
 /* What the page answered: a start, an add, a credential check. The wording is the
    console's own line, so it is set as a sentence; the colour says which way it went.
    A refusal is the seat B tints, a going-ahead is the seat A ones — the
@@ -232,7 +246,7 @@ option{color:#eef1f5;background:#12161c}
 .run-lines{margin:0;padding:14px 16px;background:#12161c;border-radius:6px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:13px;line-height:1.4;color:#c9d1dc;white-space:pre}
 /* The sections' one-line notes about where they were read from — about the page
    rather than about the run, so they sit back from the ink. */
-.roots,.leaderboard-roots,.providers-note,.granularity,.no-record,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
+.roots,.leaderboard-roots,.providers-note,.models-note,.granularity,.no-record,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
 
 /* The one breakpoint. From 760 px the two forms stop being one long column: the start
    form's fields go two to a row with the limits and the button row across the

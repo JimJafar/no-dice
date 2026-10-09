@@ -82,7 +82,8 @@ export const clear = (el: HTMLElement): void => {
  * `/api/series` and `/api/matches` — the roots it names there are the roots
  * those listings were taken from, so there is no second copy of them to keep in
  * step — the providers section for `render-providers.ts` to fill from
- * `/api/providers`, and the leaderboard section for `render-leaderboard.ts` to
+ * `/api/providers` and from the one `/api/models` read the page makes, and the
+ * leaderboard section for `render-leaderboard.ts` to
  * fill from `/api/leaderboard`, which is the one answer both of its tables come
  * from. Nothing is invented here: a row drawn from `/api/state` would be a row
  * the section that read the disk contradicts.

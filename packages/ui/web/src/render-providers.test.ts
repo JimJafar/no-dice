@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * The Providers section, on the page: the shape the page accepts from
+ * The Providers & models section, on the page: the shape the page accepts from
  * `/api/providers`, `/api/providers/update`, `/api/providers/remove`,
  * `/api/providers/check` and `/api/models`, the body it posts to add or edit an
  * entry, and what it draws from all of them.
@@ -13,7 +13,9 @@
  * the two things the page must never do, which are hold a key value in a field
  * and decide for itself that an entry is valid. It also checks the words the
  * section speaks: no flag name and no path into the machine, because a reader
- * here is naming an endpoint, not typing a command.
+ * here is naming an endpoint, not typing a command — and that the models Pi
+ * already knows are drawn as rows with nothing to fill in, because they are
+ * seated in the Runs view rather than added here.
  */
 import { describe, expect, it } from "vitest";
 
@@ -35,7 +37,7 @@ import {
 import type { AddOutcome, AddValues, CheckOutcome, EditValues, WriteOutcome } from "./providers.ts";
 import { renderProviders } from "./render-providers.ts";
 import type { ProvidersViewOptions } from "./render-providers.ts";
-import type { ProviderRow } from "./providers.ts";
+import type { ModelRead, ProviderRow } from "./providers.ts";
 
 /** A keyless entry, as `GET /api/providers` answers it. */
 const MARVIN = {
@@ -75,6 +77,24 @@ const FLASH = {
   images: "yes",
 };
 
+/** A second model, with different figures: proof the rows are Pi's, not one the page wrote. */
+const PRO = {
+  provider: "deepseek",
+  id: "deepseek-v4-pro",
+  reference: "deepseek/deepseek-v4-pro",
+  context: "1M",
+  maxOut: "384K",
+  thinking: "yes",
+  images: "no",
+};
+
+/** The two as the page holds them — the read's own answer, drawn without a second shape. */
+const FLASH_ROW = parseModelRows({ models: [FLASH] })[0]!;
+const PRO_ROW = parseModelRows({ models: [PRO] })[0]!;
+
+/** The heading the model list is drawn under, inside the same section. */
+const MODEL_HEADING = "Pi's models — the seats that need nothing added";
+
 /** What Pi said about one that does not. */
 const MISSING = {
   ok: false,
@@ -102,7 +122,7 @@ const VALUES: AddValues = {
 const section = (): HTMLElement => {
   const el = document.createElement("section");
   const heading = document.createElement("h2");
-  heading.textContent = "Providers";
+  heading.textContent = "Providers & models";
   el.append(heading);
   document.body.append(el);
   return el;
@@ -119,9 +139,17 @@ const rowOf = (el: HTMLElement, name: string): HTMLElement => {
   return row!;
 };
 
+/** One model row, by the reference it is a row of. */
+const modelRowOf = (el: HTMLElement, reference: string): HTMLElement => {
+  const row = el.querySelector<HTMLElement>(`li.model-row[data-model="${reference}"]`);
+  expect(row, `the page has no row for ${reference}`).not.toBeNull();
+  return row!;
+};
+
 /** The section, drawn with callbacks a test does not have to drive. */
-const view = (rows: readonly ProviderRow[]): ProvidersViewOptions => ({
+const view = (rows: readonly ProviderRow[], models: ModelRead = { ok: true, models: [] }): ProvidersViewOptions => ({
   rows,
+  models,
   onAdd: (): Promise<AddOutcome> => Promise.resolve({ ok: true }),
   onEdit: (): Promise<WriteOutcome> => Promise.resolve({ ok: true }),
   onRemove: (): Promise<WriteOutcome> => Promise.resolve({ ok: true }),
@@ -136,7 +164,7 @@ const withView = (
   options: Partial<ProvidersViewOptions> & Pick<ProvidersViewOptions, "rows">,
 ): HTMLElement => {
   const el = section();
-  renderProviders(el, { ...view(options.rows), ...options });
+  renderProviders(el, { ...view(options.rows, options.models), ...options });
   return el;
 };
 
@@ -1023,6 +1051,116 @@ describe("removing a row", () => {
   });
 });
 
+describe("the models Pi already knows", () => {
+  it("lists each one by its reference, with Pi's own figures beside it", () => {
+    const el = withView({ rows: [MARVIN], models: { ok: true, models: [FLASH_ROW, PRO_ROW] } });
+
+    expect(itemsOf(el, "models")).toHaveLength(2);
+    const text = el.textContent ?? "";
+    expect(text).toContain("deepseek/deepseek-flash");
+    expect(text).toContain("deepseek/deepseek-v4-pro");
+    // Pi's figures as Pi printed them: `1M` and `384K` are rounded figures for a
+    // person to read, and the page has no number to reformat.
+    expect(text).toContain("1M context");
+    expect(text).toContain("384K output");
+    expect(text).toContain("images yes");
+    expect(text).toContain("images no");
+  });
+
+  it("draws them under their own heading, and leaves the registry as the first list", () => {
+    const el = withView({ rows: [MARVIN], models: { ok: true, models: [FLASH_ROW] } });
+
+    expect([...el.querySelectorAll("h2, h3")].map((each) => each.textContent)).toEqual([
+      "Providers & models",
+      MODEL_HEADING,
+    ]);
+    const at = (className: string): number =>
+      [...el.children].findIndex((each) => each.classList.contains(className));
+    // The operator came to edit the registry; the models are read-only and sit
+    // below it rather than in front of it.
+    expect(at("providers")).toBeLessThan(at("models"));
+  });
+
+  it("draws no fields on a model row, and says where the model is seated instead", () => {
+    const el = withView({ rows: [], models: { ok: true, models: [FLASH_ROW] } });
+    const row = modelRowOf(el, "deepseek/deepseek-flash");
+
+    // Nothing to add and nothing to type: Pi knows the model, and the
+    // seat is picked in the Runs view.
+    expect(row.querySelectorAll("input, select, textarea")).toHaveLength(0);
+    expect([...row.querySelectorAll("button")].map((each) => each.className)).toEqual(["check-model"]);
+    expect(el.textContent).toContain("Runs view");
+  });
+
+  it("asks the check route about the reference alone, and draws what Pi answered", async () => {
+    const asked: string[] = [];
+    const el = withView({
+      rows: [],
+      models: { ok: true, models: [FLASH_ROW] },
+      onCheck: (model): Promise<CheckOutcome> => {
+        asked.push(model);
+        return Promise.resolve({ ok: true, auth: { ...MISSING, provider: "deepseek" } });
+      },
+    });
+
+    const row = modelRowOf(el, "deepseek/deepseek-flash");
+    row.querySelector<HTMLButtonElement>("button.check-model")!.click();
+    await settled();
+
+    // The reference is the whole seat: no id is typed against it, because Pi
+    // already names both halves.
+    expect(asked).toEqual(["deepseek/deepseek-flash"]);
+    const outcome = row.querySelector<HTMLElement>(".check-outcome")!;
+    expect(outcome.textContent).toBe(
+      "deepseek/deepseek-flash — not ready: missing_environment_variable — OPENAI_API_KEY is not set in this environment",
+    );
+    expect(outcome.className).toContain("bad");
+  });
+
+  it("draws a ready answer on a model row without inventing a reason Pi did not give", async () => {
+    const el = withView({
+      rows: [],
+      models: { ok: true, models: [FLASH_ROW] },
+      onCheck: (): Promise<CheckOutcome> =>
+        Promise.resolve({ ok: true, auth: { ok: true, provider: "deepseek", reason: null, message: "" } }),
+    });
+
+    const row = modelRowOf(el, "deepseek/deepseek-flash");
+    row.querySelector<HTMLButtonElement>("button.check-model")!.click();
+    await settled();
+
+    expect(row.querySelector<HTMLElement>(".check-outcome")!.textContent).toBe(
+      "deepseek/deepseek-flash — ready",
+    );
+  });
+
+  it("says when the console was started with no key for any of them, and keeps the registry", () => {
+    const el = withView({ rows: [MARVIN], models: { ok: true, models: [] } });
+
+    expect(el.querySelector(".models")).toBeNull();
+    expect(el.querySelector<HTMLElement>(".models-none")!.textContent).toContain(
+      "no key for any of Pi's own models",
+    );
+    // The registry is what the operator came to edit: an empty model list takes
+    // neither its rows nor its add form off the page.
+    expect(itemsOf(el, "providers")).toHaveLength(1);
+    expect(el.querySelector(".provider-add")).not.toBeNull();
+  });
+
+  it("draws a failed read as its own line, verbatim, and keeps the registry", () => {
+    // Pi's own line, kept as it arrived — the exception every section of this
+    // page makes to its own wording, because it is the line the operator has to
+    // act on. It is not the same fact as an empty list, which says no key is set.
+    const line = "the pinned Pi's model list could not be read: it exited 1";
+    const el = withView({ rows: [MARVIN], models: { ok: false, error: line } });
+
+    expect(el.querySelector(".models")).toBeNull();
+    expect(el.querySelector<HTMLElement>(".models-unread")!.textContent).toBe(line);
+    expect(itemsOf(el, "providers")).toHaveLength(1);
+    expect(el.querySelector(".provider-add")).not.toBeNull();
+  });
+});
+
 describe("the words the providers section speaks", () => {
   it("lists the entries and the add form in plain words", () => {
     // The base URL is drawn, and it is the one address on this page that is the
@@ -1038,6 +1176,20 @@ describe("the words the providers section speaks", () => {
     const { el } = drawn([]);
 
     expectPlainWords("providers", wordsOf(el));
+  });
+
+  it("lists Pi's models, and the two ways they can be missing, in plain words", () => {
+    // Pi's `1M` and `384K` are figures, not paths, and a reference's slash has a
+    // word on both sides of it. The third case is the console's own line about a
+    // read that failed: the section draws it as it arrived, as every section here
+    // does, and what is held to the rule is the heading and the rest of the page.
+    for (const models of [
+      { ok: true, models: [FLASH_ROW, PRO_ROW] },
+      { ok: true, models: [] },
+      { ok: false, error: "the model list could not be read: the console did not answer" },
+    ] as const) {
+      expectPlainWords("providers", wordsOf(withView({ rows: [MARVIN, OPENAI], models })));
+    }
   });
 
   it("opens a row's edit form and its removal in plain words", () => {

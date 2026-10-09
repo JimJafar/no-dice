@@ -29,6 +29,9 @@
  * expected to appear while the console runs. It has to be read *with* the state
  * rather than after it: the start form is built once per page load, and a form
  * that arrived twice would be a form that lost what someone had typed into it.
+ * What that one read gave is kept and handed to every later redraw of the
+ * Providers & models section too — an add, an edit or a removal re-draws the
+ * model rows from it rather than asking Pi a second time.
  *
  * A fifth read keeps a series somebody else is playing honest: `/api/playing` on
  * the run poller's cadence, and only while its answer names a playing
@@ -69,7 +72,7 @@ import {
   removeProvider,
   updateProvider,
 } from "./providers.ts";
-import type { ModelRow } from "./providers.ts";
+import type { ModelRead } from "./providers.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
 import { renderLeaderboard } from "./render-leaderboard.ts";
 import { renderProviders } from "./render-providers.ts";
@@ -258,12 +261,17 @@ const drawStart = (choices: SeatChoices): void => {
  * was, with what they typed in it. A registry that could not be read leaves the
  * section standing and says why on the status line, as every other failed read
  * does.
+ *
+ * The models beside the registry are not read again here. The route behind them
+ * costs a subprocess and no key appears while the console runs, so every redraw
+ * draws the list the page's one read gave.
  */
-const refreshProviders = async (done?: string): Promise<void> => {
+const refreshProviders = async (models: ModelRead, done?: string): Promise<void> => {
   try {
     const rows = await fetchProviders(fetchJson);
     renderProviders(sections.providers, {
       rows,
+      models,
       onAdd: (values) => addProvider(values, fetchJson),
       onEdit: (name, values) => updateProvider(name, values, fetchJson),
       onRemove: (name) => removeProvider(name, fetchJson),
@@ -272,9 +280,9 @@ const refreshProviders = async (done?: string): Promise<void> => {
       // on, so the list is read from the console again rather than from what the
       // form posted — and the status line says which entry the list just changed
       // by, since the row it names is gone from the page it was drawn on.
-      onAdded: (name): void => void refreshProviders(`Added ${name}`),
-      onEdited: (name): void => void refreshProviders(`Edited ${name}`),
-      onRemoved: (name): void => void refreshProviders(`Removed ${name}`),
+      onAdded: (name): void => void refreshProviders(models, `Added ${name}`),
+      onEdited: (name): void => void refreshProviders(models, `Edited ${name}`),
+      onRemoved: (name): void => void refreshProviders(models, `Removed ${name}`),
     });
     say(
       done === undefined
@@ -288,22 +296,25 @@ const refreshProviders = async (done?: string): Promise<void> => {
 
 /**
  * The models the pinned Pi knows that this console has a key for — the seats that
- * need nothing typed — or `null` when that list could not be read.
+ * need nothing typed — or the console's own line for a read that failed.
  *
- * The failure is returned rather than thrown, and the start section says it: a Pi
- * that did not answer is not a reason an operator cannot seat a bot, and the form
- * goes on working with the two kinds `/api/state` gave. The status line carries
- * the console's own line as every other failed read does.
+ * The failure is returned rather than thrown, and the sections that use the list
+ * say it: a Pi that did not answer is not a reason an operator cannot seat a
+ * bot, and the start form goes on working with the two kinds `/api/state` gave.
+ * The status line carries the console's own line as every other failed read does.
  *
- * This is one of the page's rare reads. The route asks Pi and costs a subprocess,
- * so it is asked once per page load, beside the state read and never on a poll.
+ * This is one of the page's rare reads. The route asks Pi and costs a
+ * subprocess, so it is asked once per page load, beside the state read and never
+ * on a poll, and what it gave is what every later redraw of the Providers section
+ * draws.
  */
-const readModels = async (): Promise<readonly ModelRow[] | null> => {
+const readModels = async (): Promise<ModelRead> => {
   try {
-    return await fetchModels(fetchJson);
+    return { ok: true, models: await fetchModels(fetchJson) };
   } catch (error) {
-    say(error instanceof Error ? error.message : String(error), true);
-    return null;
+    const line = error instanceof Error ? error.message : String(error);
+    say(line, true);
+    return { ok: false, error: line };
   }
 };
 
@@ -328,8 +339,15 @@ const refresh = async (): Promise<void> => {
     // provider entries with the credential check asked of each of them all go
     // straight back under the one they belong to.
     renderProgress(sections.progress, poller.last());
-    drawStart({ bots: state.bots, providers: state.providers, models: await models });
-    void refreshProviders();
+    const read = await models;
+    drawStart({
+      bots: state.bots,
+      providers: state.providers,
+      // The pickers have one line for a list they were not given, and it does not
+      // carry the console's line; the Providers section draws that one verbatim.
+      models: read.ok ? read.models : null,
+    });
+    void refreshProviders(read);
   } catch (error) {
     drawStart({ bots: [], providers: [], models: null });
     say(error instanceof Error ? error.message : String(error), true);

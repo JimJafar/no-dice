@@ -34,6 +34,23 @@
  * frame: a frame that redrew it on its own would be a frame that wiped the
  * check the operator just asked for.
  *
+ * **The models Pi already knows are listed, and not edited.** Under its own
+ * heading inside the same section, one row per model the pinned Pi knows and
+ * this console has a key for: named by its reference — `deepseek/deepseek-flash`
+ * — with Pi's four figures spelled as Pi spelled them, and the same credential
+ * check the registry rows ask, asked of the reference alone because it already
+ * names both halves of a seat. **The rows hold no fields.** There is nothing to
+ * add and nothing to type: the model is seated by picking it in the Runs view,
+ * and the section says so in one clause rather than leaving an operator hunting
+ * for an Add button that does not exist. An empty list is its own line — the
+ * console was started with no key for any of them — and a read that failed is
+ * another, drawn verbatim as every other section draws the console's line; the
+ * two are different facts, and neither takes the registry's rows or its add
+ * form off the page, because the registry is what the operator came to edit.
+ * The list is read once per page load and re-drawn from what that read gave,
+ * since the route behind it costs a subprocess and no key appears while the
+ * console runs.
+ *
  * **A row edits itself, and asks once before it goes.** Every row carries an
  * edit that uncovers that entry's own fields, prefilled from the registry, and a
  * remove that turns its own control into a confirm and a cancel and sends
@@ -53,6 +70,8 @@ import type {
   AddValues,
   CheckOutcome,
   EditValues,
+  ModelRead,
+  ModelRow,
   ProviderRow,
   WriteOutcome,
 } from "./providers.ts";
@@ -62,6 +81,13 @@ import { clear } from "./render-frame.ts";
 export interface ProvidersViewOptions {
   /** The entries `GET /api/providers` answered with, in the registry's own order. */
   rows: readonly ProviderRow[];
+  /**
+   * The models the pinned Pi knows that this console has a key for, or the line
+   * the read answered with when it failed — `providers.ts`'s `ModelRead`. The
+   * page reads them once per load and hands the same answer back on every
+   * later redraw, because the route behind them costs a subprocess.
+   */
+  models: ModelRead;
   /** Ask the console to add the entry the form holds — `providers.ts`'s `addProvider`. */
   onAdd: (values: AddValues) => Promise<AddOutcome>;
   /** Ask the console to replace one row's entry — `providers.ts`'s `updateProvider`. */
@@ -89,6 +115,20 @@ const paragraph = (className: string, text: string): HTMLElement => {
 /** A name or a URL, as a path. */
 const code = (text: string): HTMLElement => {
   const el = document.createElement("code");
+  el.textContent = text;
+  return el;
+};
+
+/** The line a row's or a form's own answer is written into, before it has one. */
+const statusLine = (className: string): HTMLElement => {
+  const el = paragraph(className, "");
+  el.setAttribute("role", "status");
+  return el;
+};
+
+/** A heading under the section's own, for a list that needs one. */
+const subheading = (text: string): HTMLHeadingElement => {
+  const el = document.createElement("h3");
   el.textContent = text;
   return el;
 };
@@ -261,8 +301,7 @@ const providerEditForm = (
   const save = buttonOf("save-provider", "Save changes");
   const cancel = buttonOf("cancel-edit", "Cancel");
 
-  const outcome = paragraph("edit-outcome", "");
-  outcome.setAttribute("role", "status");
+  const outcome = statusLine("edit-outcome");
 
   const root = document.createElement("div");
   root.className = "provider-edit";
@@ -319,6 +358,110 @@ const providerEditForm = (
 };
 
 /**
+ * Ask Pi about one model, and put its answer under the row that asked.
+ *
+ * One question, asked two ways: a registry row types a model id against its
+ * provider and asks about `<provider>/<id>`, and one of Pi's own models asks
+ * about its reference, which already names both halves. Pi's three parts are
+ * drawn as they came — `ok` because it is the answer, and `reason` and `message`
+ * because they are the wording the CLI would have stopped a run with. A `null`
+ * reason and an empty message are nothing to say, not the word `null` and not a
+ * colon after nothing.
+ */
+const askCheck = async (
+  asked: string,
+  button: HTMLButtonElement,
+  outcome: HTMLElement,
+  onCheck: (model: string) => Promise<CheckOutcome>,
+): Promise<void> => {
+  button.disabled = true;
+  const answer = await onCheck(asked);
+  button.disabled = false;
+
+  if (!answer.ok) {
+    outcome.className = "check-outcome check-refused bad";
+    outcome.textContent = `${asked} — ${answer.error}`;
+    return;
+  }
+
+  outcome.className = `check-outcome ${answer.auth.ok ? "check-ready" : "check-not-ready bad"}`;
+  const verdict = answer.auth.ok ? "ready" : "not ready";
+  const said = [answer.auth.reason, answer.auth.message].filter((each) => each !== null && each !== "");
+  outcome.textContent = `${asked} — ${said.length === 0 ? verdict : `${verdict}: ${said.join(" — ")}`}`;
+};
+
+/**
+ * One of Pi's own models: its reference, Pi's four figures, and the credential
+ * check asked of the reference alone.
+ *
+ * **The row holds no field and no add control.** The model is in Pi and the key
+ * is in the console's environment; the seat is taken by picking the reference in
+ * the Runs view. A box here would promise an edit this section has nothing to
+ * make, and an Add button would be one an operator hunts for in vain.
+ */
+const modelItem = (model: ModelRow, onCheck: (model: string) => Promise<CheckOutcome>): HTMLLIElement => {
+  const li = document.createElement("li");
+  li.className = "model-row";
+  li.dataset["model"] = model.reference;
+
+  const head = document.createElement("span");
+  head.className = "model-head";
+  head.append(code(model.reference));
+
+  // Pi's figures, quoted as Pi printed them. `1M` and `384K` are rounded figures
+  // for a person to read; a seat on this model needs no numbers, because Pi
+  // knows that model's real window natively.
+  const fields = paragraph(
+    "model-fields",
+    `${model.context} context; ${model.maxOut} output; thinking ${model.thinking}; images ${model.images}`,
+  );
+
+  const button = buttonOf("check-model", "Check credential");
+  const outcome = statusLine("check-outcome");
+
+  const check = document.createElement("div");
+  check.className = "model-check";
+  check.append(button, outcome);
+
+  button.addEventListener("click", () => void askCheck(model.reference, button, outcome, onCheck));
+
+  li.append(head, fields, check);
+  return li;
+};
+
+/** The heading the model list stands under, inside the section's own. */
+const MODEL_HEADING = "Pi's models — the seats that need nothing added";
+
+/** What the list says about itself: nothing here is added, and nothing is typed. */
+const MODELS_NOTE =
+  "The models the pinned Pi knows and this console has a key for. There is nothing to add and " +
+  "nothing to type here: a model is seated by picking it in the Runs view.";
+
+/** Why the list is empty when the read answered: no key, which is not a failed read. */
+const MODELS_NONE =
+  "The console was started with no key for any of Pi's own models, so there is nothing here to " +
+  "seat a run on without adding a provider.";
+
+/**
+ * The models Pi already knows, under their own heading: the rows, or the one
+ * line that says why there are none.
+ *
+ * An empty list and a failed read are different facts and get different
+ * lines: the first says this console has no key, the second says Pi did not
+ * answer. The second is drawn verbatim, as every other section draws the
+ * console's own line, because it is the line the operator has to act on.
+ */
+const modelsBlock = (models: ModelRead, onCheck: (model: string) => Promise<CheckOutcome>): HTMLElement[] => {
+  if (!models.ok) return [subheading(MODEL_HEADING), paragraph("models-unread bad", models.error)];
+  if (models.models.length === 0) return [subheading(MODEL_HEADING), paragraph("models-none", MODELS_NONE)];
+
+  const list = document.createElement("ul");
+  list.className = "models";
+  list.append(...models.models.map((each) => modelItem(each, onCheck)));
+  return [subheading(MODEL_HEADING), paragraph("models-note", MODELS_NOTE), list];
+};
+
+/**
  * One entry: what it is, what it costs, the credential check asked of it, and
  * the two things an operator can do to it.
  *
@@ -348,41 +491,17 @@ const providerItem = (row: ProviderRow, options: ProvidersViewOptions): HTMLLIEl
   const fields = paragraph("provider-fields", fieldsOf(row).join("; "));
 
   const model = textInput(`field-model-id field-model-id-${row.name}`, "model id");
-  const button = document.createElement("button");
-  button.className = "check";
-  button.type = "button";
-  button.textContent = "Check credential";
+  const button = buttonOf("check", "Check credential");
 
-  const outcome = paragraph("check-outcome", "");
-  outcome.setAttribute("role", "status");
+  const outcome = statusLine("check-outcome");
 
   const check = document.createElement("div");
   check.className = "provider-check";
   check.append(field(`Credential for ${row.name}/<id>`, model, `check-model-${row.name}`), button, outcome);
 
-  /** Ask, and put what Pi said under this row and no other. */
-  const run = async (): Promise<void> => {
-    const asked = modelOf(row.name, model.value);
-    button.disabled = true;
-    const answer = await options.onCheck(asked);
-    button.disabled = false;
-
-    if (!answer.ok) {
-      outcome.className = "check-outcome check-refused bad";
-      outcome.textContent = `${asked} — ${answer.error}`;
-      return;
-    }
-    // Pi's own three parts, as they came: `ok` because it is the answer, and
-    // `reason` and `message` because they are the wording the CLI would have
-    // stopped a run with. A `null` reason and an empty message are nothing to
-    // say, not the word `null` and not a colon after nothing.
-    outcome.className = `check-outcome ${answer.auth.ok ? "check-ready" : "check-not-ready bad"}`;
-    const verdict = answer.auth.ok ? "ready" : "not ready";
-    const said = [answer.auth.reason, answer.auth.message].filter((each) => each !== null && each !== "");
-    outcome.textContent = `${asked} — ${said.length === 0 ? verdict : `${verdict}: ${said.join(" — ")}`}`;
-  };
-
-  button.addEventListener("click", () => void run());
+  button.addEventListener("click", () =>
+    void askCheck(modelOf(row.name, model.value), button, outcome, options.onCheck),
+  );
 
   // The two things an operator can do to this entry. The removal's confirm and
   // cancel start hidden and the `Remove` control starts showing; the first click
@@ -394,8 +513,7 @@ const providerItem = (row: ProviderRow, options: ProvidersViewOptions): HTMLLIEl
   confirm.hidden = true;
   keep.hidden = true;
 
-  const refused = paragraph("remove-outcome", "");
-  refused.setAttribute("role", "status");
+  const refused = statusLine("remove-outcome");
 
   const form = providerEditForm(row, options.onEdit, options.onEdited);
 
@@ -467,8 +585,7 @@ const addForm = (
 
   const button = buttonOf("add-provider", "Add provider");
 
-  const outcome = paragraph("add-outcome", "");
-  outcome.setAttribute("role", "status");
+  const outcome = statusLine("add-outcome");
 
   const root = document.createElement("div");
   root.className = "provider-add";
@@ -516,13 +633,17 @@ const addForm = (
 
 /**
  * The section: the entries the console listed, the form that adds one, and under
- * every row a credential check, an edit and a removal.
+ * every row a credential check, an edit and a removal — and under all of them,
+ * under its own heading, the models Pi already knows and this console has a key
+ * for, which are added to by nothing.
  *
  * The whole section is replaced on every render, the way every other section is
  * — an entry that went out of the file must not keep its row on the page — which
  * is also why the frame leaves it alone: only this module knows when a redraw
  * is wanted, and it is after a read, an add, an edit or a removal the console
- * took — never after one it refused, and never under a poll.
+ * took — never after one it refused, and never under a poll. The model list is
+ * handed to every one of those redraws from the page's single read of it, so a
+ * write to the registry never asks Pi again.
  */
 export const renderProviders = (el: HTMLElement, options: ProvidersViewOptions): void => {
   clear(el);
@@ -545,4 +666,9 @@ export const renderProviders = (el: HTMLElement, options: ProvidersViewOptions):
   }
 
   el.append(addForm(options.onAdd, options.onAdded));
+
+  // Below the registry, not in front of it: the operator who opened this view
+  // came to edit an entry, and the models below are the seats that need no entry
+  // at all.
+  el.append(...modelsBlock(options.models, options.onCheck));
 };

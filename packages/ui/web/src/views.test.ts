@@ -187,7 +187,7 @@ describe("mountViews", () => {
     expect(document.querySelector("#view-runs #progress > h2")?.textContent).toBe("Progress");
     expect(document.querySelector("#view-matches #results > h2")?.textContent).toBe("Results");
     expect(document.querySelector("#view-leaderboard #leaderboard > h2")?.textContent).toBe("Leaderboard");
-    expect(document.querySelector("#view-providers #providers > h2")?.textContent).toBe("Providers");
+    expect(document.querySelector("#view-providers #providers > h2")?.textContent).toBe("Providers & models");
   });
 
   it("keeps a running series' lines and pair counters current while another view is showing", async () => {

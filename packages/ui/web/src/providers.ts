@@ -242,6 +242,19 @@ export const fetchModels = async (fetchJson: FetchJson = fetch): Promise<ModelRo
   parseModelRows(await getJson<unknown>(MODELS_PATH, fetchJson));
 
 /**
+ * The model list as the page holds it: Pi's rows, or the line a read that failed
+ * answered with.
+ *
+ * The two are different facts and the section draws a different line for each —
+ * an empty list says this console was started with no key for any of Pi's own
+ * models, and a failure says Pi did not answer. `fetchModels` rejects rather
+ * than answering one of these, because the caller is the one that says so.
+ */
+export type ModelRead =
+  | { readonly ok: true; readonly models: readonly ModelRow[] }
+  | { readonly ok: false; readonly error: string };
+
+/**
  * What the add form holds: every field as it was typed, and reasoning as it was
  * ticked. Nothing is coerced here — a box that holds `12x` is a box that holds
  * `12x` until the server has said what it thinks of it.
