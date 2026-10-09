@@ -123,6 +123,9 @@ const MATCH: MatchRow = {
     seed: 1234,
     playedOn: "2026-10-07T12:19:32.132Z",
   },
+  // `/api/matches` carries no result, so a leaderboard link says who played and
+  // not who won: that is the facts route's to say, and this view does not ask it.
+  outcome: null,
 };
 
 /** A finished log of the other series, and one played on its own. */
@@ -137,6 +140,7 @@ const BETA_MATCH: MatchRow = {
     seed: 77,
     playedOn: "2026-10-08T13:14:00.000Z",
   },
+  outcome: null,
 };
 
 const ALONE: MatchRow = {
@@ -150,6 +154,7 @@ const ALONE: MatchRow = {
     seed: 9,
     playedOn: "2026-10-09T12:00:00.000Z",
   },
+  outcome: null,
 };
 
 /**
@@ -270,7 +275,7 @@ describe("renderLeaderboard", () => {
 
     await new Promise((later) => void setTimeout(later, 0));
 
-    expect(link.textContent).toBe("bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026");
+    expect(link.textContent).toBe("bot:greedy vs marvin/subagent · seed 1234 · 7 Oct 2026");
     expect(link.getAttribute("href")).toBe(MATCH_LINK);
   });
 
@@ -290,8 +295,8 @@ describe("renderLeaderboard", () => {
     // words over the link say what the match was, not what its log is called, and
     // the link goes back to this table rather than to the Matches view the listing
     // names for itself.
-    expect(linksIn(rows[0]!)).toEqual([`${MATCH_LINK} bot:greedy vs marvin/subagent — seed 1234, played 7 Oct 2026`]);
-    expect(linksIn(rows[1]!)).toEqual([`${BETA_LINK} bot:greedy vs bot:random — seed 77, played 8 Oct 2026`]);
+    expect(linksIn(rows[0]!)).toEqual([`${MATCH_LINK} bot:greedy vs marvin/subagent · seed 1234 · 7 Oct 2026`]);
+    expect(linksIn(rows[1]!)).toEqual([`${BETA_LINK} bot:greedy vs bot:random · seed 77 · 8 Oct 2026`]);
 
     // A match played on its own belongs to no series row, and a series with no
     // log listed says so rather than showing a blank cell.

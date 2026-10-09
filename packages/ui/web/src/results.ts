@@ -24,21 +24,44 @@
  * is a series record that will not parse, where the path is the fact.
  *
  * **A match is named by what it was, not by what its log is called.** The row
- * says the two seats, the seed and the day it was played. Those three are not in
- * `/api/matches`, whose rows carry a log's name and its two URLs; they are in the
- * log's own header, which is the one place that says who played, on what seed,
- * when. So the page reads the header — the first few kilobytes of the log, and no
- * more of it than that.
+ * says the two seats, who won, the final score, the seed and the day it was
+ * played. Those five are not in `/api/matches`, whose rows carry a log's name and
+ * its two URLs; they are in the log itself, which is what `GET /api/match-facts`
+ * reads on the server — every log under both roots, once — and the Matches view
+ * draws its rows out of that answer rather than out of the listing.
  *
- * **That read never stands between the listing and the page.** The rows go up with
- * what the listing alone supports — the seed its file name carries — and each
- * label is replaced when its header arrives. And the reads are one per log and
+ * **The facts come after the listing, never in front of it.** That route
+ * costs the console every match log of every series, about a megabyte each
+ * (`docs/pi-harness-notes.md` §7), so the series rows and the leaderboard go up
+ * from the two cheap listings and the match groups go under them when the facts
+ * land; a front view that waited for them was a blank page for as long as a full
+ * series takes to read. A facts read that fails leaves the rest of the section
+ * standing and says why on the page's status line, the way every other failed read
+ * does.
+ *
+ * **The groups are the series.** One block per series, in the order the listing
+ * gives, headed by what that series is — its pairing, and its name only where the
+ * pairing does not settle which group it is — and one block for the logs whose
+ * `series` is `null`, headed in words that say they were played on their own. The
+ * page invents no group and orders none: the listing's order and its `series` field
+ * are both the console's.
+ *
+ * **The browser still reads a log header — for the leaderboard's links only.**
+ * Those links are drawn from `/api/matches`, which says nothing about what a match
+ * was, so `createMatchHeaderSource` reads the log's own header — the first few
+ * kilobytes of it, and no more than that — to word them. The Matches view does not:
+ * it is given the same facts by the route that reads the logs once for everybody.
+ *
+ * **That read never stands between the listing and the page.** The leaderboard's
+ * rows go up with what the listing alone supports — the seed its file name
+ * carries — and each label is replaced when its header arrives. And the reads
+ * are one per log and
  * a few at a time, because the console answers a log request by streaming the
  * whole file: `sendFile` pipes a `createReadStream` and does not stop when the
  * reader stops reading, so a read costs the server the log's full size however
  * little of it the page looks at. A full series is around 150 logs of about a
  * megabyte; fanned out at once that is a hundred and fifty megabytes of disk and
- * socket work for a page of labels, and a front view that stayed blank until the
+ * socket work for a page of labels, and a leaderboard that stayed blank until the
  * last of them landed.
  *
  * **A series another process is playing is drawn as playing.** The row carries
@@ -135,7 +158,7 @@ export interface UnreadableRow {
   error: string;
 }
 
-/** What a match log's own header says about the match it is the log of. */
+/** What a row knows about who played, on what seed, and when. */
 export interface MatchHeader {
   /** The two seats, spelled as the log's header spells them: `bot:greedy`, `marvin/subagent`. */
   seats: [string, string];
@@ -143,6 +166,14 @@ export interface MatchHeader {
   seed: number;
   /** The date the header carries, as the ISO timestamp it carries it in. */
   playedOn: string;
+}
+
+/** How a match ended, as `GET /api/match-facts` gives it. */
+export interface MatchOutcome {
+  /** The winning seat's label, spelled as its own log spells that seat; `null` for a draw. */
+  winner: string | null;
+  /** Both seats' final points, in seat order: A's then B's. */
+  score: { A: number; B: number };
 }
 
 /** A finished match log, and the two URLs it is reachable at. */
@@ -158,9 +189,43 @@ export interface MatchRow {
    * `/api/matches` before the page had read anything.
    */
   header: MatchHeader | null;
+  /**
+   * Who won and what the final score was, which only `/api/match-facts` answers.
+   * `null` on a row from `/api/matches`, whose rows carry no result at
+   * all — which is why a leaderboard's replay link says who played and not who won.
+   */
+  outcome: MatchOutcome | null;
 }
 
-/** Everything the section draws, from the console's two listings. */
+/** A log the console listed and could not read, and the one line it failed on. */
+export interface UnreadableLogRow {
+  name: string;
+  path: string;
+  url: string;
+  series: string | null;
+  error: string;
+}
+
+/** Everything `GET /api/match-facts` answers: each finished log, and what it was. */
+export interface MatchFacts {
+  matchesRoot: string;
+  /** One row per log the console could read, in `/api/matches`' own order. */
+  matches: MatchRow[];
+  /** The logs it listed and could not read, named with the line each failed on. */
+  unreadable: UnreadableLogRow[];
+}
+
+/**
+ * What the Matches view has for what its matches were.
+ *
+ * Three states, because the facts read is the expensive one and the section is
+ * drawn before it comes back: `reading` while it is in flight, `ready` with the
+ * rows, and `failed` with nothing. A failed read is the section's one line and the
+ * page's status line; the series rows beside it came from another route and stand.
+ */
+export type MatchFactsRead = { state: "reading" } | { state: "ready"; facts: MatchFacts } | { state: "failed" };
+
+/** The two cheap listings: what the console has on disk, and how far each series got. */
 export interface Results {
   seriesRoot: string;
   matchesRoot: string;
@@ -334,10 +399,83 @@ export const parseMatchListing = (value: unknown): { matchesRoot: string; matche
         viewerUrl: stringOf(row["viewerUrl"], `matches[${String(at)}].viewerUrl`),
         series: stringOrNull(row["series"], `matches[${String(at)}].series`),
         header: null,
+        outcome: null,
       };
     }),
   };
 };
+
+/** The route the page asks what each finished match was at. */
+const MATCH_FACTS_PATH = "/api/match-facts";
+
+/**
+ * One row of `/api/match-facts`, held as the page's own row.
+ *
+ * The route spells its facts as a log does — `seats.A`, `created`, `score.A` — and
+ * the page words a row from a `MatchHeader` and a `MatchOutcome`, which is what
+ * a row read out of a log header in the browser gives too. Mapping one to the
+ * other here is what keeps `matchLabel` the single place a match is worded:
+ * a row from either route comes out of it in the same shape, and a leaderboard link
+ * cannot drift from a Matches row.
+ *
+ * The route's `type`, `turn` and `margin` are not parsed. The view draws none of
+ * them, and a field the page cannot draw is a field it cannot leak into the page.
+ */
+const factRowOf = (value: unknown, what: string): MatchRow => {
+  const row = recordOf(value, what);
+  const seats = recordOf(row["seats"], `${what}.seats`);
+  const score = recordOf(row["score"], `${what}.score`);
+  return {
+    name: stringOf(row["name"], `${what}.name`),
+    path: stringOf(row["path"], `${what}.path`),
+    url: stringOf(row["url"], `${what}.url`),
+    viewerUrl: stringOf(row["viewerUrl"], `${what}.viewerUrl`),
+    series: stringOrNull(row["series"], `${what}.series`),
+    header: {
+      seats: [stringOf(seats["A"], `${what}.seats.A`), stringOf(seats["B"], `${what}.seats.B`)],
+      seed: countOf(row["seed"], `${what}.seed`),
+      playedOn: stringOf(row["created"], `${what}.created`),
+    },
+    outcome: {
+      winner: stringOrNull(row["winner"], `${what}.winner`),
+      score: { A: countOf(score["A"], `${what}.score.A`), B: countOf(score["B"], `${what}.score.B`) },
+    },
+  };
+};
+
+/** The answer from `GET /api/match-facts`. */
+export const parseMatchFactsListing = (value: unknown): MatchFacts => {
+  const listing = recordOf(value, "the answer from /api/match-facts");
+  const matches = listing["matches"];
+  const unreadable = listing["unreadable"];
+  if (!Array.isArray(matches)) throw new Error("matches is not a list");
+  if (!Array.isArray(unreadable)) throw new Error("unreadable is not a list");
+  return {
+    matchesRoot: stringOf(listing["matchesRoot"], "matchesRoot"),
+    matches: matches.map((each, at) => factRowOf(each, `matches[${String(at)}]`)),
+    unreadable: unreadable.map((each, at) => {
+      const row = recordOf(each, `unreadable[${String(at)}]`);
+      return {
+        name: stringOf(row["name"], `unreadable[${String(at)}].name`),
+        path: stringOf(row["path"], `unreadable[${String(at)}].path`),
+        url: stringOf(row["url"], `unreadable[${String(at)}].url`),
+        series: stringOrNull(row["series"], `unreadable[${String(at)}].series`),
+        error: stringOf(row["error"], `unreadable[${String(at)}].error`),
+      };
+    }),
+  };
+};
+
+/**
+ * What each finished match was, from the route that reads every log to say it.
+ *
+ * Asked at the listings' clock and never on a poll: the answer costs the console a
+ * full read of every log under both roots, which is what `./match-facts.ts` on the
+ * server says at length. A row it could not read is one entry in `unreadable` and a
+ * line on the page, not a missing match.
+ */
+export const fetchMatchFacts = async (fetchJson: FetchJson = fetch): Promise<MatchFacts> =>
+  parseMatchFactsListing(await getJson<unknown>(MATCH_FACTS_PATH, fetchJson));
 
 /** How much of a log the page reads to label a row: its header, and nothing after it. */
 const HEADER_LIMIT = 4096;
@@ -610,21 +748,47 @@ const seedWords = (row: MatchRow): string => {
 };
 
 /**
- * What a match was, in the words a reader looks for: the two seats, the seed,
- * the day. The log's own file name says the same three things to whoever named
- * the file, and nothing to anyone else.
+ * Who beat whom, and by what score — or that they drew.
  *
- * Before the log has been read the row says what the listing already knows — the
+ * The winner is named first, so the score is said in the order the sentence names
+ * the seats: the figure beside a seat is that seat's points. Both numbers are the
+ * log's own `result.score`, put in the order the names are in — nothing is added,
+ * subtracted or compared here. A draw is said as drawn, because a match nobody won
+ * is not a match won by nobody: the log's `winner` is `null` and its two scores are
+ * level, and the row says the plain thing instead.
+ *
+ * The winner's label is one of the two seats', because the route spells both out of
+ * the same log header with the same labelling.
+ */
+const outcomeWords = (seats: readonly [string, string], outcome: MatchOutcome): string => {
+  const { A, B } = outcome.score;
+  if (outcome.winner === null) return `${seats[0]} and ${seats[1]} drew ${String(A)}–${String(B)}`;
+  const wonFirst = seats[0] === outcome.winner;
+  const other = wonFirst ? seats[1] : seats[0];
+  const points = wonFirst ? `${String(A)}–${String(B)}` : `${String(B)}–${String(A)}`;
+  return `${outcome.winner} beat ${other} ${points}`;
+};
+
+/**
+ * What a match was, in the words a reader looks for: the two seats, who won, the
+ * score, the seed, the day. The log's own file name says three of those to whoever
+ * named the file, and nothing to anyone else.
+ *
+ * This is the one place a match is worded. The Matches view words its rows here out
+ * of the facts route, and the leaderboard words its replay links here out of a log
+ * header the browser read; the two cannot drift, and the leaderboard's links say
+ * who played and not who won because the route they come from carries no result.
+ *
+ * Before a header has been read the row says what the listing already knows — the
  * seed — and says the log has not been read. It does not claim the log is
  * unreadable, which would be a guess about a read that has not happened.
  */
 export const matchLabel = (row: MatchRow): string => {
   const header = row.header;
   if (header === null) return `${seedWords(row)}, whose log this console has not read`;
-  return (
-    `${header.seats[0]} vs ${header.seats[1]} — seed ${String(header.seed)}, ` +
-    `played ${dateOf(header.playedOn)}`
-  );
+  const played =
+    row.outcome === null ? `${header.seats[0]} vs ${header.seats[1]}` : outcomeWords(header.seats, row.outcome);
+  return `${played} · seed ${String(header.seed)} · ${dateOf(header.playedOn)}`;
 };
 
 /**
@@ -817,27 +981,120 @@ export const viewerUrlFor = (viewerUrl: string, view: ViewName): string => {
 /**
  * One finished match: what it was, linked at the viewer's own URL for it.
  *
- * The link's words are the row's, not the log's: the URL it
- * points at is the console's and is set once and untouched afterwards. When a
- * header arrives the words over it change and the address does not.
+ * The link's words are the row's, not the log's, and the address is the console's:
+ * `viewerUrl` arrives in the facts row unchanged, because `?log=` is what the
+ * viewer's `load.ts` fetches. The one part of it this page restates is the view it
+ * names as the way back — this section is the Matches view, so a replay opened from
+ * a row here goes back to the group it came from.
  *
- * The one part of that address this page does restate is the view it names as the
- * way back: this section is the Matches view, and a replay opened from a row here
- * goes back to a row here.
+ * The row carries no series of its own any more: the group it sits under says which
+ * series it belongs to, and a row that repeated that inside the group said
+ * it twice.
  */
-const matchItem = (row: MatchRow, headers?: MatchHeaderReader): HTMLLIElement => {
+const matchItem = (row: MatchRow): HTMLLIElement => {
   const li = document.createElement("li");
   li.className = "match-row";
   const link = document.createElement("a");
   link.className = "match-viewer";
   link.href = viewerUrlFor(row.viewerUrl, "matches");
   link.textContent = matchLabel(row);
-  fillMatchLabel(link, row, headers);
-  li.append(
-    link,
-    document.createTextNode(row.series === null ? " — a match played on its own" : ` — from ${row.series}`),
-  );
+  li.append(link);
   return li;
+};
+
+/**
+ * One log the facts route listed and could not read.
+ *
+ * It is named as a match rather than as a file, and the seed comes from the name the
+ * listing gave it so two unreadable logs of one series are still two rows a reader
+ * can tell apart. The console's own line is repeated as it was written, path and
+ * all: for a log that will not parse, where it lies is the fact the operator acts
+ * on, which is the same exception the unreadable series records above make.
+ */
+const unreadLogItem = (row: UnreadableLogRow): HTMLLIElement => {
+  const li = document.createElement("li");
+  li.className = "match-unreadable-row";
+  const seed = seedOfName(row.name);
+  const match = seed === null ? "a match this console has no facts about" : `a match on seed ${seed}`;
+  li.textContent = `${match}, whose log the console could not read: ${row.error}`;
+  return li;
+};
+
+/** The logs of one series, or the logs of no series at all. */
+interface MatchGroup {
+  /** The series the listing says they belong to, or `null` for those played alone. */
+  series: string | null;
+  rows: MatchRow[];
+  unreadable: UnreadableLogRow[];
+}
+
+/**
+ * The facts grouped by the series they came from, in the order the listing gives.
+ *
+ * The grouping is the listing's own: `series` is a field the console answers, and a
+ * log that is under a series' directory is in that series whatever the page thinks.
+ * Groups appear in order of first appearance, which is the order `/api/matches`
+ * walks the roots in, so the page does not put the series in an order of its own.
+ * An unreadable log joins the group it belongs to rather than starting a list of
+ * failures at the bottom of the view.
+ */
+const groupsOf = (facts: MatchFacts): MatchGroup[] => {
+  const groups = new Map<string | null, MatchGroup>();
+  const groupOf = (series: string | null): MatchGroup => {
+    let group = groups.get(series);
+    if (group === undefined) {
+      group = { series, rows: [], unreadable: [] };
+      groups.set(series, group);
+    }
+    return group;
+  };
+  for (const row of facts.matches) groupOf(row.series).rows.push(row);
+  for (const row of facts.unreadable) groupOf(row.series).unreadable.push(row);
+  return [...groups.values()];
+};
+
+/** The pairing a group was played under, or `null` when the series listing does not know it. */
+const pairingOf = (series: readonly SeriesRow[], name: string): string | null => {
+  const row = series.find((each) => each.name === name);
+  return row === undefined ? null : `${row.a} vs ${row.b}`;
+};
+
+/** What the block of logs that belong to no series is headed by. */
+const SOLO_HEAD = "Played on their own — matches that belong to no series";
+
+/**
+ * What each group is headed by: what its series is, in words.
+ *
+ * The heading is the pairing, because that is what a reader is choosing between and
+ * it is the same spelling the leaderboard's rows use. The series' name comes in only
+ * where the pairing does not settle the group: two series played the same pairing, or
+ * a series this console's own listing does not know, where the name is the only fact
+ * there is to head it with. No directory and no file name appears: a group is named
+ * by what was played.
+ */
+const groupHeads = (groups: readonly MatchGroup[], series: readonly SeriesRow[]): string[] => {
+  const pairings = groups.map((group) => (group.series === null ? null : pairingOf(series, group.series)));
+  return groups.map((group, at) => {
+    if (group.series === null) return SOLO_HEAD;
+    const pairing = pairings[at] ?? null;
+    if (pairing === null) return `${group.series} — a series this console does not list`;
+    const shared = pairings.filter((each) => each === pairing).length > 1;
+    return shared ? `${pairing} — ${group.series}` : pairing;
+  });
+};
+
+/** One group: its heading, and the rows under it. */
+const matchGroupItem = (head: string, group: MatchGroup): HTMLElement => {
+  const block = document.createElement("div");
+  block.className = "match-group";
+  const heading = document.createElement("h3");
+  heading.className = "match-group-head";
+  heading.textContent = head;
+  const rows = document.createElement("ul");
+  rows.className = "match-group-rows";
+  rows.append(...group.rows.map(matchItem), ...group.unreadable.map(unreadLogItem));
+  block.append(heading, rows);
+  return block;
 };
 
 /**
@@ -863,21 +1120,48 @@ export const fillMatchLabel = (link: HTMLAnchorElement, row: MatchRow, headers?:
 };
 
 /**
- * The section, as the console's two listings describe it.
+ * The finished logs, in the blocks the Matches view draws them in.
+ *
+ * Three answers, for the three states of the facts read: a line saying the facts are
+ * on their way, one block per series and one for the matches played on their own, or
+ * one line saying the console could not answer. The last of those leaves everything
+ * above it standing — the series rows and the unreadable records came from other
+ * routes — and the page's status line carries the reason, as every other failed read
+ * does.
+ */
+const matchGroups = (facts: MatchFactsRead, series: readonly SeriesRow[]): Node[] => {
+  if (facts.state === "reading") return [paragraph("matches-reading", "Reading what each match was.")];
+  if (facts.state === "failed") {
+    return [
+      paragraph(
+        "matches-failed",
+        "The console could not say what its matches were. The reason is on the line at the top of the page.",
+      ),
+    ];
+  }
+  const groups = groupsOf(facts.facts);
+  if (groups.length === 0) return [paragraph("matches-none", "No finished match here yet.")];
+  const heads = groupHeads(groups, series);
+  return groups.map((group, at) => matchGroupItem(heads[at], group));
+};
+
+/**
+ * The section, as the console's two listings and its facts route describe them.
  *
  * The page says which folders are in view without naming them: a series
  * started somewhere else is real work this console will never list, and a page
  * that said "no series" without saying that would be a page that contradicted
  * what its reader watched start.
  *
- * `headers`, when the caller has one, is where the fuller label for each match
- * comes from — asked for here and written in when it lands, never waited for.
+ * `facts` is what the facts read gave last, and it is never waited for here: the
+ * caller draws the section from the two cheap listings and draws it again when the
+ * facts land, which is the only reason the two reads are not one.
  */
 export const renderResults = (
   el: HTMLElement,
   results: Results,
+  facts: MatchFactsRead,
   onResume: (dir: string) => void,
-  headers?: MatchHeaderReader,
 ): void => {
   clear(el);
 
@@ -912,11 +1196,7 @@ export const renderResults = (
     );
   }
 
-  if (results.matches.length === 0) {
-    el.append(paragraph("matches-none", "No finished match here yet."));
-  } else {
-    el.append(list("matches", results.matches.map((row) => matchItem(row, headers))));
-  }
+  el.append(...matchGroups(facts, results.series));
 };
 
 /** What the page does with one answer from the console's cheap route. */

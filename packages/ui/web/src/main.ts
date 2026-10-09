@@ -16,6 +16,10 @@
  * package's work for no one. The leaderboard is read at those same moments and for
  * that same reason: `GET /api/leaderboard` answers both of its tables out of one
  * walk of every series' every log, which is the most expensive read the page makes.
+ * The match facts — `GET /api/match-facts`, what each finished log *was* — are read
+ * at those moments too, and last: they cost the same full pass over every log, so the
+ * series rows and both leaderboard tables go up without waiting for them, and the
+ * Matches view's groups go under them when they land.
  *
  * The provider registry is a fourth read, and the rarest: `/api/providers`
  * when the page opens and after an entry has been added, changed or removed. It
@@ -79,8 +83,14 @@ import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
 import { fetchEstimate, startRun } from "./start.ts";
-import { createMatchHeaderSource, createPlayingPoller, fetchResults, renderResults } from "./results.ts";
-import type { MatchRow, SeriesRow } from "./results.ts";
+import {
+  createMatchHeaderSource,
+  createPlayingPoller,
+  fetchMatchFacts,
+  fetchResults,
+  renderResults,
+} from "./results.ts";
+import type { MatchFactsRead, MatchRow, Results, SeriesRow } from "./results.ts";
 import { parseState } from "./state.ts";
 import { mountViews } from "./views.ts";
 
@@ -125,8 +135,47 @@ let listedSeries: readonly SeriesRow[] = [];
  * matches: one read per log between them, a few at a time, and never on the path
  * to a draw. Both listings are re-read on every refresh and every run end, and a
  * log that has been read once does not need reading again for the same page.
+ *
+ * Only the Leaderboard view asks for one now. The Matches view is given the same
+ * facts by `/api/match-facts`, which reads every log once on the server instead of
+ * once per row in the browser.
  */
 const matchHeaders = createMatchHeaderSource(fetchJson);
+
+/**
+ * The last listings and the last facts the page read, kept so each can redraw the
+ * results section when it lands without waiting for the other.
+ *
+ * They arrive on the same clock and not in the same read: `/api/match-facts` costs
+ * the console every match log under both roots, and a front view that waited for it
+ * would be blank for as long as a full series takes to read. So the series rows go
+ * up from the two cheap listings, and the match groups go under them when the facts
+ * come back — or a line saying they did not, with the reason on the status line.
+ */
+let listings: Results | null = null;
+let facts: MatchFactsRead = { state: "reading" };
+
+/** Draw the results section from what the page has, or leave it if it has no listings. */
+const drawResults = (): void => {
+  if (listings === null) return;
+  renderResults(sections.results, listings, facts, (dir) => void resumeSeries(dir));
+};
+
+/**
+ * Read what each finished match was, and hold the answer for the next draw.
+ *
+ * The failure is returned rather than thrown, the way the model list's is: the
+ * series rows beside it came from another route and stand, and the console's own
+ * line goes on the status line as every other failed read does.
+ */
+const readMatchFacts = async (): Promise<MatchFactsRead> => {
+  try {
+    return { state: "ready", facts: await fetchMatchFacts(fetchJson) };
+  } catch (error) {
+    say(error instanceof Error ? error.message : String(error), true);
+    return { state: "failed" };
+  }
+};
 
 /**
  * Read what the console has on disk and redraw the results section and the
@@ -144,7 +193,8 @@ const refreshListings = async (): Promise<void> => {
     const results = await fetchResults(fetchJson);
     listedMatches = results.matches;
     listedSeries = results.series;
-    renderResults(sections.results, results, (dir) => void resumeSeries(dir), matchHeaders);
+    listings = results;
+    drawResults();
     say(`${String(results.series.length)} series and ${String(results.matches.length)} matches listed.`);
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
@@ -159,6 +209,14 @@ const refreshListings = async (): Promise<void> => {
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);
   }
+
+  // The facts last, and on their own: of everything on this page they are the read
+  // that costs the console a full pass over every match log, so nothing above waits
+  // for them, and a read that failed says its line after every other line has said
+  // its own. The section is drawn again from what it already holds, with the groups
+  // under the series rows.
+  facts = await readMatchFacts();
+  drawResults();
 
   // A listing that shows a series being played has counters that move, and this is
   // the only moment the page learns they do: the listing read above is the one

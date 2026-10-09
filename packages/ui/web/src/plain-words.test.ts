@@ -17,6 +17,7 @@ import { breachesOf, expectPlainWords, wordsOf } from "./plain-words.ts";
 const PLAIN = `Series — alpha — bot:greedy vs deepseek/deepseek-flash, 4 of 4 pairs
 win rate 64.3% (95% CI 38.7% – 83.7%), stopped on max_pairs — its full length
 bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — from alpha
+bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026
 Pairs at once: 2. Cost ceiling: $12.50. Token ceiling: 900,000. Seed base: 1234.
 marvin — https://marvin.example.ts.net:8033/v1 (openai-completions)
 This console lists the series and matches in the folders it was started with.`;

@@ -78,7 +78,12 @@ ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px
 .series-playing,.series-stale{color:#c9d1dc}
 /* A series or a match this console could not read: the seat B edge, so the row that
    is missing from the listing beside it is visible as missing. */
-.series-unreadable-row,.leaderboard-unreadable-row{padding:12px 16px;border-left:3px solid var(--team-b,#e06f35);background:#1a2028;border-radius:0 6px 6px 0;font-size:15px;line-height:1.45;color:#c9d1dc}
+.series-unreadable-row,.leaderboard-unreadable-row,.match-unreadable-row{padding:12px 16px;border-left:3px solid var(--team-b,#e06f35);background:#1a2028;border-radius:0 6px 6px 0;font-size:15px;line-height:1.45;color:#c9d1dc}
+
+/* The Matches view's blocks: one per series, and one for the matches played on their
+   own. A block is its heading and the rows under it — the rows are the same boxes the
+   flat list drew, so the block only adds the heading and the gap. */
+.match-group{display:flex;flex-direction:column;gap:8px}
 
 /* The two tables. They are wide — the pairing view is nine columns of figures —
    and a table cannot be squeezed below the width of its own words. So each one goes
@@ -256,7 +261,7 @@ option{color:#eef1f5;background:#12161c}
 .run-lines{margin:0;padding:14px 16px;background:#12161c;border-radius:6px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:13px;line-height:1.4;color:#c9d1dc;white-space:pre}
 /* The sections' one-line notes about where they were read from — about the page
    rather than about the run, so they sit back from the ink. */
-.roots,.leaderboard-roots,.providers-note,.models-note,.granularity,.no-record,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
+.roots,.leaderboard-roots,.providers-note,.models-note,.granularity,.no-record,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.matches-reading,.matches-failed,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
 
 /* The one breakpoint. From 760 px the two forms stop being one long column: the start
    form's fields go two to a row with the limits and the button row across the

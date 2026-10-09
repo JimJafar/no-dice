@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 /**
  * The results section, on the page: the shape the page accepts from
- * `/api/series` and `/api/matches`, and what it draws from them.
+ * `/api/series`, `/api/matches` and `/api/match-facts`, and what it draws from them.
  *
  * The section's whole purpose is that its figures are the CLI's, so the tests here
  * are mostly about the page not inventing anything: every number on the page is one
@@ -9,10 +9,17 @@
  * rate rather than showing 0%, and a resume sends a directory and nothing else —
  * the pairing is the record's business, not the page's.
  *
+ * The match rows come from `/api/match-facts`, which says what each log was, and
+ * they are grouped by the `series` field that route copies off the listing. The
+ * grouping tests here are about the page not inventing a group or an order either:
+ * one block per series in the listing's order, one for the logs whose series is
+ * `null`, and a heading that says what the series is.
+ *
  * The listings are built here by hand rather than by importing the server's types,
  * which read the filesystem and pull in `@no-dice/stats`. The server's own
- * `results.test.ts` checks its answer against the stats report; this file checks
- * that the page draws whatever that answer says.
+ * `results.test.ts` checks its answer against the stats report, and its
+ * `match-facts.test.ts` against the logs; this file checks that the page
+ * draws whatever those answers say.
  *
  * A series another process is playing is drawn as playing: the row says so,
  * carries the record's counters, draws no stop line and offers no Resume, and the
@@ -33,7 +40,10 @@ import {
   createMatchHeaderSource,
   createPlayingPoller,
   dateOf,
+  fetchMatchFacts,
   fetchResults,
+  matchLabel,
+  parseMatchFactsListing,
   parseMatchListing,
   parsePlayingListing,
   parseSeriesListing,
@@ -42,7 +52,7 @@ import {
   viewerUrlFor,
   writeSeriesCounters,
 } from "./results.ts";
-import type { Results, SeriesRow } from "./results.ts";
+import type { MatchFacts, MatchFactsRead, MatchOutcome, MatchRow, Results, SeriesRow } from "./results.ts";
 
 /** One series, as `/api/series` answers it: two counted matches, a full-length stop. */
 const SERIES = {
@@ -135,6 +145,9 @@ const MATCH = {
   series: "alpha",
 };
 
+/** What the facts route says about `FACT`: seat A won it 43–33. */
+const WON: MatchOutcome = { winner: "bot:greedy", score: { A: 43, B: 33 } };
+
 /** What that log's own header says about the match, once the page has read it. */
 const HEADER = {
   seats: ["bot:greedy", "bot:random"] as [string, string],
@@ -143,7 +156,60 @@ const HEADER = {
 };
 
 /** The match row as the page holds it: the listing, and the label read off the log. */
-const LABELED = { ...MATCH, header: HEADER };
+const LABELED = { ...MATCH, header: HEADER, outcome: null };
+
+/**
+ * One row of `/api/match-facts`: the same log, and what it was. The five facts
+ * are the log's own — the two seats, who won, the final score, the seed and the
+ * day — spelled the way the log spells them.
+ */
+const FACT = {
+  ...MATCH,
+  seed: 1234,
+  created: HEADER.playedOn,
+  seats: { A: "bot:greedy", B: "bot:random" },
+  winner: "bot:greedy",
+  score: { A: 43, B: 33 },
+  type: "time",
+  turn: 24,
+  margin: 10,
+};
+
+/** A second series, played under a different pairing. */
+const BETA: SeriesRow = {
+  ...SERIES,
+  name: "beta",
+  dir: "/repo/series/beta",
+  a: "bot:greedy",
+  b: "marvin/subagent",
+};
+
+/**
+ * A facts row for a log of `series` on `seed`, as the page holds one: the listing
+ * the cheap route gives, and the facts the expensive one adds.
+ */
+const fact = (series: string | null, seed: number, outcome: MatchOutcome | null = WON): MatchRow => ({
+  name: `${String(seed)}-greedy-random.json`,
+  path: `/repo/series/${series ?? "?"}/matches/${String(seed)}-greedy-random.json`,
+  url: `/logs/${String(seed)}-greedy-random.json`,
+  viewerUrl: `/viewer/?log=/logs/${String(seed)}-greedy-random.json&back=%23matches`,
+  series,
+  header: { seats: ["bot:greedy", "bot:random"], seed, playedOn: "2026-10-07T12:19:32.132Z" },
+  outcome,
+});
+
+/** The facts the section is drawn from by default: one won match of series `alpha`. */
+const FACTS: MatchFacts = {
+  matchesRoot: "/repo/matches",
+  matches: [fact("alpha", 1234)],
+  unreadable: [],
+};
+
+/** The facts read the section is drawn from by default, and the two other states it can be in. */
+const ready = (facts: MatchFacts): MatchFactsRead => ({ state: "ready", facts });
+const NO_FACTS: MatchFacts = { matchesRoot: "/repo/matches", matches: [], unreadable: [] };
+const READING: MatchFactsRead = { state: "reading" };
+const FAILED: MatchFactsRead = { state: "failed" };
 
 /** The head of a match log, as the log writes it — header first, then the match. */
 const logHead = (players: unknown): string =>
@@ -192,10 +258,17 @@ const section = (): HTMLElement => {
 const itemsOf = (el: HTMLElement, listClass: string): string[] =>
   [...el.querySelectorAll<HTMLElement>(`.${listClass} > li`)].map((li) => li.textContent ?? "");
 
+/** The Matches view's blocks, each as its heading and the rows under it. */
+const groupsOf = (el: HTMLElement): { head: string; rows: string[] }[] =>
+  [...el.querySelectorAll<HTMLElement>(".match-group")].map((block) => ({
+    head: block.querySelector(".match-group-head")?.textContent ?? "",
+    rows: [...block.querySelectorAll<HTMLElement>(".match-group-rows > li")].map((li) => li.textContent ?? ""),
+  }));
+
 /** Draw the section and read it back as text. */
-const drawn = (results: Results): { el: HTMLElement; text: string } => {
+const drawn = (results: Results, facts: MatchFactsRead = ready(FACTS)): { el: HTMLElement; text: string } => {
   const el = section();
-  renderResults(el, results, () => undefined);
+  renderResults(el, results, facts, () => undefined);
   return { el, text: el.textContent ?? "" };
 };
 
@@ -332,6 +405,116 @@ describe("parseMatchListing", () => {
   });
 });
 
+describe("parseMatchFactsListing", () => {
+  it("holds each fact row as the page words a row from", () => {
+    const listing = parseMatchFactsListing({
+      matchesRoot: "/repo/matches",
+      matches: [FACT, { ...FACT, name: "9-solo.json", series: null, winner: null, score: { A: 43, B: 43 } }],
+      unreadable: [],
+    });
+
+    expect(listing.matchesRoot).toBe("/repo/matches");
+    // The route spells its facts as a log does; the page holds them as a header and
+    // an outcome, which is what a row read out of a log header in the browser gives.
+    expect(listing.matches[0]).toEqual({
+      ...LABELED,
+      outcome: { winner: "bot:greedy", score: { A: 43, B: 33 } },
+    });
+    expect(listing.matches[1]!.series).toBeNull();
+    expect(listing.matches.map((each) => each.outcome)).toEqual([
+      { winner: "bot:greedy", score: { A: 43, B: 33 } },
+      { winner: null, score: { A: 43, B: 43 } },
+    ]);
+  });
+
+  it("keeps the logs the console could not read, with the line each failed on", () => {
+    const listing = parseMatchFactsListing({
+      matchesRoot: "/repo/matches",
+      matches: [FACT],
+      unreadable: [{ name: "77-greedy-random.json", path: "/repo/series/alpha/matches/77.json", url: "/logs/77.json", series: "alpha", error: "not JSON" }],
+    });
+
+    expect(listing.unreadable).toEqual([
+      { name: "77-greedy-random.json", path: "/repo/series/alpha/matches/77.json", url: "/logs/77.json", series: "alpha", error: "not JSON" },
+    ]);
+  });
+
+  it("names the field when the answer is missing one, rather than drawing undefined", () => {
+    const { score, ...withoutScore } = FACT;
+    expect(score).toBeTypeOf("object");
+    expect(() => parseMatchFactsListing({ matchesRoot: "/repo/matches", matches: [withoutScore], unreadable: [] })).toThrow(
+      "matches[0].score is not an object",
+    );
+    const { created, ...withoutCreated } = FACT;
+    expect(created).toBeTypeOf("string");
+    expect(() =>
+      parseMatchFactsListing({ matchesRoot: "/repo/matches", matches: [withoutCreated], unreadable: [] }),
+    ).toThrow("matches[0].created is not a string");
+    expect(() => parseMatchFactsListing({ matchesRoot: "/repo/matches", matches: [FACT] })).toThrow(
+      "unreadable is not a list",
+    );
+    expect(() => parseMatchFactsListing([])).toThrow("the answer from /api/match-facts is not an object");
+  });
+});
+
+describe("fetchMatchFacts", () => {
+  it("asks the facts route and parses its answer", async () => {
+    const asked: string[] = [];
+    const facts = await fetchMatchFacts((path) => {
+      asked.push(path);
+      return Promise.resolve(Response.json({ matchesRoot: "/repo/matches", matches: [FACT], unreadable: [] }));
+    });
+
+    expect(asked).toEqual(["/api/match-facts"]);
+    expect(facts.matches).toEqual([{ ...LABELED, outcome: { winner: "bot:greedy", score: { A: 43, B: 33 } } }]);
+    expect(facts.unreadable).toEqual([]);
+  });
+
+  it("fails with the console's own line when it refuses", async () => {
+    const refuses = (): Promise<Response> =>
+      Promise.resolve(Response.json({ error: "the matches root is not there" }, { status: 500 }));
+
+    await expect(fetchMatchFacts(refuses)).rejects.toThrow("the matches root is not there");
+  });
+});
+
+describe("matchLabel", () => {
+  /** A row of the facts route, with the outcome the caller asks for. */
+  const row = (outcome: unknown): MatchRow => ({
+    ...LABELED,
+    outcome: outcome === null ? null : (outcome as MatchRow["outcome"]),
+  });
+
+  it("says who beat whom, the score, the seed and the day", () => {
+    expect(matchLabel(row({ winner: "bot:greedy", score: { A: 43, B: 33 } }))).toBe(
+      "bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026",
+    );
+    // The winner is named first, so the score follows the names: the figure beside a
+    // seat is that seat's points, whichever seat it was played in.
+    expect(matchLabel(row({ winner: "bot:random", score: { A: 33, B: 43 } }))).toBe(
+      "bot:random beat bot:greedy 43–33 · seed 1234 · 7 Oct 2026",
+    );
+  });
+
+  it("says a match that ended level was drawn, rather than won by nobody", () => {
+    expect(matchLabel(row({ winner: null, score: { A: 43, B: 43 } }))).toBe(
+      "bot:greedy and bot:random drew 43–43 · seed 1234 · 7 Oct 2026",
+    );
+  });
+
+  it("says who played, and no more, on a row the facts route did not answer", () => {
+    // A leaderboard link comes from `/api/matches`, which carries no result. It says
+    // who played on what seed and stops there, rather than guessing a winner.
+    expect(matchLabel(row(null))).toBe("bot:greedy vs bot:random · seed 1234 · 7 Oct 2026");
+  });
+
+  it("says what the listing alone supports before any log has been read", () => {
+    expect(matchLabel({ ...MATCH, header: null, outcome: null })).toBe(
+      "a match on seed 1234, whose log this console has not read",
+    );
+  });
+});
+
 describe("viewerUrlFor", () => {
   it("restates only the way back, and leaves the log the viewer opens on alone", () => {
     // `?log=` is what the viewer's load.ts fetches, and it is the same URL
@@ -361,11 +544,12 @@ describe("fetchResults", () => {
       );
     });
 
-    // The two listings and nothing else. What a match was is read from the log
-    // afterwards, by whoever is drawing, so that the section is not held back
-    // for a read per log — and the rows arrive labelled from the listing alone.
+    // The two listings and nothing else. What each match was comes from
+    // `/api/match-facts`, which is read apart from these two so that a section of
+    // series rows is never held back for a pass over every match log — and the
+    // rows arrive with no outcome, because the cheap route does not answer one.
     expect(asked).toEqual(["/api/series", "/api/matches"]);
-    expect(results).toEqual({ ...RESULTS, matches: [{ ...MATCH, header: null }] });
+    expect(results).toEqual({ ...RESULTS, matches: [{ ...MATCH, header: null, outcome: null }] });
   });
 
   it("fails with the console's own line when it refuses", async () => {
@@ -602,7 +786,7 @@ describe("renderResults", () => {
   it("offers a finished series for resume and sends its directory alone", () => {
     const el = section();
     const resumed: string[] = [];
-    renderResults(el, RESULTS, (dir) => resumed.push(dir));
+    renderResults(el, RESULTS, ready(FACTS), (dir) => resumed.push(dir));
 
     const [button] = [...el.querySelectorAll<HTMLButtonElement>("button.resume")];
     expect(button).toBeDefined();
@@ -617,7 +801,7 @@ describe("renderResults", () => {
   it("refuses a resume while the series' own run is in flight", () => {
     const el = section();
     const resumed: string[] = [];
-    renderResults(el, { ...RESULTS, series: [{ ...SERIES, resumable: false }] }, (dir) => resumed.push(dir));
+    renderResults(el, { ...RESULTS, series: [{ ...SERIES, resumable: false }] }, ready(FACTS), (dir) => resumed.push(dir));
 
     const [button] = [...el.querySelectorAll<HTMLButtonElement>("button.resume")];
     expect(button!.disabled).toBe(true);
@@ -629,7 +813,7 @@ describe("renderResults", () => {
   it("says a series another process is playing is being played, and offers no resume for it", () => {
     const el = section();
     const resumed: string[] = [];
-    renderResults(el, { ...RESULTS, series: [PLAYING] }, (dir) => resumed.push(dir));
+    renderResults(el, { ...RESULTS, series: [PLAYING] }, ready(FACTS), (dir) => resumed.push(dir));
 
     const [row] = itemsOf(el, "series");
     expect(row).toContain("this series is being played by another process on this machine");
@@ -669,7 +853,7 @@ describe("renderResults", () => {
   it("says the run that left a series half-played has gone, and offers it for resume", () => {
     const el = section();
     const resumed: string[] = [];
-    renderResults(el, { ...RESULTS, series: [ABANDONED] }, (dir) => resumed.push(dir));
+    renderResults(el, { ...RESULTS, series: [ABANDONED] }, ready(FACTS), (dir) => resumed.push(dir));
 
     const [row] = itemsOf(el, "series");
     expect(row).toContain("the run that left this series half-played has gone");
@@ -683,10 +867,10 @@ describe("renderResults", () => {
 
   it("lists the same series as stopped, with its resume, once the process playing it has ended", () => {
     const el = section();
-    renderResults(el, { ...RESULTS, series: [PLAYING] }, () => undefined);
+    renderResults(el, { ...RESULTS, series: [PLAYING] }, ready(FACTS), () => undefined);
     // The next listing read, with the lock gone: the report's figures are the
     // series' account of itself again, and the row goes back to the finished line.
-    renderResults(el, { ...RESULTS, series: [SERIES] }, () => undefined);
+    renderResults(el, { ...RESULTS, series: [SERIES] }, ready(FACTS), () => undefined);
 
     const [row] = itemsOf(el, "series");
     expect(row).toContain("stopped on max_pairs — its full length");
@@ -695,140 +879,200 @@ describe("renderResults", () => {
     expect(el.querySelector<HTMLButtonElement>("button.resume")?.disabled).toBe(false);
   });
 
+  it("lists its logs under one block per series, and one for the matches played on their own", () => {
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [fact("alpha", 1234), fact("beta", 2200), fact(null, 9)],
+      unreadable: [],
+    };
+    const { el } = drawn({ ...RESULTS, series: [SERIES, BETA] }, ready(facts));
+
+    expect(groupsOf(el)).toEqual([
+      { head: "bot:greedy vs bot:random", rows: ["bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026"] },
+      {
+        head: "bot:greedy vs marvin/subagent",
+        rows: ["bot:greedy beat bot:random 43–33 · seed 2200 · 7 Oct 2026"],
+      },
+      {
+        head: "Played on their own — matches that belong to no series",
+        rows: ["bot:greedy beat bot:random 43–33 · seed 9 · 7 Oct 2026"],
+      },
+    ]);
+  });
+
+  it("keeps the listing's order for its blocks, and puts one series' logs in one block", () => {
+    // The facts route walks the roots in its own order, and a series' logs
+    // are not necessarily consecutive in it. The blocks follow the order the listing
+    // gives — the page does not sort the series into one of its own.
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [fact("beta", 2200), fact("alpha", 1234), fact("beta", 2201), fact("alpha", 1235)],
+      unreadable: [],
+    };
+    const { el } = drawn({ ...RESULTS, series: [SERIES, BETA] }, ready(facts));
+
+    expect(groupsOf(el)).toEqual([
+      {
+        head: "bot:greedy vs marvin/subagent",
+        rows: [
+          "bot:greedy beat bot:random 43–33 · seed 2200 · 7 Oct 2026",
+          "bot:greedy beat bot:random 43–33 · seed 2201 · 7 Oct 2026",
+        ],
+      },
+      {
+        head: "bot:greedy vs bot:random",
+        rows: [
+          "bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026",
+          "bot:greedy beat bot:random 43–33 · seed 1235 · 7 Oct 2026",
+        ],
+      },
+    ]);
+  });
+
+  it("names the series in a heading where two blocks share a pairing", () => {
+    // The pairing is what a reader is choosing between, and it is the heading while it
+    // settles the block. Two series played the same pairing and it no longer does, so
+    // the name the console lists them under comes in to tell them apart.
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [fact("alpha", 1234), fact("beta", 2200)],
+      unreadable: [],
+    };
+    const { el } = drawn({ ...RESULTS, series: [SERIES, { ...BETA, b: "bot:random" }] }, ready(facts));
+
+    expect(groupsOf(el).map((group) => group.head)).toEqual([
+      "bot:greedy vs bot:random — alpha",
+      "bot:greedy vs bot:random — beta",
+    ]);
+  });
+
+  it("says when a block's series is one this console does not list", () => {
+    // A log under a series' directory is in that series whatever the page's own
+    // listing knows, and the name is the only fact there is to head the block with.
+    const facts: MatchFacts = { matchesRoot: "/repo/matches", matches: [fact("gamma", 12)], unreadable: [] };
+    const { el } = drawn(RESULTS, ready(facts));
+
+    expect(groupsOf(el).map((group) => group.head)).toEqual(["gamma — a series this console does not list"]);
+  });
+
   it("links every finished match at the viewer's URL for it, and says what the match was", () => {
-    const el = section();
-    const other = { ...LABELED, name: "1-x-y.json", series: null };
-    renderResults(el, { ...RESULTS, matches: [LABELED, other] }, () => undefined);
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [fact("alpha", 1234), fact("alpha", 1235, { winner: null, score: { A: 43, B: 43 } })],
+      unreadable: [],
+    };
+    const { el } = drawn(RESULTS, ready(facts));
 
     const links = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
-    // The URLs are the console's, unchanged: only the words over them changed.
-    expect(links.map((link) => link.getAttribute("href"))).toEqual([MATCH.viewerUrl, MATCH.viewerUrl]);
-    expect(links[0]!.textContent).toBe("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
-    expect(links[1]!.textContent).toBe("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
-    expect(itemsOf(el, "matches")).toEqual([
-      "bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — from alpha",
-      "bot:greedy vs bot:random — seed 1234, played 7 Oct 2026 — a match played on its own",
+    // The URLs are the console's, unchanged: the page restates only the view the
+    // viewer goes back to, and never the log.
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/viewer/?log=/logs/1234-greedy-random.json&back=%23matches",
+      "/viewer/?log=/logs/1235-greedy-random.json&back=%23matches",
+    ]);
+    // A match nobody won is said as drawn, not as won by nobody.
+    expect(links.map((link) => link.textContent)).toEqual([
+      "bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026",
+      "bot:greedy and bot:random drew 43–43 · seed 1235 · 7 Oct 2026",
     ]);
   });
 
   it("names the Matches view as the way back, whatever the listing's link carried", () => {
-    const el = section();
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [{ ...fact("alpha", 1234), viewerUrl: "/viewer/?log=/logs/1234.json&back=%23leaderboard" }],
+      unreadable: [],
+    };
+    const { el } = drawn(RESULTS, ready(facts));
+
     // A row whose URL was built for another view still goes back to Matches from
     // here, and still opens the same log.
-    renderResults(
-      el,
-      { ...RESULTS, matches: [{ ...LABELED, viewerUrl: "/viewer/?log=/logs/9-solo.json&back=%23leaderboard" }] },
-      () => undefined,
-    );
-
-    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
-    expect(link.getAttribute("href")).toBe("/viewer/?log=/logs/9-solo.json&back=%23matches");
-  });
-
-  it("fills a row's words in when its log's header arrives, and leaves its link alone", async () => {
-    const el = section();
-    renderResults(
-      el,
-      { ...RESULTS, matches: [{ ...MATCH, header: null }] },
-      () => undefined,
-      () => Promise.resolve(HEADER),
-    );
-
-    // The row is on the page before the read answers, and its address never
-    // moves: only the words over it change.
-    const [link] = [...el.querySelectorAll<HTMLAnchorElement>("a.match-viewer")];
-    expect(link.textContent).toBe("a match on seed 1234, whose log this console has not read");
-    expect(link.getAttribute("href")).toBe(MATCH.viewerUrl);
-
-    await new Promise((later) => void setTimeout(later, 0));
-
-    expect(link.textContent).toBe("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
-    expect(link.getAttribute("href")).toBe(MATCH.viewerUrl);
-  });
-
-  it("says a log could not be read, in words, when the read comes back with nothing", async () => {
-    const el = section();
-    renderResults(
-      el,
-      { ...RESULTS, matches: [{ ...MATCH, header: null }] },
-      () => undefined,
-      () => Promise.resolve(null),
-    );
-
-    await new Promise((later) => void setTimeout(later, 0));
-
-    expect(el.querySelector("a.match-viewer")?.textContent).toBe(
-      "a match on seed 1234, whose log this console could not read",
+    expect(el.querySelector("a.match-viewer")?.getAttribute("href")).toBe(
+      "/viewer/?log=/logs/1234.json&back=%23matches",
     );
   });
 
-  it("leaves a row's words alone when the reader fails outright, rather than raising out of a render", async () => {
-    const el = section();
-    renderResults(
-      el,
-      { ...RESULTS, matches: [{ ...MATCH, header: null }] },
-      () => undefined,
-      () => Promise.reject(new Error("the socket dropped")),
+  it("keeps a log the facts route could not read in its series' block, with the line it failed on", () => {
+    const facts: MatchFacts = {
+      matchesRoot: "/repo/matches",
+      matches: [fact("alpha", 1234)],
+      unreadable: [
+        {
+          name: "77-greedy-random.json",
+          path: "/repo/series/alpha/matches/77-greedy-random.json",
+          url: "/logs/alpha/matches/77-greedy-random.json",
+          series: "alpha",
+          error: "not a match log",
+        },
+      ],
+    };
+    const { el } = drawn(RESULTS, ready(facts));
+
+    // A log that will not parse is still a match of that series, and it belongs with
+    // the others rather than in a list of failures at the bottom of the view. The
+    // seed comes from the listing's own name for it, which is the fact
+    // that tells two rows apart; the file name itself is not drawn.
+    expect(groupsOf(el)).toEqual([
+      {
+        head: "bot:greedy vs bot:random",
+        rows: [
+          "bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026",
+          "a match on seed 77, whose log the console could not read: not a match log",
+        ],
+      },
+    ]);
+    expect(el.querySelectorAll("a.match-viewer")).toHaveLength(1);
+  });
+
+  it("says the facts are on their way, and draws the series rows while they are", () => {
+    const { el, text } = drawn(RESULTS, READING);
+
+    expect(text).toContain("Reading what each match was.");
+    expect(itemsOf(el, "series")).toHaveLength(1);
+    expect(el.querySelectorAll(".match-group")).toHaveLength(0);
+  });
+
+  it("says when the facts did not come, and leaves the rest of the section standing", () => {
+    const { el, text } = drawn(
+      {
+        ...RESULTS,
+        unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "series.json is not a series record" }],
+      },
+      FAILED,
     );
 
-    await new Promise((later) => void setTimeout(later, 0));
-
-    // The row keeps the words it was drawn with. An unhandled rejection out of a
-    // render is a page that stops working, which is worse than a plain label.
-    expect(el.querySelector("a.match-viewer")?.textContent).toBe(
-      "a match on seed 1234, whose log this console has not read",
-    );
+    expect(text).toContain("The console could not say what its matches were.");
+    // The series rows and the unreadable records came from other reads, and a facts
+    // read that failed says nothing about them. The reason goes on the status line.
+    expect(itemsOf(el, "series")).toHaveLength(1);
+    expect(itemsOf(el, "series-unreadable")).toHaveLength(1);
+    expect(el.querySelectorAll(".match-group")).toHaveLength(0);
   });
 
   it("says what a match was, and not what its log is called", () => {
     const { text } = drawn(RESULTS);
 
-    expect(text).toContain("bot:greedy vs bot:random — seed 1234, played 7 Oct 2026");
-    // A file name says those three things to whoever named the file, and nothing
-    // to anyone reading the row.
+    expect(text).toContain("bot:greedy beat bot:random 43–33 · seed 1234 · 7 Oct 2026");
+    // A file name says those facts to whoever named the file, and nothing to anyone
+    // reading the row.
     expect(text).not.toContain("1234-greedy-random");
   });
 
-  it("says what a match was before its log has been read, from the listing alone", () => {
-    // The row goes up at once, labelled with the one fact the listing carries that
-    // tells two matches apart. It does not claim the log is unreadable, which
-    // would be a guess about a read that has not happened.
-    const { text } = drawn({ ...RESULTS, matches: [{ ...MATCH, header: null }] });
+  it("says when there is nothing to list, in both folders", () => {
+    const { text } = drawn({ ...RESULTS, series: [], unreadable: [], matches: [] }, ready(NO_FACTS));
 
-    expect(text).toContain("a match on seed 1234, whose log this console has not read");
-    expect(text).not.toContain("1234-greedy-random");
+    expect(text).toContain("No series here yet.");
+    expect(text).toContain("No finished match here yet.");
   });
 
-  it("says when a match log will not say what the match was, and still tells the rows apart", async () => {
+  it("replaces the whole section, so a series that went away does not stay on the page", () => {
     const el = section();
-    renderResults(
-      el,
-      {
-        ...RESULTS,
-        matches: [
-          { ...MATCH, header: null },
-          { ...MATCH, name: "77-greedy-random.json", url: "/logs/alpha/matches/77.json", header: null },
-        ],
-      },
-      () => undefined,
-      () => Promise.resolve(null),
-    );
+    renderResults(el, RESULTS, ready(FACTS), () => undefined);
+    renderResults(el, { ...RESULTS, series: [], matches: [] }, ready(NO_FACTS), () => undefined);
 
-    await new Promise((later) => void setTimeout(later, 0));
-
-    expect(itemsOf(el, "matches")).toEqual([
-      "a match on seed 1234, whose log this console could not read — from alpha",
-      "a match on seed 77, whose log this console could not read — from alpha",
-    ]);
-    // The seed comes out of the listing's own name for the log, which is the one
-    // fact in it that tells two matches apart. The file name is not drawn.
-    expect(el.textContent ?? "").not.toContain("1234-greedy-random");
-  });
-
-  it("says it has no facts about a log whose name does not carry a seed either", () => {
-    const { text } = drawn({ ...RESULTS, matches: [{ ...MATCH, name: "salient-match.json", header: null }] });
-
-    expect(text).toContain("a match this console has no facts about, whose log this console has not read");
+    expect(itemsOf(el, "series")).toEqual([]);
+    expect(groupsOf(el)).toEqual([]);
+    expect(el.querySelectorAll("button.resume")).toHaveLength(0);
   });
 
   it("keeps a record it cannot read on the page, with the line the console gave", () => {
@@ -840,24 +1084,6 @@ describe("renderResults", () => {
     expect(text).toContain("broken");
     expect(text).toContain("series.json is not a series record");
   });
-
-  it("says when there is nothing to list, in both folders", () => {
-    const empty = { ...RESULTS, series: [], unreadable: [], matches: [] };
-    const { text } = drawn(empty);
-
-    expect(text).toContain("No series here yet.");
-    expect(text).toContain("No finished match here yet.");
-  });
-
-  it("replaces the whole section, so a series that went away does not stay on the page", () => {
-    const el = section();
-    renderResults(el, RESULTS, () => undefined);
-    renderResults(el, { ...RESULTS, series: [], matches: [] }, () => undefined);
-
-    expect(itemsOf(el, "series")).toEqual([]);
-    expect(itemsOf(el, "matches")).toEqual([]);
-    expect(el.querySelectorAll("button.resume")).toHaveLength(0);
-  });
 });
 
 describe("writeSeriesCounters", () => {
@@ -867,6 +1093,7 @@ describe("writeSeriesCounters", () => {
     renderResults(
       el,
       { ...RESULTS, series: [PLAYING, { ...SERIES, name: "beta", dir: "/repo/series/beta" }] },
+      ready(FACTS),
       () => undefined,
     );
     return el;
@@ -900,7 +1127,7 @@ describe("createPlayingPoller", () => {
   /** The section, drawn from the listing the page currently holds. */
   const watching = (listed: SeriesRow[]): HTMLElement => {
     const el = section();
-    renderResults(el, { ...RESULTS, series: listed }, () => undefined);
+    renderResults(el, { ...RESULTS, series: listed }, ready(FACTS), () => undefined);
     return el;
   };
 
@@ -983,7 +1210,7 @@ describe("createPlayingPoller", () => {
         // What the listing read the page asked for does: the row goes up as
         // playing, with no Resume on it.
         listed.splice(0, listed.length, PLAYING);
-        renderResults(el, { ...RESULTS, series: listed }, () => undefined);
+        renderResults(el, { ...RESULTS, series: listed }, ready(FACTS), () => undefined);
       },
       say: () => undefined,
       wait: async (): Promise<void> => {
