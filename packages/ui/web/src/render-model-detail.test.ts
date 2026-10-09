@@ -20,7 +20,8 @@
 import { describe, expect, it } from "vitest";
 
 import { expectPlainWords, wordsOf } from "./plain-words.ts";
-import { renderLeaderboard } from "./render-leaderboard.ts";import {
+import { renderLeaderboard } from "./render-leaderboard.ts";
+import {
   fetchModelDetail,
   modelDetailPathFor,
   openModelDetail,
@@ -125,6 +126,20 @@ const BROKEN = {
     keptReport: false,
     keptEvidence: false,
   },
+};
+
+/**
+ * A series whose *evidence* read failed — the other failure the console answers, and
+ * the one a block gets wrong if it reads its own shape off `error` alone. The figures
+ * the report gave still stand, the rules' counters are gone, the block's line and the
+ * rules' line are the same words, and the replay links come out of the read that
+ * failed, so there are none.
+ */
+const EVIDENCE_FAILED = {
+  ...ALPHA,
+  error: "the evidence beside the record is not JSON",
+  rules: { error: "the evidence beside the record is not JSON" },
+  matches: [],
 };
 
 /** What `GET /api/model-detail` answers for that label: ten pooled matches, two series. */
@@ -277,9 +292,12 @@ describe("the model detail read", () => {
   });
 
   it("reads rules that failed as a line rather than as five noughts", () => {
-    const rules = parseModelDetail({ ...ANSWER, series: [{ ...ALPHA, rules: { error: "no evidence beside the record" } }] })
-      .series[0]!;
-    expect(rules.rules).toEqual({ error: "no evidence beside the record" });
+    const rules = parseModelDetail({ ...ANSWER, series: [EVIDENCE_FAILED] }).series[0]!;
+    expect(rules.rules).toEqual({ error: "the evidence beside the record is not JSON" });
+    expect(rules.error).toBe("the evidence beside the record is not JSON");
+    // The read that failed is the evidence's, so the report's figures survive it.
+    expect(rules.figures?.turnCount).toBe(412);
+    expect(rules.matches).toEqual([]);
   });
 
   it("names the field an answer is missing, rather than drawing a nought for it", () => {
@@ -336,7 +354,9 @@ describe("the model detail panel", () => {
     expect(said).toContain("from seat A: 3 won, 1 lost, 0 drawn — 75.0% (95% CI 31.9% – 94.5%)");
     expect(said).toContain("from seat B: 2 won, 0 lost, 1 drawn — 66.7% (95% CI 25.0% – 94.0%)");
     expect(said).toContain("412 turns");
-    expect(said).toContain("a match took 8 minutes, a turn 9 seconds");
+    // The clock is one seat's own, and the line says so: the two seats of a match
+    // play in turn, and "a match took 8 minutes" alone reads as the match's.
+    expect(said).toContain("its own clock over the matches it played: a match took 8 minutes, a turn 9 seconds");
     expect(said).toContain("147M tokens in, 19M out, 55M read from cache");
     expect(said).toContain("cost $12.34");
     expect(said).toContain("3 turns passed, 2 of them out of time");
@@ -352,16 +372,54 @@ describe("the model detail panel", () => {
     );
   });
 
-  it("says which read the rules' counters came from when that read failed", () => {
+  it("says which read failed, and keeps the figures that stand beside it", () => {
+    const { el, text } = drawn(ready({ ...ANSWER, series: [EVIDENCE_FAILED] }));
+    const block = el.querySelectorAll("li.model-detail-block")[0]!;
+
+    // The console answers this case with the block's line and the rules' line set to
+    // the same words, over figures it read from the report. So the block names the
+    // read that failed where the five counters would have been...
+    expect(text).toContain(
+      "Its rules counters came from a read that failed: the evidence beside the record is not JSON",
+    );
+    // ...and does not say the series could not be read while printing the win rate,
+    // the seat split and the clock it has just read from that same series.
+    expect(text).not.toContain("This console could not read that series");
+    expect(text).toContain("71.4% (95% CI 40.0% – 90.0%) over 7 counted matches of that series.");
+    expect(text).toContain("412 turns");
+    expect(text).toContain("cost $12.34");
+    // The empty replay list is that read's absence, not a series with no matches in
+    // it, and the block says which of the two it is.
+    expect(text).toContain("Its replays come out of that same failed read, so none of them is linked here.");
+    // The failed edge belongs to a block with nothing to read, not to one whose
+    // figures stand.
+    expect(block.className).toBe("model-detail-block");
+    // And the line is said once, not twice over.
+    expect(text.split("the evidence beside the record is not JSON").length).toBe(2);
+  });
+
+  it("puts one of a unit in the singular, and never calls a cost under a cent nothing", () => {
     const { text } = drawn(
       ready({
         ...ANSWER,
-        series: [{ ...ALPHA, rules: { error: "the evidence file is not JSON" } }],
+        series: [
+          {
+            ...ALPHA,
+            figures: {
+              ...ALPHA.figures,
+              wallMsPerMatch: 60_000,
+              perTurn: { ...ALPHA.figures.perTurn, wallMs: 1 },
+              costUsd: 0.004,
+            },
+          },
+        ],
       }),
     );
-    expect(text).toContain("Its rules counters came from a read that failed: the evidence file is not JSON");
-    // The figures came out of the report and stand beside a rules read that did not.
-    expect(text).toContain("412 turns");
+    expect(text).toContain("a match took 1 minute, a turn 1 millisecond");
+    // `$0.00` for a cost that is not nought reads as a match that was free, which is
+    // the opposite of what the console knows.
+    expect(text).toContain("cost <$0.01");
+    expect(text).not.toContain("cost $0.00");
   });
 
   it("links each counted match to its replay, back to this view", () => {
@@ -405,6 +463,8 @@ describe("the model detail panel", () => {
     expect(broken.textContent).not.toContain("71.4%");
     // And the same line is not said twice in one block, where the rules would be.
     expect((broken.textContent ?? "").split("the record's second line is not JSON").length).toBe(2);
+    // The empty replay list is that same read's absence.
+    expect(broken.textContent).toContain("Its replays come out of that same failed read");
   });
 
   it("says it is reading, before the answer has landed", () => {
@@ -450,7 +510,7 @@ describe("the model detail panel", () => {
   });
 
   it("speaks in plain words, apart from the lines it repeats about what failed", () => {
-    const { el } = drawn(ready({ ...ANSWER, series: [ALPHA] }));
+    const { el } = drawn(ready({ ...ANSWER, series: [ALPHA, EVIDENCE_FAILED] }));
     expectPlainWords("model detail", wordsOf(el));
   });
 });
@@ -511,6 +571,29 @@ describe("opening a model detail", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(host.querySelectorAll(".model-detail-panel").length).toBe(0);
     expect(document.activeElement === opener).toBe(true);
+  });
+
+  it("leaves the panel standing when Escape is pressed in another view", async () => {
+    const { host, opener } = mounted();
+    await openModelDetail({
+      host,
+      opener,
+      label: LABEL,
+      series: BOARD.series,
+      fetchJson: answering(ANSWER, []),
+      say: () => undefined,
+    });
+    // The panel is hidden with the Leaderboard view. A reader who has gone to another
+    // view cannot see it, so Escape there is that view's own Escape: closing the
+    // panel then would take away something nobody asked to take away, and put focus
+    // on a control they cannot reach.
+    host.hidden = true;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(host.querySelectorAll(".model-detail-panel").length).toBe(1);
+    // Back at the leaderboard, Escape is the panel's again.
+    host.hidden = false;
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(host.querySelectorAll(".model-detail-panel").length).toBe(0);
   });
 
   it("opens one panel at a time, for the row that was opened last", async () => {

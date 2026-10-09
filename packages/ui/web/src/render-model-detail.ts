@@ -34,18 +34,22 @@
  * already holds. Asking the route for them as well would be a second answer about
  * one `series.json`, and the two could disagree on the page that shows both.
  *
- * **What cannot be read, and where the line goes.** A read that fails leaves the
+ * **What cannot be read, and which read it was.** A read that fails leaves the
  * leaderboard standing — the panel is not in the section, so it cannot take the
  * tables with it — and says the console's own line on the page's status line, as
  * every other failed read does, and again inside the panel, because the reader
- * clicked one row and needs to know that it is that row's read that failed. A
- * series whose record or evidence failed stays a block carrying the line it failed
- * on, with the links the console could still answer for it; a series that has
- * quietly gone missing from a model's detail would read as a series that model
- * never played. Those lines are repeated as the console wrote them, which is the
- * one place the panel keeps a path or a file name — the same rule the leaderboard's
- * unreadable rows hold, and for the same reason: whoever can fix it is the one who
- * has to see what it failed on.
+ * clicked one row and needs to know that it is that row's read that failed. Inside
+ * the detail, what a block says about itself comes from what it carries: a series
+ * whose *record* could not be read is answered with no figures at all and says the
+ * series could not be read, and a series whose *evidence* could not be read is
+ * answered with its figures standing and its rules' counters gone, and says which of
+ * the two failed. A block that said "could not read that series" above a win rate it
+ * had just read would contradict itself, and a series that has quietly gone missing
+ * from a model's detail would read as a series that model never played. Those lines
+ * are repeated as the console wrote them, which is the one place the panel keeps a
+ * path or a file name — the same rule the leaderboard's unreadable rows hold, and
+ * for the same reason: whoever can fix it is the one who has to see what it failed
+ * on.
  *
  * **The panel is drawn over the Leaderboard view, not inside the section.**
  * `render-leaderboard.ts` replaces everything under its heading on every listings
@@ -426,8 +430,18 @@ const rateWith = (result: ResultCell): string =>
 const tokensAs = (tokens: number): string =>
   tokens < 1_000_000 ? String(tokens) : `${String(Number((tokens / 1_000_000).toPrecision(3)))}M`;
 
-/** What a seat cost, or the truth about hardware nobody prices. */
-const costAs = (costUsd: number): string => (costUsd === 0 ? "no cost on record" : `$${costUsd.toFixed(2)}`);
+/**
+ * What a seat cost, or the truth about hardware nobody prices.
+ *
+ * A cost under half a cent rounds to `$0.00`, which reads as a match that was free —
+ * the opposite of what the console knows, and the same kind of nought drawn for a
+ * fact it does not have. It is shown as what it is: less than a cent.
+ */
+const costAs = (costUsd: number): string => {
+  if (costUsd === 0) return "no cost on record";
+  if (costUsd < 0.005) return "<$0.01";
+  return `$${costUsd.toFixed(2)}`;
+};
 
 /**
  * A wall clock in the units a person reads a duration in.
@@ -441,14 +455,18 @@ const costAs = (costUsd: number): string => (costUsd === 0 ? "no cost on record"
  * time at all.
  */
 const durationAs = (ms: number): string => {
-  if (ms < 1000) return `${String(Math.round(ms))} milliseconds`;
+  // The word follows the number: singular and plural are one letter apart and a
+  // reader hears both, and "1 minutes" is the kind of slip that makes a figure look
+  // machine-written rather than said.
+  const unit = (n: number, name: string): string => `${String(n)} ${name}${n === 1 ? "" : "s"}`;
+  if (ms < 1000) return unit(Math.round(ms), "millisecond");
   const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${String(seconds)} seconds`;
+  if (seconds < 60) return unit(seconds, "second");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${String(minutes)} minutes`;
+  if (minutes < 60) return unit(minutes, "minute");
   const hours = Math.floor(minutes / 60);
   const rest = minutes - hours * 60;
-  return rest === 0 ? `${String(hours)} hours` : `${String(hours)} hours ${String(rest)} minutes`;
+  return rest === 0 ? unit(hours, "hour") : `${unit(hours, "hour")} ${unit(rest, "minute")}`;
 };
 
 /**
@@ -510,7 +528,13 @@ const seatWords = (seat: "A" | "B", result: ResultCell): HTMLLIElement =>
 const figureWords = (figures: DetailFigures): HTMLElement =>
   list("model-detail-figures", [
     item(`${String(figures.turnCount)} turns`),
-    item(`a match took ${durationAs(figures.wallMsPerMatch)}, a turn ${durationAs(figures.wallMsPerTurn)}`),
+    // The clock is this seat's own, and the line says so: "a match took 8 minutes"
+    // beside another seat's row of the same match would otherwise read as the
+    // match's elapsed time, which is the one duration the page never adds up.
+    item(
+      `its own clock over the matches it played: a match took ${durationAs(figures.wallMsPerMatch)}, ` +
+        `a turn ${durationAs(figures.wallMsPerTurn)}`,
+    ),
     item(
       `${tokensAs(figures.tokens.input)} tokens in, ${tokensAs(figures.tokens.output)} out, ` +
         `${tokensAs(figures.tokens.cacheRead)} read from cache`,
@@ -535,9 +559,17 @@ const rulesWords = (rules: RulesAnswer): HTMLElement => {
 };
 
 /** The matches this block counts, each linked to its replay in the console's viewer. */
-const replayWords = (matches: readonly DetailMatchLink[]): Node => {
+const replayWords = (matches: readonly DetailMatchLink[], readFailed: boolean): Node => {
   if (matches.length === 0) {
-    return paragraph("model-detail-replays-none", "No replay of that series is linked from this detail.");
+    // The replays are listed by the same reading of the series that the rules'
+    // counters come out of, so an empty list under a failed read is that read's
+    // absence and not a series with no matches in it.
+    return paragraph(
+      "model-detail-replays-none",
+      readFailed
+        ? "Its replays come out of that same failed read, so none of them is linked here."
+        : "No replay of that series is linked from this detail.",
+    );
   }
   const items = matches.map((each) => {
     const li = document.createElement("li");
@@ -570,10 +602,24 @@ const pairingOf = (name: string, series: readonly SeriesRow[]): string | null =>
   return row === undefined ? null : `${row.a} vs ${row.b}`;
 };
 
+/**
+ * Whether this block carries no figures at all — the shape the console answers a
+ * series whose *record* could not be read in, as opposed to one whose *evidence*
+ * could not be read, which answers with its figures standing.
+ */
+const noFigures = (block: DetailBlock): boolean => block.result === null && block.figures === null;
+
 /** One series: its name and pairing, its own figures, its rules, and what it links. */
 const blockWords = (block: DetailBlock, series: readonly SeriesRow[]): HTMLElement => {
   const el = document.createElement("li");
-  el.className = block.error === null ? "model-detail-block" : "model-detail-block model-detail-block-failed";
+  // What the block says about itself, and the edge it wears, come from what it
+  // carries rather than from the fact that some line came back. A series whose
+  // record could not be read has no figures to contradict the whole-series line; a
+  // series whose evidence could not be read has a win rate, a seat split and a clock
+  // under it, and the console answers that case with the block's line and the rules'
+  // line set to the same words.
+  const unreadable = noFigures(block);
+  el.className = unreadable ? "model-detail-block model-detail-block-failed" : "model-detail-block";
 
   const pairing = pairingOf(block.name, series);
   const heading = document.createElement("h4");
@@ -581,12 +627,7 @@ const blockWords = (block: DetailBlock, series: readonly SeriesRow[]): HTMLEleme
   heading.textContent = pairing === null ? block.name : `${block.name} — ${pairing}`;
   el.append(heading);
 
-  // A block that failed is drawn the same way as one that did not, with the
-  // line it failed on under its name: the console answers a series whose *record*
-  // could not be read with no figures at all, and a series whose *evidence*
-  // could not be read with figures that stand and rules that do not. Which of the
-  // two it was is the line's business, and the block draws whatever it was given.
-  if (block.error !== null) {
+  if (block.error !== null && unreadable) {
     el.append(paragraph("model-detail-error", `This console could not read that series: ${block.error}`));
   }
 
@@ -602,14 +643,16 @@ const blockWords = (block: DetailBlock, series: readonly SeriesRow[]): HTMLEleme
     el.append(list("model-detail-seat-split", [seatWords("A", block.seatSplit.A), seatWords("B", block.seatSplit.B)]));
   }
   if (block.figures !== null) el.append(figureWords(block.figures));
-  // The rules' counters failed on the same read that the replay links came from, so
-  // a block that has already said that line under its name does not say it again
-  // where the five counters would have been: the same line twice in one block says
-  // no more than it does once.
-  if (!("error" in block.rules && block.rules.error === block.error)) {
+  // The five counters come out of the evidence read, so a block whose evidence read
+  // failed says which read failed here, where they would have been. Only a block that
+  // has already said the same line under its name — one with no figures at all —
+  // stays silent, where the same line twice in one block says no more than once.
+  const rulesError = "error" in block.rules ? block.rules.error : null;
+  const readFailed = rulesError !== null;
+  if (!(readFailed && unreadable && rulesError === block.error)) {
     el.append(rulesWords(block.rules));
   }
-  el.append(replayWords(block.matches));
+  el.append(replayWords(block.matches, readFailed));
   el.append(reportWords(block.links));
   return el;
 };
@@ -717,6 +760,11 @@ const openPanel = (ask: ModelDetailAsk): Panel => {
 
   const onEscape = (event: KeyboardEvent): void => {
     if (event.key !== "Escape") return;
+    // The panel belongs to the Leaderboard view and is hidden with it. A reader who
+    // is in another view cannot see it, so Escape there is that view's own Escape and
+    // not this panel's: closing it there would take something away the reader did not
+    // ask to take away, and put focus on a control they cannot see.
+    if (ask.host.hidden) return;
     panel.close(true);
   };
 

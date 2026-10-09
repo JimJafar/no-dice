@@ -187,7 +187,7 @@ const section = (): HTMLElement => {
 const drawn = (
   board: Leaderboard,
   matches: readonly MatchRow[] = [MATCH, BETA_MATCH, ALONE],
-  openModelDetail?: (label: string) => void,
+  openModelDetail?: (label: string, from: HTMLButtonElement) => void,
 ) => {
   const el = section();
   renderLeaderboard(el, { board, matches, openModelDetail });
@@ -422,7 +422,11 @@ describe("renderLeaderboard", () => {
 
   it("gives each model row one control that opens that model's detail, by click and by keyboard", () => {
     const opened: string[] = [];
-    const { el } = drawn(BOARD, [MATCH, BETA_MATCH, ALONE], (label) => void opened.push(label));
+    const openers: HTMLButtonElement[] = [];
+    const { el } = drawn(BOARD, [MATCH, BETA_MATCH, ALONE], (label, from) => {
+      opened.push(label);
+      openers.push(from);
+    });
 
     const buttons = [...el.querySelectorAll<HTMLButtonElement>("button.model-detail")];
     // One control per row, in the row's own model cell, and no second way in.
@@ -448,6 +452,10 @@ describe("renderLeaderboard", () => {
     buttons[0]!.click();
     buttons[1]!.click();
     expect(opened).toEqual(["bot:greedy", "bot:random"]);
+    // The control hands itself to the callback, which is how the panel it opens can
+    // give focus back to the row it came from rather than to wherever the page's
+    // focus happens to be.
+    expect(openers).toEqual([buttons[0], buttons[1]]);
   });
 
   it("draws no way in when the page has no detail to open", () => {
