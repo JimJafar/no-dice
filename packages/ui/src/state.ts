@@ -57,10 +57,18 @@ export const botOptions = (): string[] => BOTS.map((bot) => `bot:${bot}`);
 export const providerOptions = (registry: ProviderRegistry): ProviderOption[] =>
   Object.entries(registry).map(([name, entry]) => ({ name, apiKeyEnv: entry.apiKeyEnv }));
 
-/** The two roots, as the server resolved them. */
+/** The roots the console reads, as the server resolved them. */
 export interface UiRoots {
   readonly seriesRoot: string;
   readonly matchesRoot: string;
+  /**
+   * Where the kept copies of a finished series' report and rules evidence are
+   * (`docs/series-notes.md` §7). The `/reports/` route reads it and nothing else
+   * does — in particular `UiState` below does not answer it, because a kept
+   * copy's URL follows from the series' own directory name and the route that is
+   * asked can say whether the file is there.
+   */
+  readonly reportsRoot: string;
 }
 
 /**

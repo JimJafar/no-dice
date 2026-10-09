@@ -14,7 +14,11 @@ import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { botOptions, providerOptions, uiState } from "./state.ts";
 
-const ROOTS = { seriesRoot: "/repo/series", matchesRoot: "/repo/matches" };
+const ROOTS = {
+  seriesRoot: "/repo/series",
+  matchesRoot: "/repo/matches",
+  reportsRoot: "/repo/reports/series",
+};
 
 /**
  * A registry with an endpoint, a key variable and rates in it — the fields the
@@ -60,6 +64,11 @@ describe("uiState", () => {
       matchesRoot: "/repo/matches",
       running: null,
     });
+    // The third root is not in the answer. A kept copy's URL follows from the
+    // series' own directory name, and the `/reports/` route can say whether the
+    // file is there; a page told the root would be a page guessing about a
+    // directory it has not asked about.
+    expect(JSON.stringify(uiState(ROOTS, REGISTRY))).not.toContain("reports");
   });
 
   it("sends no endpoint, no window, no rate and no key value in the bytes it answers with", () => {

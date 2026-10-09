@@ -87,6 +87,11 @@ describe("contentTypeOf", () => {
     // A series' `report.md`, which the console serves under `/logs/` and the
     // leaderboard links to: text a browser shows rather than bytes it downloads.
     expect(contentTypeOf("/g-vs-r/report.md")).toBe("text/plain; charset=utf-8");
+    // The kept copies `docs/series-notes.md` §7 puts under `/reports/` are the
+    // same kind of file, and arrive the same way — the report, and the rules
+    // evidence beside it.
+    expect(contentTypeOf("/g-vs-r.md")).toBe("text/plain; charset=utf-8");
+    expect(contentTypeOf("/g-vs-r-evidence.md")).toBe("text/plain; charset=utf-8");
   });
 
   it("types anything else as bytes, which a browser will not run as a script", () => {

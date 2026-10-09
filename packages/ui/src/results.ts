@@ -78,6 +78,18 @@
  * the same refuses-to-escape rule the built app is served under — percent-decoded
  * climbs, dot segments and a symlink planted inside the root are each refused
  * before a byte is read.
+ *
+ * **The kept copies are a third root, and their own URL space.** `report.md` and
+ * `evidence.md` inside a series directory are gitignored with it, so what survives
+ * the workspace is the pair `docs/series-notes.md` §7 copies by hand into
+ * `reports/series/<name>.md` and `reports/series/<name>-evidence.md`. Those are
+ * served at `/reports/<name>.md` and `/reports/<name>-evidence.md`, under the same
+ * `resolveStatic` refusal as `/logs/`, and nothing else: neither listing looks in
+ * that root, because a kept copy's URL follows from the series' own directory name
+ * and the route that is asked can say whether the file is there. A listing that
+ * guessed would be a listing that lies about a directory it never read — and a
+ * series whose copy was never made, which §7 says has happened, is answered with
+ * one line rather than a link that goes nowhere.
  */
 import { readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -97,6 +109,15 @@ import type { UiRoots } from "./state.ts";
 
 /** The prefix every log on this console is served under. */
 export const LOG_PREFIX = "/logs";
+
+/**
+ * The prefix the kept copies are served under: `<name>.md` the report,
+ * `<name>-evidence.md` the rules evidence, each named after the series' own
+ * directory. A third prefix rather than another path under `/logs/`, because
+ * these files are not under either of the two roots `/logs/` reads — that is the
+ * whole point of keeping them.
+ */
+export const REPORTS_PREFIX = "/reports";
 
 /** The prefix the built replay viewer is served under. */
 export const VIEWER_PREFIX = "/viewer";
@@ -603,6 +624,22 @@ export const matchRows = async (roots: UiRoots): Promise<MatchListing> => {
  */
 export const logPathOf = (roots: UiRoots, urlPath: string): string | null =>
   resolveStatic(roots.seriesRoot, urlPath) ?? resolveStatic(roots.matchesRoot, urlPath);
+
+/**
+ * The kept copy a `/reports/<path>` request names, or `null` when it names
+ * nothing servable. `urlPath` is the part after `/reports/`, still percent-encoded
+ * as the request wrote it; `resolveStatic` decodes it and refuses anything that
+ * leaves the reports root, symlink included — the one rule, applied to a third
+ * root rather than a second copy of it.
+ *
+ * A kept copy that is not there is `null` like a climb is `null`, and the route
+ * answers both with one line. They are different facts — a series interrupted
+ * before it wrote a report, and a finished series whose copy nobody made — but the
+ * page cannot tell them apart from a listing either, and §7's answer to the
+ * second is a step at the terminal, not a route.
+ */
+export const reportPathOf = (roots: UiRoots, urlPath: string): string | null =>
+  resolveStatic(roots.reportsRoot, urlPath);
 
 /** How a series record names one seat of its pairing. */
 const seatRefSchema = z.union([

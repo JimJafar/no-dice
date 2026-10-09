@@ -47,8 +47,11 @@
  * pairing would cost off the series that have already played those seats
  * (`./estimate.ts`),
  * `/logs/<path>` serves the JSON a listing names and the `report.md` a finished
- * series wrote beside its record, and `/viewer/` serves the built replay viewer,
- * which is what opens one of those logs at
+ * series wrote beside its record, `/reports/<name>.md` serves the kept copy of that
+ * report and of the series' rules evidence — the two files `docs/series-notes.md`
+ * §7 copies out of the gitignored series directory so that they outlive the
+ * workspace that played the series — and `/viewer/` serves the built replay
+ * viewer, which is what opens one of those logs at
  * `/viewer/?log=/logs/<series>/matches/<file>.json`. The viewer is a separate
  * app the console does not own, built by its own `vite build`, so the console
  * serves it and says what to build when nobody has. Everything else is the
@@ -87,13 +90,20 @@ import { listPiModels } from "@no-dice/harness";
 import { PROVIDERS_FILE, providerRegistry, reloadProviders } from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 
-import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
+import {
+  DEFAULT_MATCHES_ROOT,
+  DEFAULT_PORT,
+  DEFAULT_REPORTS_ROOT,
+  DEFAULT_SERIES_ROOT,
+  USAGE,
+  parseUiFlags,
+} from "./args.ts";
 import { ESTIMATE_PATH, estimateQueryOf, estimateRows } from "./estimate.ts";
 import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
 import { MATCH_FACTS_PATH, matchFactsRows } from "./match-facts.ts";
 import { MODELS_PATH, modelList } from "./models.ts";
 import type { PiModelSource } from "./models.ts";
-import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, playingRows, seriesRows } from "./results.ts";
+import { LOG_PREFIX, REPORTS_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, playingRows, reportPathOf, seriesRows } from "./results.ts";
 import { createRunSlot } from "./runs.ts";
 import type { RunKind, RunSlot } from "./runs.ts";
 import {
@@ -140,6 +150,13 @@ export interface UiConfig {
   port: number;
   seriesRoot: string;
   matchesRoot: string;
+  /**
+   * Where the kept report and rules evidence of a finished series are, served at
+   * `/reports/`. A third root rather than a third look at the first two: the
+   * copies live outside `series/` so that deleting a workspace does not delete
+   * them (`docs/series-notes.md` §7).
+   */
+  reportsRoot: string;
   webRoot: string;
   /** Where the built replay viewer is, served under `/viewer/`. */
   viewerRoot: string;
@@ -168,6 +185,8 @@ export interface UiOptions {
   seriesRoot?: string;
   /** Where finished match logs are, the same way. */
   matchesRoot?: string;
+  /** Where the kept copies are, the same way — `reports/series` by default. */
+  reportsRoot?: string;
   /** Where the built app is. A test points it at a fixture, or at nothing. */
   webRoot?: string;
   /** Where the built viewer is, the same way. */
@@ -236,6 +255,7 @@ const configOf = (options: UiOptions): UiConfig => {
     port: options.port ?? DEFAULT_PORT,
     seriesRoot: resolve(cwd, options.seriesRoot ?? DEFAULT_SERIES_ROOT),
     matchesRoot: resolve(cwd, options.matchesRoot ?? DEFAULT_MATCHES_ROOT),
+    reportsRoot: resolve(cwd, options.reportsRoot ?? DEFAULT_REPORTS_ROOT),
     webRoot: resolve(cwd, options.webRoot ?? WEB_ROOT),
     viewerRoot: resolve(cwd, options.viewerRoot ?? VIEWER_ROOT),
     providersFile: resolve(cwd, options.providersFile ?? PROVIDERS_FILE),
@@ -732,6 +752,23 @@ const route = async (
     return;
   }
 
+  // The kept copies: `<name>.md` the report and `<name>-evidence.md` the
+  // rules evidence, each copied by hand out of the gitignored series directory
+  // (`docs/series-notes.md` §7) and so the only account of a finished series that
+  // outlives the workspace that played it. The same `resolveStatic` refusal as
+  // `/logs/`, and the same one line for a file that is not there — a series
+  // interrupted before it wrote its report and a finished series whose copy
+  // nobody made are both answered here, and `.md` is in `contentTypeOf`, so what
+  // arrives is text the browser shows rather than a download.
+  if (path.startsWith(`${REPORTS_PREFIX}/`)) {
+    const file = reportPathOf(config, path.slice(REPORTS_PREFIX.length + 1));
+    if (file === null || !sendFile(file, method === "HEAD", response)) {
+      sendJson(response, 404, { error: `no kept report at ${path}` });
+      return;
+    }
+    return;
+  }
+
   // The built replay viewer. `/viewer` without the trailing slash is redirected
   // rather than served: the built `index.html` resolves its assets relative to
   // the page (`base: "./"` in the viewer's `vite.config.ts`), so a page served
@@ -889,6 +926,9 @@ if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
       console.log(`no-dice-ui on http://${HOST}:${String(portOf(server))}`);
       console.log(`series root: ${config.seriesRoot}`);
       console.log(`matches root: ${config.matchesRoot}`);
+      // Said because it is where the report a reader reaches from the leaderboard
+      // lives, and the one copy of it that a deleted workspace does not take.
+      console.log(`reports root: ${config.reportsRoot}`);
       // Said because it is the file the console's provider writes go to, and the
       // one every run this process starts seats on — worth knowing when the
       // operator is about to add a provider from the page.

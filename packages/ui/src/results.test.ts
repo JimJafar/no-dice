@@ -1,7 +1,8 @@
 /**
  * What the console lists from disk, and what it serves of it: the series under
  * its series root, the finished match logs under both roots, the logs
- * themselves, the built viewer, and the resume of a series that stopped short.
+ * themselves, the kept report and rules evidence under the third root, the
+ * built viewer, and the resume of a series that stopped short.
  *
  * The figures are checked against the CLI's own output rather than
  * against a second calculation. Each series test takes the row the console
@@ -39,7 +40,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { renderSeriesReport } from "@no-dice/stats/series-report";
 import { processAlive } from "@no-dice/runner/series-lock";
 
-import { logPathOf, logUrlOf, resumeRecordOf, viewerUrlOf } from "./results.ts";
+import { logPathOf, logUrlOf, reportPathOf, resumeRecordOf, viewerUrlOf } from "./results.ts";
 import type { MatchListing, PlayingListing, SeriesListing, SeriesRow } from "./results.ts";
 import { HOST, startServer } from "./server.ts";
 import type { UiOptions } from "./server.ts";
@@ -110,8 +111,13 @@ const get = (port: number, path: string): Promise<Answer> => send(port, path, "G
 const post = (port: number, path: string, body: unknown): Promise<Answer> =>
   send(port, path, "POST", body);
 
-/** A console's two roots, and the directory it runs in — none of them the cwd. */
-function rootsAt(): { cwd: string; seriesRoot: string; matchesRoot: string } {
+/** A console's three roots, and the directory it runs in — none of them the cwd. */
+function rootsAt(): {
+  cwd: string;
+  seriesRoot: string;
+  matchesRoot: string;
+  reportsRoot: string;
+} {
   const home = tempDir("nd-ui-results-");
   const cwd = join(home, "repo");
   mkdirSync(cwd, { recursive: true });
@@ -119,6 +125,7 @@ function rootsAt(): { cwd: string; seriesRoot: string; matchesRoot: string } {
     cwd,
     seriesRoot: join(home, "elsewhere", "series"),
     matchesRoot: join(home, "elsewhere", "matches"),
+    reportsRoot: join(home, "elsewhere", "reports", "series"),
   };
 }
 
@@ -866,7 +873,11 @@ describe("GET /logs/<path>", () => {
 
   it("looks in the series root first, and in nothing else", () => {
     const home = tempDir("nd-ui-roots-");
-    const roots = { seriesRoot: join(home, "series"), matchesRoot: join(home, "matches") };
+    const roots = {
+      seriesRoot: join(home, "series"),
+      matchesRoot: join(home, "matches"),
+      reportsRoot: join(home, "reports", "series"),
+    };
     mkdirSync(join(roots.seriesRoot, "one", "matches"), { recursive: true });
     mkdirSync(roots.matchesRoot, { recursive: true });
     writeFileSync(join(roots.seriesRoot, "one", "matches", "2-a-b.json"), "{}", "utf8");
@@ -893,6 +904,140 @@ describe("GET /logs/<path>", () => {
   it("writes the URL of a path under a root, with the segments escaped", () => {
     expect(logUrlOf("one/matches/2-a-b.json")).toBe("/logs/one/matches/2-a-b.json");
     expect(logUrlOf("a series/matches/1-x-y.json")).toBe("/logs/a%20series/matches/1-x-y.json");
+  });
+});
+
+describe("GET /reports/<name>.md", () => {
+  /** A kept copy of each kind under the reports root: the report, and the evidence. */
+  const keptCopies = (at: ReturnType<typeof rootsAt>): void => {
+    mkdirSync(at.reportsRoot, { recursive: true });
+    writeFileSync(join(at.reportsRoot, "one.md"), "# Series report: one\n", "utf8");
+    writeFileSync(join(at.reportsRoot, "one-evidence.md"), "# Rules evidence: one\n", "utf8");
+  };
+
+  it("serves the kept report and the kept evidence as text a browser shows", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    keptCopies(at);
+
+    // The two names §7 copies them under, each after the series' own
+    // directory: `<name>.md` and `<name>-evidence.md`.
+    for (const [path, marker] of [
+      ["/reports/one.md", "Series report"],
+      ["/reports/one-evidence.md", "Rules evidence"],
+    ] as const) {
+      const answer = await get(port, path);
+      expect(answer.status, path).toBe(200);
+      expect(answer.headers["content-type"], path).toBe("text/plain; charset=utf-8");
+      expect(answer.body, path).toContain(marker);
+    }
+  }, 120_000);
+
+  it("reads the reports root from the console's own directory when the flag does not name one", async () => {
+    const at = rootsAt();
+    // No `reportsRoot`: the default is `reports/series` under the console's
+    // working directory, which is the repo root for anyone who starts the console
+    // the way the README says to — where the kept copies are.
+    const port = await listen({
+      port: 0,
+      cwd: at.cwd,
+      seriesRoot: at.seriesRoot,
+      matchesRoot: at.matchesRoot,
+    });
+    const kept = join(at.cwd, "reports", "series");
+    mkdirSync(kept, { recursive: true });
+    writeFileSync(join(kept, "one.md"), "# Series report: one\n", "utf8");
+
+    const answer = await get(port, "/reports/one.md");
+    expect(answer.status).toBe(200);
+    expect(answer.body).toContain("Series report");
+  }, 120_000);
+
+  it("answers a kept copy that is not there with one line, not a stack", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    // The root exists and holds one series' copies. The other has none, and the
+    // route cannot tell why: the series may have been interrupted before it wrote
+    // a report, or it finished and nobody made the copy, which is the failure §7
+    // records. Either way the answer is one line the page can show, and the
+    // console is still there for the next request.
+    keptCopies(at);
+
+    const answer = await get(port, "/reports/two.md");
+    expect(answer.status).toBe(404);
+    expect(answer.headers["content-type"]).toBe("application/json; charset=utf-8");
+    expect(Object.keys(JSON.parse(answer.body) as Record<string, unknown>)).toEqual(["error"]);
+    expect(JSON.parse(answer.body).error).toBe("no kept report at /reports/two.md");
+  }, 120_000);
+
+  it("refuses a path that climbs out of the reports root, in every form", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    keptCopies(at);
+    // The file it asks for is really there, one directory up, and says what it
+    // is: the rule under test is the containment, not a file that happens to be
+    // missing.
+    writeFileSync(join(at.reportsRoot, "..", "package.json"), '{"name":"not for the reader"}\n', "utf8");
+
+    for (const path of [
+      "/reports/%2e%2e/package.json",
+      "/reports/%2e%2e%2fpackage.json",
+      "/reports/..%2fpackage.json",
+      "/reports/one/%2e%2e%2f%2e%2e%2fpackage.json",
+    ]) {
+      const answer = await send(port, path, "GET");
+      expect(answer.status, path).toBe(404);
+      expect(answer.body, path).not.toContain("not for the reader");
+    }
+  }, 120_000);
+
+  it("refuses a symlink planted inside the reports root that leads out of it", async () => {
+    const at = consoleAt();
+    const port = await at.port;
+    keptCopies(at);
+
+    const outside = tempDir("nd-ui-outside-");
+    writeFileSync(join(outside, "elsewhere.md"), "not for the reader\n", "utf8");
+    symlinkSync(join(outside, "elsewhere.md"), join(at.reportsRoot, "two.md"));
+
+    const answer = await get(port, "/reports/two.md");
+    expect(answer.status).toBe(404);
+    expect(answer.body).not.toContain("not for the reader");
+  }, 120_000);
+
+  it("names the kept copy under the reports root, and nothing under any other", () => {
+    const home = tempDir("nd-ui-reports-");
+    const roots = {
+      seriesRoot: join(home, "series"),
+      matchesRoot: join(home, "matches"),
+      reportsRoot: join(home, "reports", "series"),
+    };
+    mkdirSync(roots.reportsRoot, { recursive: true });
+    writeFileSync(join(roots.reportsRoot, "one.md"), "# one\n", "utf8");
+    writeFileSync(join(roots.reportsRoot, "one-evidence.md"), "# one\n", "utf8");
+    writeFileSync(join(home, "reports", "outside.md"), "# outside\n", "utf8");
+    // The runner's own copy, inside the series directory: served at
+    // `/logs/one/report.md`, and not reachable through this route. The two are
+    // different files in different roots, and only one of them outlives the
+    // workspace — which is the whole reason there is a third root.
+    mkdirSync(join(roots.seriesRoot, "one"), { recursive: true });
+    writeFileSync(join(roots.seriesRoot, "one", "report.md"), "# one\n", "utf8");
+
+    expect(reportPathOf(roots, "one.md")).toBe(join(roots.reportsRoot, "one.md"));
+    expect(reportPathOf(roots, "/one-evidence.md")).toBe(join(roots.reportsRoot, "one-evidence.md"));
+
+    expect(reportPathOf(roots, "../outside.md")).toBeNull();
+    expect(reportPathOf(roots, "%2e%2e/outside.md")).toBeNull();
+    expect(reportPathOf(roots, "one/report.md")).toBeNull();
+    expect(reportPathOf(roots, "one")).toBeNull();
+    expect(reportPathOf(roots, "")).toBeNull();
+
+    // A reports root nobody has made — a repo with no kept copies at all — names
+    // no file either, and the route answers it with the same line as a copy that
+    // was never made.
+    expect(
+      reportPathOf({ ...roots, reportsRoot: join(home, "nothing", "series") }, "one.md"),
+    ).toBeNull();
   });
 });
 
