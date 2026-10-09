@@ -17,6 +17,13 @@
  *   given, is listed by the next `GET`, and is offered by `/api/state` without a
  *   restart — which is what `reloadProviders` at startup and
  *   after a write is for;
+ * - the two writes beside the add — `POST /api/providers/update` and `POST
+ *   /api/providers/remove` — carry the same guards and the same answers: the
+ *   `Origin` guard and the body cap, the 409 under a run in flight in the add
+ *   route's own sentence, the 500 for a console with no file of its own, and the
+ *   runner's line for a name the registry does not hold, with the file
+ *   unchanged. An update never moves an entry to another name, and a remove of
+ *   the last entry leaves a `{}` the loader reads;
  * - the check answers what `checkPiAuth` answers, which is testable because
  *   `pi auth check` reads configuration only: a keyless entry is ready, an entry
  *   whose variable is not exported is not, a model no entry names is asked about
@@ -38,7 +45,15 @@ import type { ProviderRegistry } from "@no-dice/runner/providers";
 
 import { HOST, startServer } from "./server.ts";
 import type { UiOptions } from "./server.ts";
-import { addProviderEntry, checkCredential, providerRows } from "./providers.ts";
+import {
+  PROVIDER_REMOVE_PATH,
+  PROVIDER_UPDATE_PATH,
+  addProviderEntry,
+  checkCredential,
+  providerRows,
+  removeProviderEntry,
+  updateProviderEntry,
+} from "./providers.ts";
 import type { ProviderRow } from "./providers.ts";
 import type { UiState } from "./state.ts";
 
@@ -487,6 +502,278 @@ describe("adding a provider through the console", () => {
     const refused = addProviderEntry({ name: "acme", entry: ACME }, file);
     expect(refused.ok).toBe(false);
     expect(refused.ok ? "" : refused.error).toContain("already names");
+  });
+});
+
+describe("changing and deleting a provider through the console", () => {
+  /** The entry the page would edit a row into: a real shape, no real key. */
+  const EDITED = {
+    baseUrl: "https://edited.example.com/v1",
+    api: "anthropic-messages",
+    apiKeyEnv: "ND_EDITED_API_KEY",
+    reasoning: false,
+    contextWindow: 32_768,
+    maxTokens: 2048,
+    cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1 },
+  };
+
+  it("replaces the entry a name holds, in the file, in the next list and in the next seat", async () => {
+    const file = registryFile();
+    const port = await consoleOn(file);
+
+    const posted = await post(port, PROVIDER_UPDATE_PATH, { name: KEYED, entry: EDITED });
+    expect(posted.status).toBe(200);
+    // The rows as the file now stands, in the registry's own order: an edit
+    // changes what one name says and moves nothing.
+    expect(rowsOf(posted).map((row) => row.name)).toEqual([KEYLESS, KEYED]);
+    expect(rowsOf(posted).find((row) => row.name === KEYED)).toEqual({ name: KEYED, ...EDITED });
+
+    const onDisk = JSON.parse(readFileSync(file, "utf8")) as ProviderRegistry;
+    expect(onDisk[KEYED]).toMatchObject({
+      baseUrl: "https://edited.example.com/v1",
+      apiKeyEnv: "ND_EDITED_API_KEY",
+      contextWindow: 32_768,
+    });
+    // The name is the identity, not a field: an update cannot move an entry to
+    // another one, because a seat is written as `<provider>/<id>`.
+    expect(Object.hasOwn(onDisk, "edited")).toBe(false);
+
+    // The next read of the same console, and the seat picker it feeds.
+    expect(rowsOf(await get(port, "/api/providers")).find((row) => row.name === KEYED)?.baseUrl).toBe(
+      "https://edited.example.com/v1",
+    );
+    const state = JSON.parse((await get(port, "/api/state")).body) as UiState;
+    expect(state.providers.find((each) => each.name === KEYED)?.apiKeyEnv).toBe("ND_EDITED_API_KEY");
+    // And the registry this process seats a run from, which is the point of the
+    // reload: the edited window and endpoint, not the ones the file used to hold.
+    expect(JSON.stringify(seatModelsJson(`${KEYED}/m1`))).toContain(
+      "https://edited.example.com/v1",
+    );
+  });
+
+  it("refuses to edit a name the registry does not hold, and writes nothing", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    const port = await consoleOn(file);
+
+    const posted = await post(port, PROVIDER_UPDATE_PATH, { name: "nope", entry: EDITED });
+    expect(posted.status).toBe(400);
+    // The runner's own line, so the page draws it as it came rather than
+    // inventing one: an update that quietly *added* is a typo dressed as an edit.
+    expect(JSON.parse(posted.body).error).toContain('does not name "nope"');
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("refuses an edited entry the schema refuses, and leaves the file byte-identical", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    const port = await consoleOn(file);
+
+    const posted = await post(port, PROVIDER_UPDATE_PATH, {
+      name: KEYLESS,
+      entry: { ...EDITED, apiKey: "sk-not-a-secret", baseUrl: "not a url" },
+    });
+    expect(posted.status).toBe(400);
+    const error = JSON.parse(posted.body).error as string;
+    expect(error).toContain("apiKey");
+    expect(error).toContain("baseUrl");
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(rowsOf(await get(port, "/api/providers")).map((row) => row.name)).toEqual([
+      KEYLESS,
+      KEYED,
+    ]);
+  });
+
+  it("refuses a write with no entry, or no name, in one line the page can show", async () => {
+    const port = await consoleOn(registryFile());
+
+    const noEntry = await post(port, PROVIDER_UPDATE_PATH, { name: KEYLESS });
+    expect(noEntry.status).toBe(400);
+    expect(JSON.parse(noEntry.body).error).toContain("needs an entry to update");
+
+    const noName = await post(port, PROVIDER_REMOVE_PATH, { entry: EDITED });
+    expect(noName.status).toBe(400);
+    expect(JSON.parse(noName.body).error).toContain("needs the provider's name");
+  });
+
+  it("deletes the entry, and the next list, the seat picker and the next seat lose it", async () => {
+    const file = registryFile();
+    const port = await consoleOn(file);
+
+    const posted = await post(port, PROVIDER_REMOVE_PATH, { name: KEYLESS });
+    expect(posted.status).toBe(200);
+    expect(rowsOf(posted).map((row) => row.name)).toEqual([KEYED]);
+    expect(readFileSync(file, "utf8")).not.toContain(KEYLESS);
+
+    expect(rowsOf(await get(port, "/api/providers")).map((row) => row.name)).toEqual([KEYED]);
+    const state = JSON.parse((await get(port, "/api/state")).body) as UiState;
+    expect(state.providers.map((each) => each.name)).toEqual([KEYED]);
+    // The registry this process seats from lost it too, so a run started now
+    // leaves that provider to Pi's own lookup instead of writing a
+    // `models.json` for an entry the file no longer holds.
+    expect(seatModelsJson(`${KEYLESS}/m1`)).toBeNull();
+  });
+
+  it("refuses to remove a name the registry does not hold, and writes nothing", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    const port = await consoleOn(file);
+
+    const posted = await post(port, PROVIDER_REMOVE_PATH, { name: "nope" });
+    expect(posted.status).toBe(400);
+    // A remove that matches nothing has usually mis-typed a name that does exist.
+    expect(JSON.parse(posted.body).error).toContain('does not name "nope"');
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(rowsOf(await get(port, "/api/providers")).map((row) => row.name)).toEqual([
+      KEYLESS,
+      KEYED,
+    ]);
+  });
+
+  it("empties the registry when the last entry goes, which is a file the loader reads", async () => {
+    const file = registryFile();
+    const port = await consoleOn(file);
+
+    expect((await post(port, PROVIDER_REMOVE_PATH, { name: KEYLESS })).status).toBe(200);
+    const last = await post(port, PROVIDER_REMOVE_PATH, { name: KEYED });
+    expect(last.status).toBe(200);
+    expect(rowsOf(last)).toEqual([]);
+    expect(readFileSync(file, "utf8")).toBe("{}\n");
+    expect(rowsOf(await get(port, "/api/providers"))).toEqual([]);
+  });
+
+  it("refuses both writes under a run in flight, in the add route's own sentence", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    // The two roots go elsewhere, as every run-starting test sends them.
+    const home = tempDir("nd-ui-busy-rows-");
+    const cwd = join(home, "repo");
+    mkdirSync(cwd, { recursive: true });
+    const port = await listen({
+      port: 0,
+      providersFile: file,
+      cwd,
+      seriesRoot: join(home, "elsewhere", "series"),
+      matchesRoot: join(home, "elsewhere", "matches"),
+    });
+
+    expect((await post(port, "/api/run/match", MATCH)).status).toBe(202);
+
+    for (const answer of [
+      await post(port, PROVIDER_UPDATE_PATH, { name: KEYLESS, entry: EDITED }),
+      await post(port, PROVIDER_REMOVE_PATH, { name: KEYLESS }),
+    ]) {
+      expect(answer.status).toBe(409);
+      // The same sentence the add route gives, because it is the same reason: a
+      // series seats each match as it starts, from this file.
+      expect(JSON.parse(answer.body).error).toContain("a run is in flight");
+    }
+    expect(readFileSync(file, "utf8")).toBe(before);
+
+    // What was refused was the run in flight, not the route.
+    await untilStopped(port);
+    expect((await post(port, PROVIDER_UPDATE_PATH, { name: KEYLESS, entry: EDITED })).status).toBe(
+      200,
+    );
+    expect((await post(port, PROVIDER_REMOVE_PATH, { name: KEYLESS })).status).toBe(200);
+    expect(readFileSync(file, "utf8")).not.toContain(KEYLESS);
+  }, 60_000);
+
+  it("refuses both writes from another page, and leaves the registry alone", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    const port = await consoleOn(file);
+
+    for (const answer of [
+      await post(
+        port,
+        PROVIDER_UPDATE_PATH,
+        { name: KEYLESS, entry: EDITED },
+        { origin: "http://evil.example" },
+      ),
+      await post(port, PROVIDER_REMOVE_PATH, { name: KEYLESS }, { origin: "http://evil.example" }),
+    ]) {
+      expect(answer.status).toBe(403);
+      expect(JSON.parse(answer.body).error).toContain("http://evil.example");
+    }
+    expect(readFileSync(file, "utf8")).toBe(before);
+
+    // The console's own page, and a terminal with no `Origin` at all, can still
+    // write.
+    const ownPage = await post(
+      port,
+      PROVIDER_REMOVE_PATH,
+      { name: KEYLESS },
+      { origin: `http://127.0.0.1:${String(port)}` },
+    );
+    expect(ownPage.status).toBe(200);
+  });
+
+  it("writes nothing for either when it was handed a registry to read and no file for it", async () => {
+    const committed = readFileSync(PROVIDERS_FILE, "utf8");
+    const port = await listen({ port: 0, registry: () => loadProviders(registryFile()) });
+
+    const edited = await post(port, PROVIDER_UPDATE_PATH, { name: KEYLESS, entry: EDITED });
+    const removed = await post(port, PROVIDER_REMOVE_PATH, { name: KEYLESS });
+    for (const answer of [edited, removed]) {
+      expect(answer.status).toBe(500);
+      expect(JSON.parse(answer.body).error).toContain("no file to write");
+    }
+    expect(readFileSync(PROVIDERS_FILE, "utf8")).toBe(committed);
+    expect(rowsOf(await get(port, "/api/providers")).map((row) => row.name)).toEqual([
+      KEYLESS,
+      KEYED,
+    ]);
+  });
+
+  it("refuses a body too big to be a form on either route, under the same cap", async () => {
+    const file = registryFile();
+    const before = readFileSync(file, "utf8");
+    const port = await consoleOn(file);
+
+    const edited = await post(port, PROVIDER_UPDATE_PATH, {
+      name: KEYLESS,
+      entry: { ...EDITED, api: "x".repeat(20_000) },
+    });
+    const removed = await post(port, PROVIDER_REMOVE_PATH, { name: "x".repeat(20_000) });
+    for (const answer of [edited, removed]) {
+      expect(answer.status).toBe(400);
+      expect(JSON.parse(answer.body).error).toContain("fit in");
+    }
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("answers a GET on either write route with a 405 that says POST", async () => {
+    const port = await consoleOn(registryFile());
+
+    for (const route of [PROVIDER_UPDATE_PATH, PROVIDER_REMOVE_PATH]) {
+      const answer = await get(port, route);
+      expect(answer.status).toBe(405);
+      expect(answer.headers["allow"]).toBe("POST");
+    }
+  });
+
+  it("updates and removes the file the route writes, and refuses what the runner refuses", () => {
+    const file = registryFile();
+
+    const updated = updateProviderEntry({ name: KEYLESS, entry: EDITED }, file);
+    expect(updated.ok).toBe(true);
+    expect(readFileSync(file, "utf8")).toContain("ND_EDITED_API_KEY");
+
+    // An update is not a way to add: the runner's line comes back, and no byte
+    // moves.
+    const addedByUpdate = updateProviderEntry({ name: "acme", entry: EDITED }, file);
+    expect(addedByUpdate.ok).toBe(false);
+    expect(addedByUpdate.ok ? "" : addedByUpdate.error).toContain('does not name "acme"');
+
+    const removed = removeProviderEntry({ name: KEYLESS }, file);
+    expect(removed.ok).toBe(true);
+    expect(removed.ok ? providerRows(removed.registry).map((row) => row.name) : []).toEqual([
+      KEYED,
+    ]);
+    const again = removeProviderEntry({ name: KEYLESS }, file);
+    expect(again.ok).toBe(false);
+    expect(again.ok ? "" : again.error).toContain("no entry to remove");
   });
 });
 

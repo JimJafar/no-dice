@@ -98,7 +98,11 @@ The management console (`packages/ui`) reads that file too, and is how an
 operator adds an entry from the page instead of by hand: `GET /api/providers`
 lists every entry with its endpoint and its key variable's *name* (never a
 value), `POST /api/providers` adds one through the same schema the file is read
-back with, and
+back with, `POST /api/providers/update` replaces the entry one name holds and
+`POST /api/providers/remove` deletes one — an update never changes the name an
+entry is filed under, since that is the name a seat is written with, and a name
+the registry does not hold is refused with the runner's own line rather than
+quietly adding an entry or deleting nothing — and
 `POST /api/providers/check` asks Pi what it would say about seating a model
 before anyone tries — with that entry's `models.json` when this file names the
 provider, and with an empty config directory when it does not, which is what a
@@ -110,15 +114,19 @@ and no key variable among them. That list is a route of its own rather than a
 field of `/api/state` because it costs a subprocess of about 0.7 s: the views
 that need it ask for it once, and nothing polls it. The console writes the file its `--providers <file>` flag
 names, which defaults to this one, and re-reads it at startup and after every
-entry it adds — so the runs a console starts seat on the registry it writes, and
-an entry typed at the page is seatable by the next run without a restart. It
-refuses to write while a run of its own is in flight, because a series seats each
-match as that match starts: an entry added halfway through a series would seat
-its later matches on different windows and rates while its record said one game.
+entry it adds, changes or deletes — so the runs a console starts seat on the
+registry it writes, and an entry typed at the page is seatable by the next run
+without a restart. It refuses to write while a run of its own is in flight,
+because a series seats each match as that match starts: an entry added, changed
+or removed halfway through a series would seat its later matches on different
+windows and rates while its record said one game.
 
 The console is the `no-dice-ui` bin, and the Providers section of its page lists
 that same file — every entry with its endpoint, its api, the *name* of the
 variable its key is read from, whether it streams reasoning, its context
-window, its output cap and its four rates — and adds entries to it. No key
-value is ever in that file, or on that page: the form asks for a variable's
-name, and the page never learns what is in it.
+window, its output cap and its four rates — and adds entries to it. An entry is
+changed or deleted by `POST /api/providers/update` and `POST
+/api/providers/remove`, each of which takes a name and — for an update — an
+entry's field list and nothing else. No key value is ever in that file, or on
+that page: the form asks for a variable's name, and the page never learns what
+is in it.

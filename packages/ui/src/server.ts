@@ -18,7 +18,10 @@
  * registry holds in full — endpoint, api, the *name* of the key variable,
  * reasoning, the window, the token cap and the four rates — and a `POST` to it
  * adds an entry through the runner's own schema and re-reads the registry,
- * so the next run this process starts seats on it. `/api/providers/check` asks
+ * so the next run this process starts seats on it; `POST
+ * /api/providers/update` replaces the entry one name holds and `POST
+ * /api/providers/remove` deletes it, each under the same guards and each
+ * answering the rows as the file now stands. `/api/providers/check` asks
  * Pi what it would say about seating a model, which is the same question the
  * CLI asks before a run and one that opens no connection. `/api/models` asks Pi
  * which of the models it knows natively this console's own environment has a key
@@ -93,9 +96,13 @@ import type { RunKind, RunSlot } from "./runs.ts";
 import {
   PROVIDERS_PATH,
   PROVIDER_CHECK_PATH,
+  PROVIDER_REMOVE_PATH,
+  PROVIDER_UPDATE_PATH,
   addProviderEntry,
   checkCredential,
   providerRows,
+  removeProviderEntry,
+  updateProviderEntry,
 } from "./providers.ts";
 import { contentTypeOf, resolveStatic } from "./static.ts";
 import { uiState } from "./state.ts";
@@ -136,8 +143,8 @@ export interface UiConfig {
   /** Where a run is played: what a relative `--out` or `--dir` is taken from. */
   cwd: string;
   /**
-   * The provider registry this console lists, adds to and seats runs on. The
-   * file the `POST /api/providers` route writes, and the one `reloadProviders`
+   * The provider registry this console lists, writes and seats runs on. The
+   * file the three provider write routes write, and the one `reloadProviders`
    * reads at startup, so the two are never two different files.
    */
   providersFile: string;
@@ -165,7 +172,7 @@ export interface UiOptions {
   /** What a relative root is taken relative to — the repo root for a real run. */
   cwd?: string;
   /**
-   * Which `providers.json` this console lists, adds to and seats runs on. The
+   * Which `providers.json` this console lists, writes and seats runs on. The
    * runner's own committed registry by default; a test points it at a file of its
    * own, because writing the committed one from a test would be a test that
    * edits the repo. A console that injects `registry` instead names no file, and
@@ -536,10 +543,16 @@ const route = async (
 
   // The provider routes. The read answers from the same injected source
   // `/api/state` does, so a `providers.json` that does not parse is the same one
-  // line there. The two writes go through the same guard and the same body cap
-  // the run POSTs do: what they touch is the registry every run this console
-  // seats on, and the check runs a subprocess.
-  if (path === PROVIDERS_PATH || path === PROVIDER_CHECK_PATH) {
+  // line there. The three writes go through the same guard and the same body cap
+  // the run POSTs do, and past that through the same two refusals — a console
+  // with no file of its own, and a run in flight — because what they touch is the
+  // registry every run this console seats on; the check runs a subprocess.
+  if (
+    path === PROVIDERS_PATH ||
+    path === PROVIDER_CHECK_PATH ||
+    path === PROVIDER_UPDATE_PATH ||
+    path === PROVIDER_REMOVE_PATH
+  ) {
     if (path === PROVIDERS_PATH && (method === "GET" || method === "HEAD")) {
       sendJson(response, 200, providerRows(registryOf()));
       return;
@@ -579,12 +592,13 @@ const route = async (
     }
 
     // And not under a run in flight. The runner reads the registry once per
-    // process, and a series asks it again as each match starts (`seatsOf`), so
-    // an entry added now would change the window, the cap and the rates of the
-    // matches this run has still to play while its own record said one game —
-    // including a seat on a provider the registry did not name, which would gain
-    // a `models.json` halfway through. Nothing is awaited between this and the
-    // write, so no run can start in between.
+    // process, and a series asks it again as each match starts (`seatsOf`),
+    // so an entry added, changed or removed now would change the window,
+    // the cap and the rates of the matches this run has still to play while its
+    // own record said one game — including a seat on a provider the registry did
+    // not name, which would gain a `models.json` halfway through, and a seat on
+    // one it no longer names, which would lose one. Nothing is awaited between
+    // this and the write, so no run can start in between.
     const running = runs.snapshot();
     if (running.state === "running") {
       sendJson(response, 409, {
@@ -595,16 +609,25 @@ const route = async (
       return;
     }
 
-    const added = addProviderEntry(posted.body, config.providersFile);
-    if (!added.ok) {
-      // The runner's own line, from its own schema: the field it refused is in
-      // the line, and the file on disk is byte-identical to what it was.
-      sendJson(response, 400, { error: added.error });
+    // Which of the three writes this is, and no more branching than that: the
+    // envelope, the schema and the atomic write are the runner's, and all three
+    // answer with the registry as the file now holds it.
+    const written =
+      path === PROVIDERS_PATH
+        ? addProviderEntry(posted.body, config.providersFile)
+        : path === PROVIDER_UPDATE_PATH
+          ? updateProviderEntry(posted.body, config.providersFile)
+          : removeProviderEntry(posted.body, config.providersFile);
+    if (!written.ok) {
+      // The runner's own line, from its own schema: the field it refused, or the
+      // name it does not hold, is in the line, and the file on disk is
+      // byte-identical to what it was.
+      sendJson(response, 400, { error: written.error });
       return;
     }
     // The registry as it now stands on disk, so the page redraws the list from
     // what the file says rather than from what it posted.
-    sendJson(response, 200, providerRows(added.registry));
+    sendJson(response, 200, providerRows(written.registry));
     return;
   }
 
@@ -774,9 +797,9 @@ export async function startServer(options: UiOptions = {}): Promise<Server> {
   // The registry this process seats runs on is made to be the file this console
   // writes, before the first request can arrive: `providerRegistry()` caches the
   // file once per process, so without this a `--providers` the operator named,
-  // the file `POST /api/providers` writes and the registry a run is seated on
-  // would be three different things. A file that does not parse stops the console
-  // here rather than serving a page that lists nothing.
+  // the file the console's provider writes go to, and the registry a run is
+  // seated on would be three different things. A file that does not parse stops
+  // the console here rather than serving a page that lists nothing.
   reloadProviders(config.providersFile);
   // A source rather than a registry, so a broken `providers.json` throws inside a
   // request — where `handle` can answer it — rather than while this function is
@@ -851,8 +874,8 @@ if (invoked !== null && import.meta.url === pathToFileURL(invoked).href) {
       console.log(`no-dice-ui on http://${HOST}:${String(portOf(server))}`);
       console.log(`series root: ${config.seriesRoot}`);
       console.log(`matches root: ${config.matchesRoot}`);
-      // Said because it is the file a `POST /api/providers` writes, and the one
-      // every run this process starts seats on — worth knowing when the
+      // Said because it is the file the console's provider writes go to, and the
+      // one every run this process starts seats on — worth knowing when the
       // operator is about to add a provider from the page.
       console.log(`providers: ${config.providersFile}`);
       if (resolveStatic(config.webRoot, "/index.html") === null) {

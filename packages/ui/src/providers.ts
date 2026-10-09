@@ -1,6 +1,7 @@
 /**
  * The Providers half of the console: the registry as the page lists it, the
- * entry the page adds, and what Pi says about a seat's credential.
+ * entries the page adds, changes and deletes, and what Pi says about a seat's
+ * credential.
  *
  * **No key value crosses this line, and none exists to cross it.** A
  * `providers.json` entry names the environment variable a key is read from
@@ -10,26 +11,33 @@
  * answer for the seat pickers; this is the wider one, and it is reachable only
  * on loopback like everything else this server does.
  *
- * **There is no second validator here.** A posted entry goes to `addProvider`,
- * which parses it with `providerEntrySchema` — the same strict list of fields
- * `parseProviders` reads the file back with — so a field the schema does not
- * name, `apiKey` above all, is refused with zod's own line naming that field,
- * and the file is left byte-identical. A console with its own copy of the field
- * list is a console that accepts an entry the runner then refuses to read.
+ * **There is no second validator here.** A posted entry goes to `addProvider`
+ * or `updateProvider`, which parse it with `providerEntrySchema` — the same
+ * strict list of fields `parseProviders` reads the file back with — so a
+ * field the schema does not name, `apiKey` above all, is refused with zod's own
+ * line naming that field, and the file is left byte-identical. A console with
+ * its own copy of the field list is a console that accepts an entry the runner
+ * then refuses to read. The same holds of a name: `updateProvider` and
+ * `removeProvider` refuse a name the registry does not hold, so a mis-typed one
+ * is a 400 in the runner's words rather than an edit that quietly adds an entry
+ * or deletes nothing.
  *
- * **The write and the reload are one move.** `addProvider` writes the file
- * atomically (one temp file and one rename, so no reader ever sees a
- * registry cut in half), and `reloadProviders` replaces what this process holds
- * with it, so the next run this console starts seats on the entry the operator
- * just typed and `/api/state` names it in the seat picker without a restart.
- * The answer is the registry as it now stands on disk, re-read through the same
- * loader, rather than what the request claimed to have sent. The write is
- * refused while the console has a run in flight, and that rule is the runner's
- * rather than one invented here: `providerRegistry()` is read once per process
- * and a series asks it again as each match starts (`seatsOf`), so an entry added
- * under a run in flight would change the window, the cap and the rates of the
- * matches that run has yet to play while its record said one game. The route
- * that refuses it lives in `server.ts`, which is where the run slot is.
+ * **The write and the reload are one move.** `addProvider`, `updateProvider`
+ * and `removeProvider` each write the file atomically (one temp file and one
+ * rename, so no reader ever sees a registry cut in half), and `reloadProviders`
+ * replaces what this process holds with what the file now says, so the next run
+ * this console starts seats on the entry the operator just typed and
+ * `/api/state` names it in the seat picker without a restart — and no longer
+ * names one the page has deleted. The answer is the registry as it now stands on
+ * disk, re-read through the same loader, rather than what the request
+ * claimed to have sent. Every write is refused while the console has a run in
+ * flight, and that rule is the runner's rather than one invented here:
+ * `providerRegistry()` is read once per process and a series asks it again as
+ * each match starts (`seatsOf`), so an entry changed or removed under a run in
+ * flight would change the window, the cap and the rates of the matches that run
+ * has yet to play while its record said one game — and a removed one would seat
+ * a later match on a provider the registry no longer names. The route that
+ * refuses it lives in `server.ts`, which is where the run slot is.
  *
  * **The credential check opens no connection.** `POST /api/providers/check`
  * makes the exact call `packages/runner/src/cli.ts` makes before a run —
@@ -45,13 +53,26 @@
  * to Pi as `--provider <name>` and a model like `--flag/x` would be a flag in
  * Pi's parser rather than a provider.
  */
-import { addProvider, isProviderName, reloadProviders, seatModelsJson } from "@no-dice/runner/providers";
+import {
+  addProvider,
+  isProviderName,
+  reloadProviders,
+  removeProvider,
+  seatModelsJson,
+  updateProvider,
+} from "@no-dice/runner/providers";
 import type { ProviderRegistry } from "@no-dice/runner/providers";
 import { checkPiAuth, providerOfModel } from "@no-dice/harness";
 import type { PiAuth } from "@no-dice/harness";
 
 /** The route the page lists providers at, and adds one to. */
 export const PROVIDERS_PATH = "/api/providers";
+
+/** The route that replaces the entry one name holds. */
+export const PROVIDER_UPDATE_PATH = "/api/providers/update";
+
+/** The route that deletes the entry one name holds. */
+export const PROVIDER_REMOVE_PATH = "/api/providers/remove";
 
 /** The route that asks Pi whether a seat's credential resolves. */
 export const PROVIDER_CHECK_PATH = "/api/providers/check";
@@ -96,34 +117,72 @@ export const providerRows = (registry: ProviderRegistry): ProviderRow[] =>
 /** A provider request the console will not act on, with one line saying why. */
 export type ProviderRefusal = { ok: false; error: string };
 
-/** What `POST /api/providers` answers: the registry as it now stands, or one line. */
-export type AddResult = { ok: true; registry: ProviderRegistry } | ProviderRefusal;
+/**
+ * What a provider write answers: the registry as it now stands on disk, or one
+ * line. Add, update and remove all three answer one of these, which is why the
+ * route can send the answer to one `providerRows` call.
+ */
+export type WriteResult = { ok: true; registry: ProviderRegistry } | ProviderRefusal;
 
-/** The `{ name, entry }` a provider POST carries, or one line saying it does not. */
-const askedEntry = (
-  payload: unknown,
-): { ok: true; name: string; entry: unknown } | ProviderRefusal => {
+/** The `{ name }` a provider request carries, or one line saying it does not. */
+const askedName = (payload: unknown): { ok: true; name: string } | ProviderRefusal => {
   const given =
     typeof payload === "object" && payload !== null && !Array.isArray(payload)
-      ? (payload as { name?: unknown; entry?: unknown })
-      : null;
-  if (given === null) {
-    return { ok: false, error: "the provider request is not an object with a name and an entry" };
-  }
-  // Only that it is a name at all: whether it is one the registry can hold —
-  // one path segment, not `__proto__` — is `addProvider`'s rule, in its words.
-  if (typeof given.name !== "string" || given.name === "") {
+      ? (payload as { name?: unknown }).name
+      : undefined;
+  // A body that is no object at all gets this line too: either way the request
+  // does not name an entry. Only that it is a name at all — whether it is one
+  // the registry can hold, one path segment and not `__proto__`, is the
+  // runner's rule, in its words.
+  if (typeof given !== "string" || given === "") {
     return {
       ok: false,
       error: "the provider request needs the provider's name, one path segment as --a uses it",
     };
   }
-  if (typeof given.entry !== "object" || given.entry === null || Array.isArray(given.entry)) {
+  return { ok: true, name: given };
+};
+
+/** The `{ name, entry }` an add or an update carries, or one line saying it does not. */
+const askedEntry = (
+  payload: unknown,
+  verb: "add" | "update",
+): { ok: true; name: string; entry: unknown } | ProviderRefusal => {
+  const asked = askedName(payload);
+  if (!asked.ok) return asked;
+  const given = (payload as { entry?: unknown }).entry;
+  if (typeof given !== "object" || given === null || Array.isArray(given)) {
     // Which fields an entry has is the schema's to say, and it says so when the
     // entry is there and wrong; this line is only for there being no entry.
-    return { ok: false, error: `"${given.name}" needs an entry to add, as the registry holds one` };
+    return {
+      ok: false,
+      error: `"${asked.name}" needs an entry to ${verb}, as the registry holds one`,
+    };
   }
-  return { ok: true, name: given.name, entry: given.entry };
+  return { ok: true, name: asked.name, entry: given };
+};
+
+/**
+ * Do one registry write, and hand back the registry as it now stands on disk —
+ * or the runner's own line for a refusal, which leaves the file byte-identical
+ * and so lets this route refuse without having written either.
+ */
+const wroteRegistry = (write: () => ProviderRegistry): WriteResult => {
+  let written: ProviderRegistry;
+  try {
+    written = write();
+  } catch (error) {
+    return { ok: false, error: lineOf(error) };
+  }
+
+  // The registry the file the page wrote holds has to be the registry every run
+  // this process starts seats on, and nothing else re-reads a registry that is
+  // cached once per process. A console that wrote a registry the runner
+  // never read would be a console that lied about what a run was seated on. The
+  // object the write read back is what the cache is set to, so the answer and
+  // the seat picker are one read of the file rather than two that could
+  // disagree.
+  return { ok: true, registry: reloadProviders(written) };
 };
 
 /**
@@ -134,24 +193,43 @@ const askedEntry = (
  * field list and the atomic write all live in `addProvider`, and a refusal there
  * leaves the file byte-identical, so a refusal here can too.
  */
-export const addProviderEntry = (payload: unknown, path: string): AddResult => {
-  const asked = askedEntry(payload);
+export const addProviderEntry = (payload: unknown, path: string): WriteResult => {
+  const asked = askedEntry(payload, "add");
   if (!asked.ok) return asked;
+  return wroteRegistry(() => addProvider(asked.name, asked.entry, path));
+};
 
-  let written: ProviderRegistry;
-  try {
-    written = addProvider(asked.name, asked.entry, path);
-  } catch (error) {
-    return { ok: false, error: lineOf(error) };
-  }
+/**
+ * Replace the entry the registry at `path` holds under the posted name, and hand
+ * back the registry as it now stands on disk.
+ *
+ * The name is not editable, and that is the runner's rule rather than a page
+ * rule: an entry is filed under its name, a seat is written as `<provider>/<id>`,
+ * so an update that moved an entry would leave every run seated on the old name
+ * pointing at a provider nobody chose. A rename is a remove and an add, which is
+ * what the two routes let the page say out loud.
+ */
+export const updateProviderEntry = (payload: unknown, path: string): WriteResult => {
+  const asked = askedEntry(payload, "update");
+  if (!asked.ok) return asked;
+  return wroteRegistry(() => updateProvider(asked.name, asked.entry, path));
+};
 
-  // The registry the file the page wrote holds has to be the registry every run
-  // this process starts seats on, and nothing else re-reads a registry that is
-  // cached once per process. A console that wrote a registry the runner never
-  // read would be a console that lied about what a run was seated on. The object
-  // the write read back is what the cache is set to, so the answer and the seat
-  // picker are one read of the file rather than two that could disagree.
-  return { ok: true, registry: reloadProviders(written) };
+/**
+ * Delete the entry the registry at `path` holds under the posted name, and hand
+ * back the registry as it now stands on disk.
+ *
+ * Nothing played on the entry is touched: a match log names its own
+ * `<provider>/<id>` and `context_window`, and every turn's cost was worked out
+ * from the rates of the moment it was played, so removing an entry changes
+ * what the *next* run can be seated on and moves no result. Removing the last
+ * entry leaves `{}`, which is a registry the loader reads — the view has to be
+ * able to empty it.
+ */
+export const removeProviderEntry = (payload: unknown, path: string): WriteResult => {
+  const asked = askedName(payload);
+  if (!asked.ok) return asked;
+  return wroteRegistry(() => removeProvider(asked.name, path));
 };
 
 /** What `POST /api/providers/check` answers: what Pi said, or one line. */
