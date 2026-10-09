@@ -1,8 +1,9 @@
 /**
  * The Providers half of the page: the entries `GET /api/providers` lists, the
- * entry `POST /api/providers` adds, and what `POST /api/providers/check` says
- * about a seat's credential. Drawing them is `render-providers.ts`'s business;
- * this file only reads, writes and checks.
+ * entry `POST /api/providers` adds, the entry `POST /api/providers/update`
+ * replaces, the entry `POST /api/providers/remove` deletes, and what
+ * `POST /api/providers/check` says about a seat's credential. Drawing them is
+ * `render-providers.ts`'s business; this file only reads, writes and checks.
  *
  * **No key value crosses this file, and there is none to cross it.** An entry in
  * `providers.json` names the environment variable a key is read from
@@ -19,6 +20,15 @@
  * has is refused there rather than silently overwriting the entry a run is
  * seated on. A second validator here would be a second opinion the runner can
  * disagree with.
+ *
+ * **An edit carries the name it edits.** A row's form posts `{ name, entry }` to
+ * `/api/providers/update`, and the name in that body is the row's own — not
+ * whatever a box on the page happens to hold — because the runner files an entry
+ * under its name and a seat is written as `<provider>/<id>`. The page therefore
+ * shows a name it will not let be changed, and a rename is what a remove and an
+ * add say out loud. A remove posts `{ name }` to `/api/providers/remove` and
+ * nothing else: the entry it deletes is the one the registry holds, not a
+ * copy of what the page last read.
  *
  * **The check is the same question `no-dice series` asks before it plays a
  * turn.** `{ model: "<provider>/<id>" }` goes to `/api/providers/check`, and
@@ -48,6 +58,12 @@ import type { FetchJson } from "./api.ts";
 
 /** Where the page lists the registry, and adds one entry to it. */
 export const PROVIDERS_PATH = "/api/providers";
+
+/** Where the page replaces the entry one name holds. */
+export const PROVIDER_UPDATE_PATH = "/api/providers/update";
+
+/** Where the page deletes the entry one name holds. */
+export const PROVIDER_REMOVE_PATH = "/api/providers/remove";
 
 /** Where the page asks Pi whether a seat's credential resolves. */
 export const PROVIDER_CHECK_PATH = "/api/providers/check";
@@ -303,11 +319,45 @@ export const providerBodyOf = (values: AddValues): ProviderBody => {
   return { name: values.name.trim(), entry };
 };
 
+/**
+ * What a registry write answered: the console took it, or said why it did not.
+ *
+ * Add, update and remove all three answer one of these, which is why the page
+ * can hand every one of them the same `error` line and the same redraw.
+ */
+export type WriteOutcome = { ok: true } | { ok: false; error: string };
+
 /** What an add answered: the console took the entry, or said why it did not. */
-export type AddOutcome = { ok: true } | { ok: false; error: string };
+export type AddOutcome = WriteOutcome;
 
 /** One line for the page, from whatever the console or `fetch` threw. */
 const lineOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * What an edit form holds: the same fields as the add form, and the name of the
+ * entry being edited, which the form shows and does not let be changed.
+ */
+export type EditValues = AddValues;
+
+/**
+ * An entry as its own row's form holds it: every field as text, the numbers
+ * spelled as the registry spells them, and the key box blank for an entry that
+ * checks no key — a `null` typed into a box would be the word `null` offered
+ * back to the registry as a variable name.
+ */
+export const editValuesOf = (row: ProviderRow): EditValues => ({
+  name: row.name,
+  baseUrl: row.baseUrl,
+  api: row.api,
+  apiKeyEnv: row.apiKeyEnv ?? "",
+  reasoning: row.reasoning,
+  contextWindow: String(row.contextWindow),
+  maxTokens: String(row.maxTokens),
+  costInput: String(row.cost.input),
+  costOutput: String(row.cost.output),
+  costCacheRead: String(row.cost.cacheRead),
+  costCacheWrite: String(row.cost.cacheWrite),
+});
 
 /**
  * Ask the console to add the entry the form holds, and report what it said.
@@ -324,6 +374,48 @@ export const addProvider = async (
 ): Promise<AddOutcome> => {
   try {
     await postJson<unknown>(PROVIDERS_PATH, providerBodyOf(values), fetchJson);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: lineOf(error) };
+  }
+};
+
+/**
+ * Ask the console to replace the entry `name` holds with what that row's form
+ * holds, and report what it said.
+ *
+ * The name in the body is the argument, not the form's: a row edits the entry it
+ * is a row of, and the runner refuses a name its registry does not hold, so a
+ * mis-typed one comes back as its own line rather than as a new entry. The entry
+ * is built by the same `providerBodyOf` the add form uses — a second body
+ * builder would be a second opinion on what a blank number means.
+ */
+export const updateProvider = async (
+  name: string,
+  values: EditValues,
+  fetchJson: FetchJson = fetch,
+): Promise<WriteOutcome> => {
+  try {
+    await postJson<unknown>(PROVIDER_UPDATE_PATH, providerBodyOf({ ...values, name }), fetchJson);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: lineOf(error) };
+  }
+};
+
+/**
+ * Ask the console to delete the entry `name` holds, and report what it said.
+ *
+ * Nothing else is sent: the entry that goes is the one the file holds, not
+ * the one the page last read, and a name the registry does not name is refused
+ * there rather than deleting nothing quietly here.
+ */
+export const removeProvider = async (
+  name: string,
+  fetchJson: FetchJson = fetch,
+): Promise<WriteOutcome> => {
+  try {
+    await postJson<unknown>(PROVIDER_REMOVE_PATH, { name }, fetchJson);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: lineOf(error) };

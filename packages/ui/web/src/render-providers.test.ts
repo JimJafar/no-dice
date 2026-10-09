@@ -1,18 +1,19 @@
 // @vitest-environment happy-dom
 /**
  * The Providers section, on the page: the shape the page accepts from
- * `/api/providers`, `/api/providers/check` and `/api/models`, the body it posts
- * to add an entry, and what it draws from all of them.
+ * `/api/providers`, `/api/providers/update`, `/api/providers/remove`,
+ * `/api/providers/check` and `/api/models`, the body it posts to add or edit an
+ * entry, and what it draws from all of them.
  *
  * What the registry itself allows is the runner's rule and
  * `packages/runner/src/providers.test.ts` owns it; what the console answers is
  * `packages/ui/src/providers.test.ts`'s. This file asks only that the page draws
- * whatever those answers say, sends the body the routes take, and shows the
- * server's own line when it refuses — including the two things the page must
- * never do, which are hold a key value in a field and decide for itself that an
- * entry is valid. It also checks the words the section speaks: no flag name and
- * no path into the machine, because a reader here is naming an endpoint, not
- * typing a command.
+ * whatever those answers say, sends the body the routes take, asks once before it
+ * deletes anything, and shows the server's own line when it refuses — including
+ * the two things the page must never do, which are hold a key value in a field
+ * and decide for itself that an entry is valid. It also checks the words the
+ * section speaks: no flag name and no path into the machine, because a reader
+ * here is naming an endpoint, not typing a command.
  */
 import { describe, expect, it } from "vitest";
 
@@ -20,6 +21,7 @@ import { expectPlainWords, wordsOf } from "./plain-words.ts";
 import {
   addProvider,
   checkCredential,
+  editValuesOf,
   fetchModels,
   fetchProviders,
   modelOf,
@@ -27,8 +29,10 @@ import {
   parseModelRows,
   parseProviderRows,
   providerBodyOf,
+  removeProvider,
+  updateProvider,
 } from "./providers.ts";
-import type { AddOutcome, AddValues, CheckOutcome } from "./providers.ts";
+import type { AddOutcome, AddValues, CheckOutcome, EditValues, WriteOutcome } from "./providers.ts";
 import { renderProviders } from "./render-providers.ts";
 import type { ProvidersViewOptions } from "./render-providers.ts";
 import type { ProviderRow } from "./providers.ts";
@@ -108,18 +112,31 @@ const section = (): HTMLElement => {
 const itemsOf = (el: HTMLElement, listClass: string): string[] =>
   [...el.querySelectorAll<HTMLElement>(`.${listClass} > li`)].map((li) => li.textContent ?? "");
 
+/** One row, by the entry it is a row of. */
+const rowOf = (el: HTMLElement, name: string): HTMLElement => {
+  const row = el.querySelector<HTMLElement>(`li.provider-row[data-provider="${name}"]`);
+  expect(row, `the page has no row for ${name}`).not.toBeNull();
+  return row!;
+};
+
 /** The section, drawn with callbacks a test does not have to drive. */
 const view = (rows: readonly ProviderRow[]): ProvidersViewOptions => ({
   rows,
   onAdd: (): Promise<AddOutcome> => Promise.resolve({ ok: true }),
+  onEdit: (): Promise<WriteOutcome> => Promise.resolve({ ok: true }),
+  onRemove: (): Promise<WriteOutcome> => Promise.resolve({ ok: true }),
   onCheck: (): Promise<CheckOutcome> => Promise.resolve({ ok: true, auth: READY }),
   onAdded: () => undefined,
+  onEdited: () => undefined,
+  onRemoved: () => undefined,
 });
 
 /** Draw the section with a view whose callbacks the test can drive. */
-const withView = (options: ProvidersViewOptions): HTMLElement => {
+const withView = (
+  options: Partial<ProvidersViewOptions> & Pick<ProvidersViewOptions, "rows">,
+): HTMLElement => {
   const el = section();
-  renderProviders(el, options);
+  renderProviders(el, { ...view(options.rows), ...options });
   return el;
 };
 
@@ -284,6 +301,120 @@ describe("addProvider", () => {
   it("hands back zod's line verbatim when the entry is not one", async () => {
     const line = '"new-co" is not a provider entry: cost.input: Invalid input: expected number, required';
     const answer = await addProvider(VALUES, () =>
+      Promise.resolve(Response.json({ error: line }, { status: 400 })),
+    );
+
+    expect(answer).toEqual({ ok: false, error: line });
+  });
+});
+
+describe("editValuesOf", () => {
+  it("puts every field of an entry into a box, the numbers spelled as the registry spells them", () => {
+    expect(editValuesOf(OPENAI)).toEqual({
+      name: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      api: "openai-responses",
+      apiKeyEnv: "OPENAI_API_KEY",
+      reasoning: false,
+      contextWindow: "200000",
+      maxTokens: "16000",
+      costInput: "2.5",
+      costOutput: "10",
+      costCacheRead: "1.25",
+      costCacheWrite: "3.75",
+    });
+  });
+
+  it("leaves the key box blank for an entry that checks no key, rather than typing null", () => {
+    // A `null` in the box would go back as the word `null`, which is a variable
+    // name; the registry reads a blank as checking no key.
+    expect(editValuesOf(MARVIN).apiKeyEnv).toBe("");
+  });
+
+  it("round-trips an entry through the body the routes take", () => {
+    // What an untouched row posts is the entry it was drawn from, so saving one
+    // nobody changed changes nothing about the file.
+    expect(providerBodyOf(editValuesOf(OPENAI))).toEqual({
+      name: "openai",
+      entry: {
+        baseUrl: "https://api.openai.com/v1",
+        api: "openai-responses",
+        apiKeyEnv: "OPENAI_API_KEY",
+        reasoning: false,
+        contextWindow: 200000,
+        maxTokens: 16000,
+        cost: { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 3.75 },
+      },
+    });
+  });
+});
+
+describe("updateProvider", () => {
+  it("posts the row's name and the edited entry to /api/providers/update", async () => {
+    const posted: { path: string; body: unknown }[] = [];
+    const edited: EditValues = { ...editValuesOf(OPENAI), contextWindow: "1000000" };
+    const answer = await updateProvider("openai", edited, (path, init) => {
+      posted.push({ path, body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(Response.json([MARVIN, { ...OPENAI, contextWindow: 1000000 }]));
+    });
+
+    expect(posted).toEqual([
+      { path: "/api/providers/update", body: providerBodyOf({ ...edited, name: "openai" }) },
+    ]);
+    expect((posted[0]!.body as { entry: Record<string, unknown> }).entry["contextWindow"]).toBe(1000000);
+    expect(answer).toEqual({ ok: true });
+  });
+
+  it("posts the row's own name whatever the form's name box holds", async () => {
+    // The name is the entry's identity, and the runner refuses a name its
+    // registry does not hold; the page never sends one it did not read.
+    const posted: unknown[] = [];
+    await updateProvider("openai", { ...editValuesOf(OPENAI), name: "typo" }, (_path, init) => {
+      posted.push(JSON.parse(String(init?.body)));
+      return Promise.resolve(Response.json([OPENAI]));
+    });
+
+    expect((posted[0] as { name: string }).name).toBe("openai");
+  });
+
+  it("hands back the console's line for a run in flight, verbatim", async () => {
+    const line =
+      "a run is in flight (this console): the provider registry is not edited under one, " +
+      "because a series seats each match as it starts";
+    const answer = await updateProvider("openai", editValuesOf(OPENAI), () =>
+      Promise.resolve(Response.json({ error: line }, { status: 409 })),
+    );
+
+    expect(answer).toEqual({ ok: false, error: line });
+  });
+
+  it("hands back the runner's line for a name the registry does not hold", async () => {
+    const line =
+      'the provider registry does not name "gone": an update replaces the entry that is ' +
+      "there, and adding one is addProvider";
+    const answer = await updateProvider("gone", editValuesOf(OPENAI), () =>
+      Promise.resolve(Response.json({ error: line }, { status: 400 })),
+    );
+
+    expect(answer).toEqual({ ok: false, error: line });
+  });
+});
+
+describe("removeProvider", () => {
+  it("posts the name and nothing else to /api/providers/remove", async () => {
+    const posted: { path: string; body: unknown }[] = [];
+    const answer = await removeProvider("openai", (path, init) => {
+      posted.push({ path, body: JSON.parse(String(init?.body)) });
+      return Promise.resolve(Response.json([MARVIN]));
+    });
+
+    expect(posted).toEqual([{ path: "/api/providers/remove", body: { name: "openai" } }]);
+    expect(answer).toEqual({ ok: true });
+  });
+
+  it("hands back the console's line when it would not write, and removes nothing", async () => {
+    const line = 'the provider registry does not name "openai": there is no entry to remove';
+    const answer = await removeProvider("openai", () =>
       Promise.resolve(Response.json({ error: line }, { status: 400 })),
     );
 
@@ -552,6 +683,346 @@ describe("renderProviders", () => {
   });
 });
 
+describe("editing a row", () => {
+  /** One box of a row's own edit form. */
+  const box = (row: HTMLElement, field: string): HTMLInputElement =>
+    row.querySelector<HTMLInputElement>(`.field-edit-${field}-${row.dataset["provider"] ?? ""}`)!;
+
+  /** Open a row's edit form. */
+  const open = (row: HTMLElement): HTMLElement => {
+    row.querySelector<HTMLButtonElement>("button.edit-provider")!.click();
+    const form = row.querySelector<HTMLElement>(".provider-edit")!;
+    expect(form.hidden).toBe(false);
+    return form;
+  };
+
+  it("opens that row's fields prefilled with what the registry holds", () => {
+    const el = withView({ rows: [MARVIN, OPENAI] });
+    const row = rowOf(el, "openai");
+
+    // The fields are there before the row is opened and hidden, so the only
+    // thing the click does is uncover them: nothing is typed into a form that
+    // has not been asked for, and a blank box would be an entry with nothing in
+    // it once saved.
+    expect(row.querySelector<HTMLElement>(".provider-edit")!.hidden).toBe(true);
+    open(row);
+
+    expect(box(row, "base-url").value).toBe(OPENAI.baseUrl);
+    expect(box(row, "api").value).toBe(OPENAI.api);
+    expect(box(row, "api-key-env").value).toBe("OPENAI_API_KEY");
+    expect(box(row, "reasoning").checked).toBe(false);
+    expect(box(row, "context-window").value).toBe("200000");
+    expect(box(row, "max-tokens").value).toBe("16000");
+    expect(box(row, "cost-input").value).toBe("2.5");
+    expect(box(row, "cost-output").value).toBe("10");
+    expect(box(row, "cost-cache-read").value).toBe("1.25");
+    expect(box(row, "cost-cache-write").value).toBe("3.75");
+
+    // The other row keeps its own entry: a form prefilled from one provider is
+    // not a copy of another's.
+    const other = rowOf(el, "marvin");
+    open(other);
+    expect(box(other, "api-key-env").value).toBe("");
+    expect(box(other, "reasoning").checked).toBe(true);
+    expect(box(other, "context-window").value).toBe("131072");
+  });
+
+  it("shows the name without letting it be edited, and says why", () => {
+    const el = withView({ rows: [OPENAI] });
+    const row = rowOf(el, "openai");
+    const form = open(row);
+
+    const name = row.querySelector<HTMLInputElement>(".field-edit-provider-name")!;
+    expect(name.value).toBe("openai");
+    expect(name.disabled).toBe(true);
+
+    // One clause, in the page's own words: the name is what a seat is written
+    // with, so a rename is a removal and an addition rather than a field.
+    expect(form.textContent).toContain("a seat is written with");
+    expect(form.textContent).toContain("removing this provider and adding the other");
+  });
+
+  it("posts the row's name and the edited entry, and asks for the list back", async () => {
+    const edited: { name: string; values: EditValues }[] = [];
+    const done: string[] = [];
+    const el = withView({
+      rows: [MARVIN, OPENAI],
+      onEdit: (name, values): Promise<WriteOutcome> => {
+        edited.push({ name, values });
+        return Promise.resolve({ ok: true });
+      },
+      onEdited: (name): void => {
+        done.push(name);
+      },
+    });
+    const row = rowOf(el, "openai");
+    open(row);
+
+    box(row, "context-window").value = "1000000";
+    box(row, "api-key-env").value = "";
+    row.querySelector<HTMLButtonElement>("button.save-provider")!.click();
+    await settled();
+
+    expect(edited).toHaveLength(1);
+    expect(edited[0]!.name).toBe("openai");
+    // The whole entry goes, as the form holds it: the route replaces the entry,
+    // it does not patch the fields that moved.
+    expect(providerBodyOf({ ...edited[0]!.values, name: edited[0]!.name })).toEqual({
+      name: "openai",
+      entry: {
+        baseUrl: OPENAI.baseUrl,
+        api: OPENAI.api,
+        apiKeyEnv: null,
+        reasoning: false,
+        contextWindow: 1000000,
+        maxTokens: 16000,
+        cost: { input: 2.5, output: 10, cacheRead: 1.25, cacheWrite: 3.75 },
+      },
+    });
+    // The list is read again rather than patched: the file is what the next run
+    // seats on, and its account of itself is the one the page should show.
+    expect(done).toEqual(["openai"]);
+  });
+
+  it("keeps the row and what was typed in it when the console refuses, and draws its line as it came", async () => {
+    const line =
+      "a run is in flight (this console): the provider registry is not edited under one, " +
+      "because a series seats each match as it starts";
+    const done: string[] = [];
+    const el = withView({
+      rows: [MARVIN, OPENAI],
+      onEdit: (): Promise<WriteOutcome> => Promise.resolve({ ok: false, error: line }),
+      onEdited: (name): void => {
+        done.push(name);
+      },
+    });
+    const row = rowOf(el, "openai");
+    open(row);
+
+    box(row, "context-window").value = "1000000";
+    row.querySelector<HTMLButtonElement>("button.save-provider")!.click();
+    await settled();
+
+    const outcome = row.querySelector<HTMLElement>(".edit-outcome")!;
+    // Verbatim, including the sentence about the run: it is the answer the
+    // operator has to read whole, and it is the console's, not the page's.
+    expect(outcome.textContent).toBe(line);
+    expect(outcome.className).toContain("bad");
+    // The row is where it was, with the edit still in the box, so nothing has to
+    // be typed again once the run has finished.
+    expect(itemsOf(el, "providers")).toHaveLength(2);
+    expect(row.querySelector<HTMLElement>(".provider-edit")!.hidden).toBe(false);
+    expect(box(row, "context-window").value).toBe("1000000");
+    expect(done).toEqual([]);
+  });
+
+  it("draws the schema's own line for an entry the registry will not take", async () => {
+    const line =
+      '"openai" is not a provider entry: contextWindow: Invalid input: expected number, required';
+    const el = withView({
+      rows: [OPENAI],
+      onEdit: (): Promise<WriteOutcome> => Promise.resolve({ ok: false, error: line }),
+    });
+    const row = rowOf(el, "openai");
+    open(row);
+
+    box(row, "context-window").value = "";
+    row.querySelector<HTMLButtonElement>("button.save-provider")!.click();
+    await settled();
+
+    expect(row.querySelector<HTMLElement>(".edit-outcome")!.textContent).toBe(line);
+  });
+
+  it("puts the row's fields back when the edit is called off", () => {
+    const el = withView({ rows: [OPENAI] });
+    const row = rowOf(el, "openai");
+    open(row);
+
+    box(row, "max-tokens").value = "1";
+    row.querySelector<HTMLButtonElement>("button.cancel-edit")!.click();
+
+    // Nothing was sent, and what was typed is not left sitting in a hidden form
+    // to be saved by the next person who opens it.
+    expect(row.querySelector<HTMLElement>(".provider-edit")!.hidden).toBe(true);
+    expect(box(row, "max-tokens").value).toBe("16000");
+  });
+
+  it("asks for a key variable's name in the edit form and never for a value", () => {
+    const el = withView({ rows: [OPENAI] });
+    const row = rowOf(el, "openai");
+    const form = open(row);
+
+    const inputs = [...form.querySelectorAll<HTMLInputElement>("input")];
+    expect(inputs.some((input) => input.type === "password")).toBe(false);
+    expect(box(row, "api-key-env").placeholder).toContain("variable name");
+    expect(box(row, "api-key-env").placeholder).toContain("blank");
+    expect(form.textContent).toContain("no key value is ever typed here");
+  });
+});
+
+describe("removing a row", () => {
+  it("asks once before it sends anything", () => {
+    const asked: string[] = [];
+    const el = withView({
+      rows: [MARVIN, OPENAI],
+      onRemove: (name): Promise<WriteOutcome> => {
+        asked.push(name);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const row = rowOf(el, "openai");
+
+    row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+
+    // The row's own control has become a confirm and a cancel, and the file is
+    // untouched: an entry cannot go out to a single click.
+    expect(asked).toEqual([]);
+    expect(row.querySelector<HTMLButtonElement>("button.remove-provider")!.hidden).toBe(true);
+    const confirm = row.querySelector<HTMLButtonElement>("button.confirm-remove")!;
+    const cancel = row.querySelector<HTMLButtonElement>("button.cancel-remove")!;
+    expect(confirm.hidden).toBe(false);
+    expect(cancel.hidden).toBe(false);
+  });
+
+  it("asks in the page rather than in a browser dialog", () => {
+    // The frame draws its own lines everywhere else, and a dialog cannot be
+    // styled from this page or tested from it.
+    const win = window as unknown as Record<string, unknown>;
+    const originals = { alert: win["alert"], confirm: win["confirm"], prompt: win["prompt"] };
+    for (const name of ["alert", "confirm", "prompt"]) {
+      win[name] = (): never => {
+        throw new Error(`the page asked in a browser ${name}`);
+      };
+    }
+
+    try {
+      const el = withView({ rows: [OPENAI] });
+      const row = rowOf(el, "openai");
+      row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+      row.querySelector<HTMLButtonElement>("button.confirm-remove")!.click();
+    } finally {
+      Object.assign(win, originals);
+    }
+  });
+
+  it("sends the removal only when the confirm is clicked, and asks for the list back", async () => {
+    const asked: string[] = [];
+    const done: string[] = [];
+    const el = withView({
+      rows: [MARVIN, OPENAI],
+      onRemove: (name): Promise<WriteOutcome> => {
+        asked.push(name);
+        return Promise.resolve({ ok: true });
+      },
+      onRemoved: (name): void => {
+        done.push(name);
+      },
+    });
+    const row = rowOf(el, "openai");
+
+    row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    row.querySelector<HTMLButtonElement>("button.confirm-remove")!.click();
+    await settled();
+
+    expect(asked).toEqual(["openai"]);
+    expect(done).toEqual(["openai"]);
+  });
+
+  it("sends nothing when the cancel is clicked, and puts the row back", () => {
+    const asked: string[] = [];
+    const el = withView({
+      rows: [OPENAI],
+      onRemove: (name): Promise<WriteOutcome> => {
+        asked.push(name);
+        return Promise.resolve({ ok: true });
+      },
+    });
+    const row = rowOf(el, "openai");
+
+    row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    row.querySelector<HTMLButtonElement>("button.cancel-remove")!.click();
+
+    expect(asked).toEqual([]);
+    expect(row.querySelector<HTMLButtonElement>("button.remove-provider")!.hidden).toBe(false);
+    expect(row.querySelector<HTMLButtonElement>("button.confirm-remove")!.hidden).toBe(true);
+  });
+
+  it("does not answer for another row: each row asks and confirms for itself", async () => {
+    const asked: string[] = [];
+    const el = withView({
+      rows: [MARVIN, OPENAI],
+      onRemove: (name): Promise<WriteOutcome> => {
+        asked.push(name);
+        return Promise.resolve({ ok: true });
+      },
+    });
+
+    rowOf(el, "marvin").querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    const openai = rowOf(el, "openai");
+    openai.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    openai.querySelector<HTMLButtonElement>("button.confirm-remove")!.click();
+    await settled();
+
+    // The first row is still asking, and the confirm that went was the second
+    // row's own.
+    expect(asked).toEqual(["openai"]);
+    const marvin = rowOf(el, "marvin");
+    expect(marvin.querySelector<HTMLButtonElement>("button.confirm-remove")!.hidden).toBe(false);
+    expect(marvin.querySelector<HTMLButtonElement>("button.confirm-remove")!.disabled).toBe(false);
+  });
+
+  it("leaves the row and the file alone when the console refuses, and draws its line as it came", async () => {
+    const line =
+      "a run is in flight (this console): the provider registry is not edited under one, " +
+      "because a series seats each match as it starts";
+    const asked: string[] = [];
+    const done: string[] = [];
+    const el = withView({
+      rows: [MARVIN, OPENAI],
+      onRemove: (name): Promise<WriteOutcome> => {
+        asked.push(name);
+        return Promise.resolve({ ok: false, error: line });
+      },
+      onRemoved: (name): void => {
+        done.push(name);
+      },
+    });
+    const row = rowOf(el, "openai");
+    row.querySelector<HTMLInputElement>(".field-model-id")!.value = "gpt-4";
+
+    row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    row.querySelector<HTMLButtonElement>("button.confirm-remove")!.click();
+    await settled();
+
+    expect(asked).toEqual(["openai"]);
+    const outcome = row.querySelector<HTMLElement>(".remove-outcome")!;
+    expect(outcome.textContent).toBe(line);
+    expect(outcome.className).toContain("bad");
+    // The entry is still listed, the row's own fields still hold what was typed
+    // into them, and the row can be asked again.
+    expect(done).toEqual([]);
+    expect(itemsOf(el, "providers")).toHaveLength(2);
+    expect(row.querySelector<HTMLInputElement>(".field-model-id")!.value).toBe("gpt-4");
+    expect(row.querySelector<HTMLButtonElement>("button.remove-provider")!.hidden).toBe(false);
+    expect(row.querySelector<HTMLButtonElement>("button.confirm-remove")!.hidden).toBe(true);
+  });
+
+  it("draws the runner's line for an entry the registry no longer holds", async () => {
+    const line = 'the provider registry does not name "openai": there is no entry to remove';
+    const el = withView({
+      rows: [OPENAI],
+      onRemove: (): Promise<WriteOutcome> => Promise.resolve({ ok: false, error: line }),
+    });
+    const row = rowOf(el, "openai");
+
+    row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    row.querySelector<HTMLButtonElement>("button.confirm-remove")!.click();
+    await settled();
+
+    expect(row.querySelector<HTMLElement>(".remove-outcome")!.textContent).toBe(line);
+  });
+});
+
 describe("the words the providers section speaks", () => {
   it("lists the entries and the add form in plain words", () => {
     // The base URL is drawn, and it is the one address on this page that is the
@@ -565,6 +1036,20 @@ describe("the words the providers section speaks", () => {
 
   it("lists an empty registry and its add form in plain words", () => {
     const { el } = drawn([]);
+
+    expectPlainWords("providers", wordsOf(el));
+  });
+
+  it("opens a row's edit form and its removal in plain words", () => {
+    // The two places a section under pressure writes its own sentences: a
+    // rename explained, and a removal asked for. Neither reaches for a flag, a
+    // path or a file the console keeps.
+    const el = withView({ rows: [MARVIN, OPENAI] });
+    for (const name of ["marvin", "openai"]) {
+      const row = rowOf(el, name);
+      row.querySelector<HTMLButtonElement>("button.edit-provider")!.click();
+      row.querySelector<HTMLButtonElement>("button.remove-provider")!.click();
+    }
 
     expectPlainWords("providers", wordsOf(el));
   });

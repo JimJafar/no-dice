@@ -235,6 +235,9 @@ describe("the console at a phone's width", () => {
     const guards = [
       [".view", /\.view\[hidden\]\{[^}]*display:\s*none/],
       [".field", /\.field\[hidden\]\{[^}]*display:\s*none/],
+      // `render-providers.ts` builds every row's edit form with the row and hides
+      // it, so a row that has not been asked to be edited does not show its form.
+      [".provider-edit", /\.provider-edit\[hidden\]\{[^}]*display:\s*none/],
     ];
     for (const [selector, guard] of guards) {
       expect(CSS, `${selector} is hidden by attribute and has no rule for it`).toMatch(guard);

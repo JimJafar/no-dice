@@ -18,10 +18,10 @@
  * walk of every series' every log, which is the most expensive read the page makes.
  *
  * The provider registry is a fourth read, and the rarest: `/api/providers`
- * when the page opens and after an entry has been added. It is not polled and not
- * drawn by the frame, because that section holds the add form and the credential
- * check an operator asked for, and only the module that drew them knows when a
- * redraw is safe.
+ * when the page opens and after an entry has been added, changed or removed. It
+ * is not polled and not drawn by the frame, because that section holds the add
+ * form, one row's edit form and the credential check an operator asked for, and
+ * only the module that drew them knows when a redraw is safe.
  *
  * The models the pinned Pi knows natively are read at that same rare moment:
  * `/api/models` when the page opens, once, beside the state read. The route asks
@@ -61,7 +61,14 @@ import type { FetchJson } from "./api.ts";
 import { fetchLeaderboard } from "./leaderboard.ts";
 import { createRunPoller, renderProgress } from "./progress.ts";
 import type { RunSnapshot } from "./progress.ts";
-import { addProvider, checkCredential, fetchModels, fetchProviders } from "./providers.ts";
+import {
+  addProvider,
+  checkCredential,
+  fetchModels,
+  fetchProviders,
+  removeProvider,
+  updateProvider,
+} from "./providers.ts";
 import type { ModelRow } from "./providers.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
 import { renderLeaderboard } from "./render-leaderboard.ts";
@@ -244,27 +251,35 @@ const drawStart = (choices: SeatChoices): void => {
  *
  * The entries are the console's — `GET /api/providers` answers out of the same
  * file a run seats on — and the page adds nothing to them. It is read again
- * after an entry has been added, because what the section should list is the
- * file's account of itself rather than the form's. A registry that could not be
- * read leaves the section standing and says why on the status line, as every
- * other failed read does.
+ * after an entry has been added, changed or removed, because what the section
+ * should list is the file's account of itself rather than a form's, and because
+ * an entry the file no longer holds must not keep its row. A write the
+ * console refused redraws nothing: the row an operator was editing stays where it
+ * was, with what they typed in it. A registry that could not be read leaves the
+ * section standing and says why on the status line, as every other failed read
+ * does.
  */
-const refreshProviders = async (added?: string): Promise<void> => {
+const refreshProviders = async (done?: string): Promise<void> => {
   try {
     const rows = await fetchProviders(fetchJson);
     renderProviders(sections.providers, {
       rows,
       onAdd: (values) => addProvider(values, fetchJson),
+      onEdit: (name, values) => updateProvider(name, values, fetchJson),
+      onRemove: (name) => removeProvider(name, fetchJson),
       onCheck: (model) => checkCredential(model, fetchJson),
       // An entry the console took is in the file the next run seats
       // on, so the list is read from the console again rather than from what the
-      // form posted — and the status line says which one it is now holding.
-      onAdded: (name): void => void refreshProviders(name),
+      // form posted — and the status line says which entry the list just changed
+      // by, since the row it names is gone from the page it was drawn on.
+      onAdded: (name): void => void refreshProviders(`Added ${name}`),
+      onEdited: (name): void => void refreshProviders(`Edited ${name}`),
+      onRemoved: (name): void => void refreshProviders(`Removed ${name}`),
     });
     say(
-      added === undefined
+      done === undefined
         ? `${String(rows.length)} providers listed.`
-        : `Added ${added}; ${String(rows.length)} providers listed.`,
+        : `${done}; ${String(rows.length)} providers listed.`,
     );
   } catch (error) {
     say(error instanceof Error ? error.message : String(error), true);

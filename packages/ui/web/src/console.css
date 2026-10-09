@@ -107,8 +107,13 @@ td{padding:8px 12px;vertical-align:top;border-bottom:1px solid #232a33;line-heig
 button{padding:9px 16px;border:0;border-radius:6px;background:#232a33;color:#c9d1dc;font:600 15px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;cursor:pointer}
 button:hover:not(:disabled){background:#2c3540;color:#eef1f5}
 button:disabled{background:#1a2028;color:#5c6673;cursor:default}
-.start,.add-provider{background:#eef1f5;color:#12161c}
-.start:disabled,.add-provider:disabled{background:#1a2028;color:#5c6673}
+.start,.add-provider,.save-provider{background:#eef1f5;color:#12161c}
+.start:disabled,.add-provider:disabled,.save-provider:disabled{background:#1a2028;color:#5c6673}
+/* The removal's confirm: the seat B tint, which is the colour this design gives a
+   step that cannot be taken back. The cancel beside it stays an ordinary panel
+   button, so the two are not the same control wearing two labels. */
+.confirm-remove{background:var(--team-b,#e06f35);color:#12161c}
+.confirm-remove:disabled{background:#1a2028;color:#5c6673}
 
 /* The forms: the flag or the field named above the box, in the viewer's label style,
    and the box itself sunk into the panel rather than raised out of it. The `[hidden]`
@@ -122,6 +127,10 @@ button:disabled{background:#1a2028;color:#5c6673;cursor:default}
 .field-label{font:600 14px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.14em;color:#aab3bf}
 input[type="text"],select{min-width:0;max-width:100%;padding:9px 12px;border:1px solid #2c3540;border-radius:6px;background:#12161c;color:#eef1f5;font:400 15px/1.2 'IBM Plex Sans',system-ui,sans-serif}
 input[type="text"]:focus,select:focus{outline:2px solid var(--team-a,#2c6fd1);outline-offset:1px}
+/* A box the page will not take: an entry's name, which is the name a seat is
+   written with. It stays readable — an operator has to see which entry they are
+   editing — and stops looking like one that can be typed in. */
+input[type="text"]:disabled{background:#1a2028;color:#8b95a3;border-color:#232a33}
 input[type="checkbox"]{width:18px;height:18px;accent-color:var(--team-a,#2c6fd1)}
 /* The start form and the add form: one column of fields at a phone's width, and the
    blocks that are not fields — the note, the button, the answer — full width. */
@@ -191,13 +200,23 @@ option{color:#eef1f5;background:#12161c}
 .provider-fields{font-size:14px;line-height:1.4;color:#aab3bf}
 .provider-check{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
 .provider-check .field{flex:1 1 220px}
+/* What an operator can do to the entry: edit it, or ask for it to be removed.
+   The removal's confirm and cancel sit in the same place as the `Remove` they
+   replace, so the question is asked by the control it is about. */
+.provider-actions{display:flex;flex-wrap:wrap;gap:10px}
+/* A row's own edit form, sunk into the row it belongs to and hidden until the
+   row is edited. The `[hidden]` rule is not decoration: the form is built with
+   the row and hidden, and an author `display` beats the user agent's own. */
+.provider-edit{display:flex;flex-direction:column;gap:14px;padding:14px;background:#1a2028;border-radius:6px}
+.provider-edit[hidden]{display:none}
+.provider-edit-note{color:#aab3bf}
 
 /* What the page answered: a start, an add, a credential check. The wording is the
    console's own line, so it is set as a sentence; the colour says which way it went.
    A refusal is the seat B tints, a going-ahead is the seat A ones — the
    same two the viewer's rejected and compacted chips use. */
-.start-outcome,.add-outcome,.check-outcome{font-size:15px;line-height:1.4}
-.bad,.start-refused,.add-refused,.check-refused,.check-not-ready{color:#f0b18a}
+.start-outcome,.add-outcome,.check-outcome,.edit-outcome,.remove-outcome{font-size:15px;line-height:1.4}
+.bad,.start-refused,.add-refused,.check-refused,.check-not-ready,.edit-refused,.remove-refused{color:#f0b18a}
 .start-started,.check-ready{color:#a8c6f0}
 
 /* The run in flight. The state line is the section's answer, so it is ink; a run that
@@ -226,4 +245,6 @@ option{color:#eef1f5;background:#12161c}
 .start-form .limits{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .provider-add{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .provider-add .provider-add-note,.provider-add .add-provider,.provider-add .add-outcome{grid-column:1 / -1}
+.provider-edit{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.provider-edit .provider-edit-note,.provider-edit .save-provider,.provider-edit .cancel-edit,.provider-edit .edit-outcome{grid-column:1 / -1}
 }
