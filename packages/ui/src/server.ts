@@ -37,9 +37,11 @@
  * else about that run from the series' own record.
  *
  * What is already on disk is reachable through the same server. `/api/series`
- * and `/api/matches` list it (`./results.ts`), `/api/playing` lists the series
- * that hold a `series.lock` with the counters their own records carry — the cheap
- * read a page can poll, where `/api/series` reads every match log —,
+ * and `/api/matches` list it (`./results.ts`), `/api/match-facts` says what each
+ * of those finished logs was — its seats, its winner, its score, its seed and its
+ * day — read out of the log itself (`./match-facts.ts`), `/api/playing` lists the
+ * series that hold a `series.lock` with the counters their own records carry — the
+ * cheap read a page can poll, where `/api/series` reads every match log —,
  * `/api/leaderboard` answers both leaderboard views over those same records in
  * one call (`./leaderboard.ts`), `/api/estimate` measures what a run of a given
  * pairing would cost off the series that have already played those seats
@@ -88,6 +90,7 @@ import type { ProviderRegistry } from "@no-dice/runner/providers";
 import { DEFAULT_MATCHES_ROOT, DEFAULT_PORT, DEFAULT_SERIES_ROOT, USAGE, parseUiFlags } from "./args.ts";
 import { ESTIMATE_PATH, estimateQueryOf, estimateRows } from "./estimate.ts";
 import { LEADERBOARD_PATH, leaderboardRows } from "./leaderboard.ts";
+import { MATCH_FACTS_PATH, matchFactsRows } from "./match-facts.ts";
 import { MODELS_PATH, modelList } from "./models.ts";
 import type { PiModelSource } from "./models.ts";
 import { LOG_PREFIX, VIEWER_PREFIX, logPathOf, matchRows, playingRows, seriesRows } from "./results.ts";
@@ -662,6 +665,18 @@ const route = async (
 
   if (path === "/api/matches") {
     sendJson(response, 200, await matchRows(config));
+    return;
+  }
+
+  // What each of those finished logs *was*: the two seats, the winner, the final
+  // score, the seed and the day, read out of the log. Its own route rather than
+  // more fields on `/api/matches`, because of what it costs — every log under
+  // both roots, about a megabyte each (`docs/pi-harness-notes.md` §7) — which is
+  // why the page asks it at the listings' clock, when it is opened and when a
+  // run ends, and not on a poll. `./match-facts.ts` says what that costs, and a
+  // log it cannot read is one entry in `unreadable` rather than a missing row.
+  if (path === MATCH_FACTS_PATH) {
+    sendJson(response, 200, await matchFactsRows(config));
     return;
   }
 
