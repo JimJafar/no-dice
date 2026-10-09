@@ -19,7 +19,7 @@
  * desktop's width and shrinks the result to something no one can tap.
  *
  * **Nothing wide is loose in the page.** A table cannot be squeezed below the width of its
- * own words, and the leaderboard's two are nine and eight columns of figures. Each has to
+ * own words, and the leaderboard's two are nine and seven columns of figures. Each has to
  * scroll inside a box of its own, and so does the run's `<pre>`, or the page itself slides
  * sideways and the nav bar goes off the top of the screen with it.
  *

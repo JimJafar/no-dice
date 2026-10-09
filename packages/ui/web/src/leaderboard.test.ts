@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { LEADERBOARD_PATH, fetchLeaderboard, parseLeaderboard } from "./leaderboard.ts";
+import { LEADERBOARD_PATH, NO_PROVIDER, fetchLeaderboard, modelPartsOf, parseLeaderboard } from "./leaderboard.ts";
 
 /** One series, as the leaderboard answers it: seven counted matches, a full-length stop. */
 const SERIES = {
@@ -105,10 +105,20 @@ describe("parseLeaderboard", () => {
       {
         label: "bot:greedy",
         matches: 10,
-        result: { n: 10, rate: 0.65, interval: { low: 0.354, high: 0.872 }, confidence: 0.95 },
+        // The won/lost/drawn counts are in the answer's `winRate` and are kept:
+        // the headline table states them beside the rate they add up to.
+        result: {
+          n: 10,
+          won: 6,
+          lost: 3,
+          drawn: 1,
+          rate: 0.65,
+          interval: { low: 0.354, high: 0.872 },
+          confidence: 0.95,
+        },
         seatSplit: {
-          A: { n: 5, rate: 0.9, interval: { low: 0.4, high: 0.99 }, confidence: 0.95 },
-          B: { n: 5, rate: 0.4, interval: { low: 0.12, high: 0.73 }, confidence: 0.95 },
+          A: { n: 5, won: 4, lost: 0, drawn: 1, rate: 0.9, interval: { low: 0.4, high: 0.99 }, confidence: 0.95 },
+          B: { n: 5, won: 2, lost: 3, drawn: 0, rate: 0.4, interval: { low: 0.12, high: 0.73 }, confidence: 0.95 },
         },
         missing: 2,
         missingNote: MODEL.missingNote,
@@ -131,6 +141,14 @@ describe("parseLeaderboard", () => {
     expect(missingNote).toBeTypeOf("string");
     expect(() => parseLeaderboard({ ...ANSWER, models: [withoutNote] })).toThrow(
       "models[0].missingNote is not a string",
+    );
+
+    // The outcome counts are drawn as figures now, so a pooled row whose
+    // answer has no wins in it is named down to the count that is missing.
+    const { wins, ...rateWithoutWins } = MODEL.result.winRate;
+    expect(wins).toBeTypeOf("number");
+    expect(() => parseLeaderboard({ ...ANSWER, models: [{ ...MODEL, result: { ...MODEL.result, winRate: rateWithoutWins } }] })).toThrow(
+      "models[0].result.winRate.wins is not a count",
     );
 
     // The seat split is the part a reader is most likely to be shown, so a
@@ -156,6 +174,18 @@ describe("parseLeaderboard", () => {
     expect([board.series[0]!.winRate, board.series[0]!.interval]).toEqual([null, null]);
   });
 
+  it("reads the counts and the rate as separate figures rather than working one out", () => {
+    // An answer that disagrees with itself — six wins out of ten, and a rate of
+    // a half — is the only way to tell a page that copies the answer's rate from
+    // one that divides the counts beside it. It draws both figures as they came,
+    // and the disagreement stays the stats package's to fix.
+    const odd = { ...MODEL, result: { ...MODEL.result, winRate: { ...MODEL.result.winRate, rate: 0.5 } } };
+    const [row] = parseLeaderboard({ ...ANSWER, models: [odd] }).models;
+
+    expect([row!.result.won, row!.result.lost, row!.result.drawn]).toEqual([6, 3, 1]);
+    expect(row!.result.rate).toBe(0.5);
+  });
+
   it("keeps a seat with no counted match as having no rate of its own", () => {
     const noSeatA = { ...MODEL, seatSplit: { A: result(0, 0, 0, 0, 0, 0), B: MODEL.seatSplit.B } };
     const board = parseLeaderboard({ ...ANSWER, models: [noSeatA] });
@@ -163,6 +193,29 @@ describe("parseLeaderboard", () => {
 
     expect([row!.seatSplit.A.n, row!.seatSplit.A.rate, row!.seatSplit.A.interval]).toEqual([0, null, null]);
     expect(row!.seatSplit.B.rate).toBe(0.4);
+  });
+});
+
+describe("modelPartsOf", () => {
+  it("names a bot's provider as the label spells it", () => {
+    expect(modelPartsOf("bot:greedy")).toEqual({ model: "greedy", provider: "bot" });
+  });
+
+  it("splits a provider from a model id at the first slash", () => {
+    expect(modelPartsOf("marvin/subagent")).toEqual({ model: "subagent", provider: "marvin" });
+    // A model id may itself carry a slash: only the first one is the provider's.
+    expect(modelPartsOf("deepseek/deepseek-flash")).toEqual({
+      model: "deepseek-flash",
+      provider: "deepseek",
+    });
+    expect(modelPartsOf("openai/gpt/4")).toEqual({ model: "gpt/4", provider: "openai" });
+  });
+
+  it("says the log never named a provider, rather than guessing one, for a label with no slash", () => {
+    // A model nobody prices still gets its row; what it does not get is a
+    // provider this page made up.
+    expect(modelPartsOf("subagent")).toEqual({ model: "subagent", provider: NO_PROVIDER });
+    expect(modelPartsOf("/subagent")).toEqual({ model: "/subagent", provider: NO_PROVIDER });
   });
 });
 

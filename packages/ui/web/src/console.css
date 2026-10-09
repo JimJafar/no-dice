@@ -95,9 +95,9 @@ td{padding:8px 12px;vertical-align:top;border-bottom:1px solid #232a33;line-heig
 /* A cell that holds nothing but a figure: the viewer's numeral face, tabular and
    letterspaced the way its scores are, so a column of counts lines up. */
 .num{font:600 17px/1.4 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.04em;font-variant-numeric:tabular-nums}
-/* The lists that live inside a cell — a series' match logs, a model's pooled series.
-   They are a column of links, not a second table. */
-.series-matches,.model-series{gap:6px}
+/* The lists that live inside a cell — a series' match logs. They are a column of
+   links, not a second table. */
+.series-matches{gap:6px}
 
 /* The buttons: the viewer's control exactly — a panel, Barlow Semi Condensed,
    letterspaced — and the two the page commits to with `Start` and `Add provider`
@@ -114,6 +114,16 @@ button:disabled{background:#1a2028;color:#5c6673;cursor:default}
    button, so the two are not the same control wearing two labels. */
 .confirm-remove{background:var(--team-b,#e06f35);color:#12161c}
 .confirm-remove:disabled{background:#1a2028;color:#5c6673}
+
+/* The leaderboard headline's way in: one control per model row, in that row's own
+   model cell. It is a `<button>` — `render-leaderboard.ts` says why, which is the
+   tab order and Enter — but it is not a panel: a raised block in the first cell of
+   every row reads as a table of buttons, and the width it adds is width a phone has
+   no room for once the table is seven columns wide. So it is set as the model id it
+   names (`code`, monospace) and marked as something you can press by the link's
+   underline; the focus ring it takes is the one every control on the page takes. */
+button.model-detail{padding:0;background:none;color:#a8c6f0;text-decoration:underline;text-decoration-color:#2c6fd1;font:600 14px/1.4 ui-monospace,monospace;letter-spacing:0}
+button.model-detail:hover:not(:disabled){background:none;color:#eef1f5}
 
 /* The forms: the flag or the field named above the box, in the viewer's label style,
    and the box itself sunk into the panel rather than raised out of it. The `[hidden]`

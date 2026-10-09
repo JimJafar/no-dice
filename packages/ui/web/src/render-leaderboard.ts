@@ -2,12 +2,24 @@
  * Drawing the Leaderboard section, and nothing else.
  *
  * What the page reads is `leaderboard.ts`'s business; this file turns one answer
- * into two tables. Three rules shape the drawing.
+ * into two tables. Four rules shape the drawing.
+ *
+ * **The headline is the per-model table.** It goes first, in the order
+ * `pooledModelRows` already puts the rows in — best record first, and the label
+ * to settle a tie — with one row per model and seven columns: model, provider,
+ * matches, won, lost, drawn, win rate. The seat split, the series a row was
+ * pooled from and the missing note do not fit beside those, and they are not what
+ * a reader scans a leaderboard for, so they leave this table and come back in the
+ * detail a row opens; the per-pairing table stays below, unchanged. Each row
+ * carries one control that opens that detail, and this module is handed the
+ * function it calls — it does not know what a detail panel is.
  *
  * **The page adds no arithmetic.** Every count, rate and interval on both tables
  * is the console's, which is the stats package's: the per-pairing row is
  * `seriesReport`'s headline row and the pooled row is `pooledModelRows`' result
- * and seat split. What is added here is wording and the shape of a percentage —
+ * and seat split — the won, lost and drawn counts the headline states included,
+ * which are in the answer's `winRate` and are copied, never subtracted. What is
+ * added here is wording and the shape of a percentage —
  * `64.3%` for `0.6428…` — and nothing else. A win rate divided out of the counts
  * beside it would be a second account of the same matches, and the two tables
  * would drift; a pooled rate averaged out of the per-series rates would be wrong
@@ -35,16 +47,16 @@
  *
  * **The tables are named in words, the way the rest of the page is.** A series row
  * says its name, not the directory it lives in; a match link says who played, on
- * what seed, on what day, not what its log is called; the pooled table says which
- * series a model's record was pooled from by the names those series answer with.
- * The console answers with directories, and the same answer carries a row per
- * series with its name against its directory, so the page has the mapping in hand
- * and no reason to put a path in front of a reader. The one line that keeps a path
- * is a series record that will not parse, where the console's own line about it is
- * repeated as it was written.
+ * what seed, on what day, not what its log is called; a model row says a model by
+ * the name its own log header spells, and says who offers it or says out loud that
+ * the log never named one. The console answers with directories, and no row of
+ * either table shows one. The one line that keeps a path is a series record that
+ * will not parse, where the console's own line about it is repeated as it was
+ * written.
  */
 import { clear } from "./render-frame.ts";
 import { fillMatchLabel, matchLabel, viewerUrlFor } from "./results.ts";
+import { NO_PROVIDER, modelPartsOf } from "./leaderboard.ts";
 import type { Interval, Leaderboard, ModelRow, ResultCell, SeriesRow } from "./leaderboard.ts";
 import type { MatchHeaderReader, MatchRow } from "./results.ts";
 
@@ -60,6 +72,15 @@ export interface LeaderboardView {
    * carries, and with it they say who played, on what seed, on what day.
    */
   headers?: MatchHeaderReader;
+  /**
+   * What to do with a headline row: open that model's detail, label and all.
+   *
+   * Optional, and the row's control is drawn only when it is given. That is not a
+   * hedge: a control that does nothing when used is worse than no control, so a
+   * page with no detail panel to open draws a table of figures and no way in.
+   * Whoever passes this owns the panel; this module only asks for the label.
+   */
+  openModelDetail?: (label: string) => void;
 }
 
 /** A short element with a class and a sentence. */
@@ -114,7 +135,7 @@ const numCell = (n: number): HTMLTableCellElement => {
  * inside a box of its own.
  *
  * The box is not decoration. The pairing table is nine columns of figures and the
- * pooled one is eight, and a table cannot be squeezed below the width of its own
+ * headline one is seven, and a table cannot be squeezed below the width of its own
  * words: loose in the section, either of them would push the page itself sideways
  * on a phone, and the nav bar and the rest of the view would slide out from under
  * whoever was reading them. In a box that takes the overflow, the table scrolls
@@ -187,11 +208,31 @@ const rateWith = (rate: number | null, interval: Interval | null, confidence: nu
 /** A result as the console answers it — a pooled row's, or one seat's — in that wording. */
 const rateOf = (result: ResultCell): string => rateWith(result.rate, result.interval, result.confidence);
 
-/** One seat's half of the split: how many of the counted matches it held, and what they did. */
-const seatCell = (seat: "A" | "B", result: ResultCell): string =>
-  result.n === 0
-    ? `no match from seat ${seat}`
-    : `seat ${seat}: ${String(result.n)} ${result.n === 1 ? "match" : "matches"} — ${rateOf(result)}`;
+/**
+ * The headline row's way in: one control that opens that model's detail.
+ *
+ * A `<button>` rather than a `<tr>` with a click handler and a `tabindex`, because
+ * a button is already in the tab order, already fires on Enter and Space, and is
+ * already announced as something a reader can press; a focusable row has none of
+ * that and leaves a reader who cannot see the table with a row of figures and no
+ * name for the action. Its own words are the model, which is the column it sits
+ * in, and its accessible name spells the whole label as the log spells it, so the
+ * control of a row that shows `subagent` under `marvin` still says which model it
+ * opens.
+ */
+const detailButton = (
+  label: string,
+  model: string,
+  onOpen: (label: string) => void,
+): HTMLButtonElement => {
+  const button = document.createElement("button");
+  button.className = "model-detail";
+  button.type = "button";
+  button.textContent = model;
+  button.setAttribute("aria-label", `Open the detail of ${label}`);
+  button.addEventListener("click", () => onOpen(label));
+  return button;
+};
 
 /**
  * The matches of one series, as links into the replay viewer.
@@ -240,40 +281,33 @@ const seriesCells = (row: SeriesRow, matches: readonly MatchRow[], headers?: Mat
 ];
 
 /**
- * Which series a pooled row was pooled from, said by name.
+ * One model, as the headline table draws it: what it is called, who offers it,
+ * and its pooled record — matches, won, lost, drawn, and the rate over them.
  *
- * A directory with no series row beside it in the same answer is said as what it
- * is: a series this table does not list. That is the honest line, and it is the
- * only way a path could otherwise reach this column.
+ * Those four figures are four readings of the answer's one `winRate`, each taken
+ * as it arrived: nothing here subtracts the losses from `n` or divides the wins
+ * by it, which is how a column of counts and a win rate part company. The seat
+ * split, the series this row was pooled from and the missing note are in the row
+ * and not on it — they are the detail's.
  */
-const namesOf = (dirs: readonly string[], byDir: ReadonlyMap<string, string>): string[] =>
-  dirs.map((dir) => byDir.get(dir) ?? "a series this table does not list");
-
-/** One model: its pooled record, its record from each seat, and what it was pooled from. */
-const modelCells = (row: ModelRow, byDir: ReadonlyMap<string, string>): Node[] => {
-  const from = document.createElement("ul");
-  from.className = "model-series";
-  for (const name of namesOf(row.series, byDir)) {
-    const li = document.createElement("li");
-    li.append(document.createTextNode(name));
-    from.append(li);
-  }
-
+const modelCells = (row: ModelRow, onOpen?: (label: string) => void): Node[] => {
+  const parts = modelPartsOf(row.label);
   return [
-    cell(code(row.label)),
+    cell(onOpen === undefined ? code(parts.model) : detailButton(row.label, parts.model, onOpen)),
+    // A provider is a name an operator types into a terminal, so it is set as one
+    // is. The sentence that says the log named none is a sentence.
+    parts.provider === NO_PROVIDER ? cell(parts.provider) : cell(code(parts.provider)),
     numCell(row.matches),
-    numCell(row.missing),
+    numCell(row.result.won),
+    numCell(row.result.lost),
+    numCell(row.result.drawn),
     cell(rateOf(row.result)),
-    cell(seatCell("A", row.seatSplit.A)),
-    cell(seatCell("B", row.seatSplit.B)),
-    row.series.length === 0 ? cell("no series with a counted match") : cell(from),
-    cell(row.missingNote),
   ];
 };
 
 /**
- * The section: the per-pairing table, the pooled per-model table, and the two
- * lines about what neither of them counted.
+ * The section: the headline per-model table, the per-pairing table below it, and
+ * the two lines about what neither of them counted.
  *
  * The whole section is replaced on every render, the way every other section
  * is — a series that has left the root must not keep its row, and a pooled row
@@ -294,9 +328,29 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
   );
   el.append(roots);
 
-  // The pooled table names the series it pooled from, and the per-series rows are
-  // where those names are: the pooled rows themselves only carry directories.
-  const byDir = new Map(board.series.map((row) => [row.dir, row.name]));
+  // The headline first, and in the order the stats package put these rows in:
+  // best record first, label to settle a tie. The page does not re-sort them — a
+  // table that reordered itself between two reads of one disk would read as the
+  // models having moved.
+  el.append(subheading("Per model, pooled over every series this console lists"));
+  if (board.models.length === 0) {
+    el.append(
+      paragraph(
+        "leaderboard-models-none",
+        "No model has a counted match here yet — a series whose every match " +
+          "went missing says nothing about the models its pairing names.",
+      ),
+    );
+  } else {
+    el.append(
+      table(
+        "leaderboard-models",
+        "Leaderboard by model",
+        ["Model", "Provider", "Matches", "Won", "Lost", "Drawn", "Win rate"],
+        board.models.map((row) => modelCells(row, view.openModelDetail)),
+      ),
+    );
+  }
 
   el.append(subheading("Per pairing — one row per series"));
   if (board.series.length === 0) {
@@ -318,35 +372,6 @@ export const renderLeaderboard = (el: HTMLElement, view: LeaderboardView): void 
           "Replays",
         ],
         board.series.map((row) => seriesCells(row, matches, headers)),
-      ),
-    );
-  }
-
-  el.append(subheading("Per model, pooled over every series this console lists"));
-  if (board.models.length === 0) {
-    el.append(
-      paragraph(
-        "leaderboard-models-none",
-        "No model has a counted match here yet — a series whose every match " +
-          "went missing says nothing about the models its pairing names.",
-      ),
-    );
-  } else {
-    el.append(
-      table(
-        "leaderboard-models",
-        "Leaderboard by model",
-        [
-          "Model",
-          "Matches counted",
-          "Matches missing",
-          "Win rate, pooled",
-          "Seat A",
-          "Seat B",
-          "Pooled from",
-          "What “missing” means",
-        ],
-        board.models.map((row) => modelCells(row, byDir)),
       ),
     );
   }

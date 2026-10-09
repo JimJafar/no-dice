@@ -9,9 +9,11 @@
  * beside it, no pooled rate averaged out of the per-series rows, a series
  * with nothing counted shown as having no rate rather than a rate of nought, and a
  * missing match drawn as a match that never happened rather than as a loss. The
- * links are the other half: a row that cannot be followed to its
- * `report.md` and to each of its matches in the replay viewer is a row that cannot
- * be checked.
+ * headline table is the other half of what this file owns: seven columns, in the
+ * order the console gave, above the pairing table, each row carrying one control
+ * that opens that model's detail. The links are the rest: a row that cannot be
+ * followed to its `report.md` and to each of its matches in the replay viewer is a
+ * row that cannot be checked.
  */
 import { describe, expect, it } from "vitest";
 
@@ -58,9 +60,20 @@ const BETA = {
   reportUrl: "/logs/beta/report.md",
 };
 
-/** One result as the console answers it. */
-const result = (n: number, rate: number | null, low: number, high: number) => ({
+/** One result as the console answers it: the counts, and the rate over them. */
+const result = (
+  n: number,
+  won: number,
+  lost: number,
+  drawn: number,
+  rate: number | null,
+  low: number,
+  high: number,
+) => ({
   n,
+  won,
+  lost,
+  drawn,
   rate,
   interval: rate === null ? null : { low, high },
   confidence: 0.95,
@@ -70,8 +83,8 @@ const result = (n: number, rate: number | null, low: number, high: number) => ({
 const GREEDY = {
   label: "bot:greedy",
   matches: 10,
-  result: result(10, 0.65, 0.354, 0.872),
-  seatSplit: { A: result(5, 0.9, 0.4, 0.99), B: result(5, 0.4, 0.12, 0.73) },
+  result: result(10, 6, 3, 1, 0.65, 0.354, 0.872),
+  seatSplit: { A: result(5, 4, 0, 1, 0.9, 0.4, 0.99), B: result(5, 2, 3, 0, 0.4, 0.12, 0.73) },
   missing: 2,
   missingNote:
     "2 missing matches attributed to the pairing rather than to this model: a match that never " +
@@ -79,15 +92,23 @@ const GREEDY = {
   series: ["/repo/series/alpha", "/repo/series/beta"],
 };
 
-/** A model that only ever played from one seat. */
+/** A model that only ever played from one seat, and one no provider is priced under. */
 const RANDOM = {
   label: "bot:random",
   matches: 3,
-  result: result(3, 0.5, 0.15, 0.85),
-  seatSplit: { A: result(0, null, 0, 0), B: result(3, 0.5, 0.15, 0.85) },
+  result: result(3, 1, 1, 1, 0.5, 0.15, 0.85),
+  seatSplit: { A: result(0, 0, 0, 0, null, 0, 0), B: result(3, 1, 1, 1, 0.5, 0.15, 0.85) },
   missing: 0,
   missingNote: "No match of the series this pairing names went missing.",
   series: ["/repo/series/beta"],
+};
+
+/** A model whose log header named no provider at all. */
+const UNNAMED = {
+  ...RANDOM,
+  label: "subagent",
+  matches: 4,
+  result: result(4, 2, 2, 0, 0.5, 0.16, 0.84),
 };
 
 /** A finished log of one series, and what its own header says about the match. */
@@ -158,9 +179,13 @@ const section = (): HTMLElement => {
 };
 
 /** Draw the section and read it back as text and elements. */
-const drawn = (board: Leaderboard, matches: readonly MatchRow[] = [MATCH, BETA_MATCH, ALONE]) => {
+const drawn = (
+  board: Leaderboard,
+  matches: readonly MatchRow[] = [MATCH, BETA_MATCH, ALONE],
+  openModelDetail?: (label: string) => void,
+) => {
   const el = section();
-  renderLeaderboard(el, { board, matches });
+  renderLeaderboard(el, { board, matches, openModelDetail });
   return { el, text: el.textContent ?? "" };
 };
 
@@ -169,6 +194,16 @@ const rowsOf = (el: HTMLElement, tableClass: string): string[][] =>
   [...el.querySelectorAll<HTMLTableRowElement>(`table.${tableClass} tbody tr`)].map((tr) =>
     [...tr.querySelectorAll<HTMLTableCellElement>("td")].map((td) => td.textContent ?? ""),
   );
+
+/** One table's header row, as its column names. */
+const headersOf = (el: HTMLElement, tableClass: string): string[] =>
+  [...el.querySelectorAll<HTMLTableHeaderCellElement>(`table.${tableClass} thead th`)].map(
+    (th) => th.textContent ?? "",
+  );
+
+/** Everything one table says, and nothing the rest of the section says. */
+const tableText = (el: HTMLElement, tableClass: string): string =>
+  el.querySelector(`table.${tableClass}`)?.textContent ?? "";
 
 /** Every link in the section, as `class href text`. */
 const linksOf = (el: HTMLElement, selector: string): string[] =>
@@ -276,40 +311,124 @@ describe("renderLeaderboard", () => {
     expect(text).not.toContain("NaN");
   });
 
-  it("draws one row per model with its pooled rate, its counts, and the seat split beside it", () => {
+  it("leads with one row per model: model, provider, matches, won, lost, drawn, win rate", () => {
     const { el, text } = drawn(BOARD);
-    const [row] = rowsOf(el, "leaderboard-models");
 
-    expect(rowsOf(el, "leaderboard-models")).toHaveLength(2);
-    expect(row![0]).toBe("bot:greedy");
-    expect(row![1]).toBe("10");
-    expect(row![2]).toBe("2");
-    expect(row![3]).toBe("65.0% (95% CI 35.4% – 87.2%)");
-    // The split is the point of the row: a model that only wins from one seat is
-    // visible as that, not as a good model.
-    expect(row![4]).toBe("seat A: 5 matches — 90.0% (95% CI 40.0% – 99.0%)");
-    expect(row![5]).toBe("seat B: 5 matches — 40.0% (95% CI 12.0% – 73.0%)");
-    expect(row![6]).toContain("alpha");
-    expect(row![6]).toContain("beta");
-    // The console answers a pooled row with directories; the table says the names
-    // the same answer gives those directories in.
-    expect(row![6]).not.toContain("/repo");
+    expect(headersOf(el, "leaderboard-models")).toEqual([
+      "Model",
+      "Provider",
+      "Matches",
+      "Won",
+      "Lost",
+      "Drawn",
+      "Win rate",
+    ]);
+    const rows = rowsOf(el, "leaderboard-models");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual(["greedy", "bot", "10", "6", "3", "1", "65.0% (95% CI 35.4% – 87.2%)"]);
+    expect(rows[1]).toEqual(["random", "bot", "3", "1", "1", "1", "50.0% (95% CI 15.0% – 85.0%)"]);
 
-    // The pooled rate is the console's over the pooled ten: not the mean of the
-    // two series' rates, and not one taken over the matches that went missing.
+    // The four counts and the rate beside them are four readings of the answer's
+    // one `winRate`. Nothing here subtracts the losses from `n`, averages the two
+    // series' rates, takes a rate over the matches that went missing, or drops the
+    // drawn match from the denominator.
     expect(text).not.toContain("57.1%");
     expect(text).not.toContain("54.2%");
+    expect(text).not.toContain("60.0%");
   });
 
-  it("draws a missing match as a match that never happened, in the stats package's own words", () => {
-    const { el, text } = drawn(BOARD);
-    const [row] = rowsOf(el, "leaderboard-models");
+  it("puts that table above the per-pairing one, and keeps the order the console gave", () => {
+    // `pooledModelRows` sorts best record first, label to settle a tie, and the
+    // page draws them in that order rather than re-sorting them: a table that
+    // reordered itself between two reads of one disk would read as the models
+    // having moved. The headline goes first because it is the one a reader comes
+    // for, and the pairing table stays below it.
+    const { el } = drawn({ ...BOARD, models: [RANDOM, GREEDY] });
 
-    expect(row![7]).toBe(GREEDY.missingNote);
-    expect(text).toContain("attributed to the pairing rather than to this model");
-    expect(text).toContain("is not a loss");
-    // A model that never played a seat says so, rather than showing a rate over nothing.
-    expect(rowsOf(el, "leaderboard-models")[1]![4]).toBe("no match from seat A");
+    expect([...el.querySelectorAll("table")].map((each) => each.className)).toEqual([
+      "leaderboard-models",
+      "leaderboard-series",
+    ]);
+    expect([...el.querySelectorAll("h3")].map((each) => each.textContent)).toEqual([
+      "Per model, pooled over every series this console lists",
+      "Per pairing — one row per series",
+    ]);
+    expect(rowsOf(el, "leaderboard-models").map((row) => row[0])).toEqual(["random", "greedy"]);
+  });
+
+  it("says who offers each model, and says so out loud when the log never named one", () => {
+    const { el } = drawn({ ...BOARD, models: [{ ...GREEDY, label: "deepseek/deepseek-flash" }, UNNAMED] });
+    const rows = rowsOf(el, "leaderboard-models");
+
+    // The provider is the part before the first slash, and the model is the rest
+    // of the label — which is how a seat is addressed everywhere else here.
+    expect(rows[0]!.slice(0, 2)).toEqual(["deepseek-flash", "deepseek"]);
+    // A model nobody prices still gets its row; what it does not get is a
+    // provider this page made up.
+    expect(rows[1]!.slice(0, 2)).toEqual(["subagent", "the log never named a provider"]);
+  });
+
+  it("gives each model row one control that opens that model's detail, by click and by keyboard", () => {
+    const opened: string[] = [];
+    const { el } = drawn(BOARD, [MATCH, BETA_MATCH, ALONE], (label) => void opened.push(label));
+
+    const buttons = [...el.querySelectorAll<HTMLButtonElement>("button.model-detail")];
+    // One control per row, in the row's own model cell, and no second way in.
+    expect(buttons).toHaveLength(2);
+    expect(buttons.map((button) => button.textContent)).toEqual(["greedy", "random"]);
+
+    // A `<button>` is what makes it reachable without a pointer: it is in the tab
+    // order on its own and the browser fires it on Enter and on Space, which
+    // is more than a click handler on the `<tr>` can say. It is `type="button"`
+    // because it is on a page with forms and must not submit one.
+    expect(buttons.map((button) => button.type)).toEqual(["button", "button"]);
+    expect(buttons.map((button) => button.tabIndex)).toEqual([0, 0]);
+    buttons[0]!.focus();
+    expect(document.activeElement).toBe(buttons[0]);
+
+    // And it names the model it opens in full, so a reader who cannot see the
+    // table is not left with the word "greedy" and no idea which model it is.
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Open the detail of bot:greedy",
+      "Open the detail of bot:random",
+    ]);
+
+    buttons[0]!.click();
+    buttons[1]!.click();
+    expect(opened).toEqual(["bot:greedy", "bot:random"]);
+  });
+
+  it("draws no way in when the page has no detail to open", () => {
+    // `openModelDetail` is optional, and a page that has no panel to open draws a
+    // name rather than a control that does nothing when used.
+    const { el } = drawn(BOARD);
+
+    expect(el.querySelectorAll("button.model-detail")).toHaveLength(0);
+    expect(rowsOf(el, "leaderboard-models")[0]![0]).toBe("greedy");
+  });
+
+  it("leaves the seat split, the series it pooled from and the missing note to the detail", () => {
+    // They are the room the headline table bought with provider and
+    // won/lost/drawn, and they come back in the panel a row opens. The
+    // per-pairing table below is untouched.
+    const { el } = drawn(BOARD);
+    const models = tableText(el, "leaderboard-models");
+
+    expect(models).not.toContain("seat");
+    expect(models).not.toContain("missing");
+    expect(models).not.toContain("alpha");
+    expect(models).not.toContain("/repo");
+    expect(headersOf(el, "leaderboard-series")).toEqual([
+      "Series",
+      "Pairing",
+      "Pairs",
+      "Matches",
+      "Counted / missing",
+      "Win rate",
+      "Stopped",
+      "Report",
+      "Replays",
+    ]);
   });
 
   it("names a series whose record could not be read, with the line it failed on", () => {
@@ -346,7 +465,7 @@ describe("renderLeaderboard", () => {
   });
 
   it("puts each table in a box that scrolls on its own", () => {
-    // The pairing table is nine columns of figures and the pooled one is eight,
+    // The pairing table is nine columns of figures and the headline one is seven,
     // and a table cannot be squeezed below the width of its own words. Loose in
     // the section, either would push the page itself sideways at a phone's width
     // and take the nav bar off the top of the screen with it; in a box of its own
@@ -360,46 +479,48 @@ describe("renderLeaderboard", () => {
 
     // And the box is a control rather than just a box. Firefox and Safari leave an
     // unfocusable scroll container out of the tab order, so without this the
-    // figures past the window's edge — the win rate and the match logs
-    // of the pairing table — would be unreachable without a pointer.
+    // figures past the window's edge — the win rate of the headline table, and the
+    // match logs at the end of the pairing one — would be unreachable without a
+    // pointer.
     const boxes = [...el.querySelectorAll<HTMLDivElement>(".table-scroll")];
     expect(boxes.map((box) => box.tabIndex)).toEqual([0, 0]);
     expect(boxes.map((box) => box.getAttribute("role"))).toEqual(["region", "region"]);
     expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual([
-      "Leaderboard by pairing",
       "Leaderboard by model",
+      "Leaderboard by pairing",
     ]);
   });
 
   it("sets a cell that holds nothing but a count in the numeral face", () => {
-    // The two counts of the pooled table are figures, not sentences, and the
+    // The four counts of the headline table are figures, not sentences, and the
     // viewer sets its figures in Barlow Semi Condensed so a column of them
     // lines up (`console.css`, `.num`).
     const { el } = drawn(BOARD);
     const counts = [...el.querySelectorAll<HTMLTableCellElement>("td.num")].map((td) => td.textContent);
-    expect(counts).toEqual(["10", "2", "3", "0"]);
+    expect(counts).toEqual(["10", "6", "3", "1", "3", "1", "1", "1"]);
   });
 });
 
 describe("the words the leaderboard speaks", () => {
   it("draws both tables, a broken record and a match link, in plain words", () => {
-    // Both tables and one of everything: a series row, a pooled row, a log of
-    // each series, and a record the console cannot read.
+    // Both tables and one of everything: a series row, a pooled row of each label
+    // shape, a log of each series, and a record the console cannot read.
     const { el } = drawn({
       ...BOARD,
+      models: [GREEDY, RANDOM, UNNAMED],
       unreadable: [{ name: "broken", dir: "/repo/series/broken", error: "the record's second line is not JSON" }],
     });
 
     expectPlainWords("leaderboard", wordsOf(el));
   });
 
-  it("says what a directory it cannot name is, rather than printing the directory", () => {
-    // The only way a path could reach the pooled column is by the page printing
-    // the directory it was handed, and it does not.
-    const { text } = drawn({ ...BOARD, models: [{ ...GREEDY, series: ["/repo/series/gone"] }] });
+  it("keeps every directory out of the headline table", () => {
+    // A pooled row names the series it pooled from by directory, and that column
+    // is gone; the only way a path could reach this table is by the page printing
+    // a directory it was handed, and it does not.
+    const { el } = drawn({ ...BOARD, models: [{ ...GREEDY, series: ["/repo/series/gone"] }] });
 
-    expect(text).toContain("a series this table does not list");
-    expect(text).not.toContain("/repo/series/gone");
+    expect(tableText(el, "leaderboard-models")).not.toContain("/repo");
   });
 
   it("passes the console's own line about a record it cannot read, path and all", () => {

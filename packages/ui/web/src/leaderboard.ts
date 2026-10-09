@@ -19,17 +19,24 @@
  * disk; a page that read them separately would pay for the walk twice and
  * could be shown two answers that disagree.
  *
- * **What the row declares.** Only what this section draws. The
- * per-pairing row carries the pairing, the counts, the rate with its interval and
- * the stop, plus `reportUrl` — the `report.md` this console serves — and leaves
- * out the ceilings and the resume flag, which the results section owns. It keeps
- * `dir` for one reason: a pooled row names the series it pooled from by
- * directory, and the page needs to know which name each of those directories
- * goes by before it can say them. The
- * pooled row carries the counts, the pooled result, the seat split, the missing
- * count with the stats package's own note about what it means, and the series it
- * was pooled from. A model with no counted match is in no row at all, which is
- * the stats package's rule and not one this page gets an opinion on.
+ * **What the row declares.** Only what the console answers with. The per-pairing
+ * row carries the pairing, the counts, the rate with its interval and the stop,
+ * plus `reportUrl` — the `report.md` this console serves — and leaves out the
+ * ceilings and the resume flag, which the results section owns. It keeps `dir`
+ * for one reason: a pooled row names the series it pooled from by
+ * directory, and this is the answer that says which name each of those
+ * directories goes by. The pooled row is kept whole — the counts,
+ * the pooled result with the wins, losses and draws it is made of, the seat
+ * split, the missing count with the stats package's own note about what it
+ * means, and the series it was pooled from — because the headline table draws
+ * seven figures of it and the detail a row opens draws the rest. A model with no
+ * counted match is in no row at all, which is the stats package's rule and not
+ * one this page gets an opinion on.
+ *
+ * **How a label is spelled.** `modelPartsOf` is here rather than in a renderer
+ * because two views spell the same model — the headline table and the detail a
+ * row opens — and a model spelled two ways on one page reads as two models. It
+ * splits the label the log header wrote; it invents nothing.
  *
  * The shapes below are declared here rather than imported from
  * `packages/ui/src/leaderboard.ts`, which reads the filesystem and pulls in
@@ -54,10 +61,19 @@ export interface Interval {
  * matches, and the confidence that interval was taken at. `rate` and `interval`
  * are `null` together, over no counted match, which is when there is no rate to
  * quote rather than a rate of nought.
+ *
+ * `won`, `lost` and `drawn` are the answer's own `wins`, `losses` and `draws`,
+ * kept under the words the table calls them. They are read and drawn, never
+ * added up or subtracted from `n` here: `n` is their sum because the stats
+ * package made it so, not because this page checked.
  */
 export interface ResultCell {
   /** Every outcome counted: the `n` the interval was taken over. */
   n: number;
+  /** How many of them this model won, lost and drew — the answer's, not a difference. */
+  won: number;
+  lost: number;
+  drawn: number;
   rate: number | null;
   interval: Interval | null;
   confidence: number;
@@ -96,7 +112,10 @@ export interface SeriesRow {
 
 /** One model, pooled over every series under the root that counted a match for it. */
 export interface ModelRow {
-  /** The label as the log headers spell it: `<provider>/<id>`, or `bot:<name>`. */
+  /**
+   * The label as the log headers spell it: `<provider>/<id>`, or `bot:<name>`.
+   * Its parts — how the model is called and who offers it — come from `modelPartsOf`.
+   */
   label: string;
   /** Counted matches over every series this row was pooled from. */
   matches: number;
@@ -178,24 +197,32 @@ const stringsOf = (value: unknown, what: string): string[] => {
 };
 
 /**
- * One result as the console answers it: `winRate`'s `n` and `rate`, and the
- * interval and confidence beside them. The counts of wins and losses are left
- * out because this section never states them — a win rate quoted over a pooled
- * `n` is the figure, and the wins behind it are in the series' own report.
+ * One result as the console answers it: `winRate`'s `n`, its counts and its rate,
+ * and the interval and confidence beside them. Every one of those figures is
+ * taken as it arrived — the won/lost/drawn a table shows and the rate beside it
+ * are two readings of the same `winRate`, and a count worked out from the
+ * others would be a figure this page made up.
  */
 const resultOf = (value: unknown, what: string): ResultCell => {
   const result = recordOf(value, what);
   const winRate = recordOf(result["winRate"], `${what}.winRate`);
   return {
     n: countOf(winRate["n"], `${what}.winRate.n`),
+    won: countOf(winRate["wins"], `${what}.winRate.wins`),
+    lost: countOf(winRate["losses"], `${what}.winRate.losses`),
+    drawn: countOf(winRate["draws"], `${what}.winRate.draws`),
     rate: rateOf(winRate["rate"], `${what}.winRate.rate`),
     interval: intervalOf(result["interval"], `${what}.interval`),
     confidence: countOf(result["confidence"], `${what}.confidence`),
   };
 };
 
-/** The seat split: the same counts, over only the matches from each seat. */
-const seatSplitOf = (value: unknown, what: string): { A: ResultCell; B: ResultCell } => {
+/**
+ * The seat split, as its two parts: the same counts, over only the matches this
+ * model played from each seat. The headline table has no room for them; the
+ * detail a row opens does.
+ */
+const seatPartsOf = (value: unknown, what: string): { A: ResultCell; B: ResultCell } => {
   const split = recordOf(value, what);
   return {
     A: resultOf(split["A"], `${what}.A`),
@@ -232,7 +259,7 @@ const modelRowOf = (value: unknown, what: string): ModelRow => {
     label: stringOf(row["label"], `${what}.label`),
     matches: countOf(row["matches"], `${what}.matches`),
     result: resultOf(row["result"], `${what}.result`),
-    seatSplit: seatSplitOf(row["seatSplit"], `${what}.seatSplit`),
+    seatSplit: seatPartsOf(row["seatSplit"], `${what}.seatSplit`),
     missing: countOf(row["missing"], `${what}.missing`),
     missingNote: stringOf(row["missingNote"], `${what}.missingNote`),
     series: stringsOf(row["series"], `${what}.series`),
@@ -266,6 +293,37 @@ export const parseLeaderboard = (value: unknown): Leaderboard => {
       };
     }),
   };
+};
+
+/** What both views say when a label carries no provider to name. */
+export const NO_PROVIDER = "the log never named a provider";
+
+/** A model label, split into the two columns the leaderboard gives it. */
+export interface ModelParts {
+  /** What the model is called, with its provider taken off the front. */
+  model: string;
+  /** Who offers it — or `NO_PROVIDER`, which is what the page says out loud. */
+  provider: string;
+}
+
+/**
+ * Split a model label into its model and its provider.
+ *
+ * A label is what a log header wrote, and it comes in two shapes: a bot as
+ * `bot:<name>`, and anything else the console can seat as `<provider>/<id>`,
+ * which is how a seat is addressed everywhere else in this repository —
+ * split on the *first* slash, because a model id may carry one. A label with
+ * neither in it is drawn as it came and said to have no provider rather than
+ * guessed at: a provider this page invented would be a fact about a model no
+ * log supports, and a model nobody prices still gets its row.
+ *
+ * Both views call this, so neither can spell a model the other does not.
+ */
+export const modelPartsOf = (label: string): ModelParts => {
+  if (label.startsWith("bot:")) return { model: label.slice("bot:".length), provider: "bot" };
+  const at = label.indexOf("/");
+  if (at > 0) return { model: label.slice(at + 1), provider: label.slice(0, at) };
+  return { model: label, provider: NO_PROVIDER };
 };
 
 /**
