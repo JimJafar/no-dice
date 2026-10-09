@@ -263,6 +263,47 @@ option{color:#eef1f5;background:#12161c}
    rather than about the run, so they sit back from the ink. */
 .roots,.leaderboard-roots,.providers-note,.models-note,.granularity,.no-record,.start-lifetime,.seats-none,.models-none,.providers-none,.series-none,.matches-none,.matches-reading,.matches-failed,.leaderboard-series-none,.leaderboard-models-none,.run-lines-none{color:#aab3bf}
 
+/* The detail a leaderboard row opens. `render-model-detail.ts` draws it into
+   the Leaderboard view's own wrapper — over the table it was opened from, and hidden
+   with that view when the reader goes elsewhere — and takes it out of the page when it
+   closes rather than hiding it, so it needs no `[hidden]` rule of its own.
+
+   It is fixed to the window rather than laid out under the table because a block of
+   one series' figures is tall: a panel in the flow would push the table the reader
+   was looking at off the top of the screen, and one that closed itself because the page
+   grew would be a panel that closed for no reason the reader could see. So it scrolls
+   inside itself, and at a phone's width it is the window. Its surface is the section's
+   colour and its blocks the rows' — the same three steps the page below it is built
+   out of, so the panel reads as part of this page rather than as something dropped on
+   it. */
+.model-detail-panel{position:fixed;left:16px;right:16px;bottom:16px;max-height:82vh;overflow-y:auto;padding:20px;background:#1a2028;border:1px solid #2c3540;border-radius:8px;box-shadow:0 10px 30px #00000099;display:flex;flex-direction:column;gap:12px;z-index:20}
+.model-detail-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:10px}
+.model-detail-title{font:600 20px/1.1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;color:#eef1f5}
+.model-detail-close{font:600 13px/1 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:8px 12px;background:#232a33;color:#c9d1dc;border:1px solid #2c3540;border-radius:4px;cursor:pointer}
+.model-detail-close:hover{background:#2c3540;color:#eef1f5}
+/* The pooled figures are the answer, so they are ink; what the page is doing
+   and what it could not read sit back from it, in the same two tints
+   every other section uses. */
+.model-detail-pool,.model-detail-seats{font-size:15px;line-height:1.45;color:#eef1f5}
+.model-detail-reading,.model-detail-missing{color:#aab3bf}
+.model-detail-failed{color:#f0b18a}
+/* One block per series, and a block is a row of its own — the same surface the
+   series and match rows wear — so a reader comparing two series can see where one
+   ends. The failed one carries the seat B edge the unreadable rows carry, because it
+   is the same fact. */
+.model-detail-series{display:flex;flex-direction:column;gap:12px}
+.model-detail-block{display:flex;flex-direction:column;gap:10px;padding:14px 16px;background:#232a33;border-radius:6px}
+.model-detail-block-failed{border-left:3px solid var(--team-b,#e06f35)}
+.model-detail-series-name{font:600 15px/1.2 'Barlow Semi Condensed','Arial Narrow',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#aab3bf}
+.model-detail-error{color:#f0b18a;font-size:15px;line-height:1.45}
+.model-detail-rate{font-size:15px;line-height:1.45;color:#eef1f5}
+/* The figures, the seat split, the replays and the links are all lists of short
+   facts about one series, and they read as one block of them rather than as four
+   blocks with space between. */
+.model-detail-figures,.model-detail-seat-split,.model-detail-replays,.model-detail-links{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;line-height:1.4;color:#c9d1dc}
+.model-detail-rules,.model-detail-rules-failed,.model-detail-replays-none,.model-detail-series-none{font-size:14px;line-height:1.4;color:#c9d1dc}
+.model-detail-rules-failed{color:#f0b18a}
+
 /* The one breakpoint. From 760 px the two forms stop being one long column: the start
    form's fields go two to a row with the limits and the button row across the
    whole width, and the add form's twelve fields go three to a row. Below it the base

@@ -12,7 +12,8 @@
  * a reader scans a leaderboard for, so they leave this table and come back in the
  * detail a row opens; the per-pairing table stays below, unchanged. Each row
  * carries one control that opens that detail, and this module is handed the
- * function it calls — it does not know what a detail panel is.
+ * function it calls — it does not know what a detail panel is, and hands that
+ * function the control itself so the panel can put focus back where it started.
  *
  * **The page adds no arithmetic.** Every count, rate and interval on both tables
  * is the console's, which is the stats package's: the per-pairing row is
@@ -79,8 +80,12 @@ export interface LeaderboardView {
    * hedge: a control that does nothing when used is worse than no control, so a
    * page with no detail panel to open draws a table of figures and no way in.
    * Whoever passes this owns the panel; this module only asks for the label.
+   *
+   * The control hands over itself beside the label, because the panel that opens
+   * has to put focus back on the row it was opened from, and a page that redrew its
+   * tables in the meantime has no way to find that row again by label alone.
    */
-  openModelDetail?: (label: string) => void;
+  openModelDetail?: (label: string, from: HTMLButtonElement) => void;
 }
 
 /** A short element with a class and a sentence. */
@@ -223,14 +228,14 @@ const rateOf = (result: ResultCell): string => rateWith(result.rate, result.inte
 const detailButton = (
   label: string,
   model: string,
-  onOpen: (label: string) => void,
+  onOpen: (label: string, from: HTMLButtonElement) => void,
 ): HTMLButtonElement => {
   const button = document.createElement("button");
   button.className = "model-detail";
   button.type = "button";
   button.textContent = model;
   button.setAttribute("aria-label", `Open the detail of ${label}`);
-  button.addEventListener("click", () => onOpen(label));
+  button.addEventListener("click", () => onOpen(label, button));
   return button;
 };
 
@@ -290,7 +295,7 @@ const seriesCells = (row: SeriesRow, matches: readonly MatchRow[], headers?: Mat
  * split, the series this row was pooled from and the missing note are in the row
  * and not on it — they are the detail's.
  */
-const modelCells = (row: ModelRow, onOpen?: (label: string) => void): Node[] => {
+const modelCells = (row: ModelRow, onOpen?: (label: string, from: HTMLButtonElement) => void): Node[] => {
   const parts = modelPartsOf(row.label);
   return [
     cell(onOpen === undefined ? code(parts.model) : detailButton(row.label, parts.model, onOpen)),

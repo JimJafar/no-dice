@@ -56,6 +56,15 @@
  * a seat or the pair count has changed, and the route walks every match log of every
  * series under the root, so polling it from this loop would be a walk per keystroke.
  *
+ * The detail a leaderboard row opens is a second read of that shape, and it is asked
+ * from the panel's own module rather than from here for the same reason: `GET
+ * /api/model-detail` walks the series root and then reads every log of every series
+ * that model played in, which is more reading than the leaderboard answer itself
+ * costs. Nothing on a page load asks for it, nothing polls it, and a reader who never
+ * opens a row never pays for it. What this file hands that module is the last
+ * leaderboard answer's per-pairing rows, because a detail block names its series and a
+ * row of figures does not say who played it.
+ *
  * The three reads draw into the same sections, so the order matters: `renderFrame`
  * replaces everything under every heading, and the run it cannot see is put back
  * from the last snapshot the poller took. Which of those sections is on screen is
@@ -79,6 +88,7 @@ import {
 import type { ModelRead } from "./providers.ts";
 import { frameSections, renderFrame } from "./render-frame.ts";
 import { renderLeaderboard } from "./render-leaderboard.ts";
+import { openModelDetail } from "./render-model-detail.ts";
 import { renderProviders } from "./render-providers.ts";
 import { renderStart } from "./render-start.ts";
 import type { SeatChoices } from "./render-start.ts";
@@ -91,14 +101,23 @@ import {
   renderResults,
 } from "./results.ts";
 import type { MatchFactsRead, MatchRow, Results, SeriesRow } from "./results.ts";
+import type { Leaderboard } from "./leaderboard.ts";
 import { parseState } from "./state.ts";
-import { mountViews } from "./views.ts";
+import { mountViews, wrapperId } from "./views.ts";
 
 /** The one line the frame has, which `index.html` owns. */
 const status = document.querySelector<HTMLElement>("#status");
 if (status === null) throw new Error("#status is missing from index.html");
 
 const sections = frameSections(document);
+
+/**
+ * The Leaderboard view's own wrapper: the panel a headline row opens is drawn over
+ * that view and hidden with it, and it is not drawn inside the section, which every
+ * listings read replaces whole.
+ */
+const leaderboardView = document.querySelector<HTMLElement>(`#${wrapperId("leaderboard")}`);
+if (leaderboardView === null) throw new Error(`#${wrapperId("leaderboard")} is missing from index.html`);
 
 // The nav bar, and the view the URL names. Mounted before the first read, so the
 // page a link opens shows the view that link asked for rather than flashing
@@ -129,6 +148,14 @@ let listedMatches: readonly MatchRow[] = [];
  * so the page looks the name up rather than repeating the path back.
  */
 let listedSeries: readonly SeriesRow[] = [];
+
+/**
+ * The last leaderboard read's own answer, kept for the detail a headline row
+ * opens: a detail block names its series, and a row of figures does not say who
+ * played it, so the pairing comes from the per-pairing rows the page already read
+ * rather than from a second route answering about the same record.
+ */
+let listedBoard: Leaderboard | null = null;
 
 /**
  * The page's supply of match-log headers, shared by the two views that label
@@ -202,7 +229,26 @@ const refreshListings = async (): Promise<void> => {
 
   try {
     const board = await fetchLeaderboard(fetchJson);
-    renderLeaderboard(sections.leaderboard, { board, matches: listedMatches, headers: matchHeaders });
+    listedBoard = board;
+    renderLeaderboard(sections.leaderboard, {
+      board,
+      matches: listedMatches,
+      headers: matchHeaders,
+      // The detail is read at the click and nowhere else: `GET /api/model-detail`
+      // walks the series root and then reads every log of every series this model
+      // played in, which is the most expensive read the page can ask for. Nothing
+      // on a page load asks for it, and nothing polls it.
+      openModelDetail: (label, from): void => {
+        void openModelDetail({
+          host: leaderboardView,
+          opener: from,
+          label,
+          series: listedBoard?.series ?? [],
+          fetchJson,
+          say,
+        });
+      },
+    });
     say(
       `${String(board.series.length)} pairings and ${String(board.models.length)} models on the leaderboard.`,
     );
