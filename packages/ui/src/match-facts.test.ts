@@ -108,8 +108,8 @@ const get = (port: number, path: string): Promise<Answer> => send(port, path, "G
 const post = (port: number, path: string, body: unknown): Promise<Answer> =>
   send(port, path, "POST", body);
 
-/** A console's two roots, and the directory it runs in — none of them the cwd. */
-function rootsAt(): { cwd: string; seriesRoot: string; matchesRoot: string } {
+/** A console's three roots, and the directory it runs in — none of them the cwd. */
+function rootsAt(): { cwd: string; seriesRoot: string; matchesRoot: string; reportsRoot: string } {
   const home = tempDir("nd-ui-facts-");
   const cwd = join(home, "repo");
   mkdirSync(cwd, { recursive: true });
@@ -117,6 +117,7 @@ function rootsAt(): { cwd: string; seriesRoot: string; matchesRoot: string } {
     cwd,
     seriesRoot: join(home, "elsewhere", "series"),
     matchesRoot: join(home, "elsewhere", "matches"),
+    reportsRoot: join(home, "elsewhere", "reports", "series"),
   };
 }
 
